@@ -3,14 +3,14 @@ import json
 import urllib.request
 import sys
 
-#TODO there are two files with kSpider_version, remove one.
+#TODO there are two files with DBRetina_version, remove one.
 
 # Only update this when releasing stable
 MAJOR = 2
 MINOR = 1
 PATCH = 0
 
-PYPI_PACKAGE = "kSpider"
+PYPI_PACKAGE = "DBRetina"
 
 def is_github_action():
     if "GITHUB_WORKFLOW" in dict(os.environ.items()):
@@ -20,7 +20,7 @@ def is_github_action():
 
 def get_pypa_dev_latest():
     # Should handle if the package does not exist.
-    with urllib.request.urlopen("https://test.pypi.org/pypi/kSpider/json") as url:
+    with urllib.request.urlopen("https://test.pypi.org/pypi/DBRetina/json") as url:
         data = json.loads(url.read().decode())
         return data["info"]["version"]
 
