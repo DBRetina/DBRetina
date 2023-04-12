@@ -6,24 +6,6 @@
 #include "parallel_hashmap/phmap_dump.h"
 #include <sstream>
 #include "DBRetina.hpp"
-#include "cpp-json/json.h"
-#include "zstr.hpp"
-
-
-struct string_hasher
-{
-    std::hash<std::string> hasher;
-
-    // initialize the hasher
-    string_hasher(): hasher() {}
-
-    // overload the () operator
-    size_t operator()(const string& str) const
-    {
-        return hasher(str);
-    }
-};
-
 
 inline uint64_t to_uint64(std::string const& value) {
     uint64_t result = 0;
@@ -54,6 +36,19 @@ inline uint64_t to_uint64(std::string const& value) {
     return result;
 }
 
+struct string_hasher
+{
+    std::hash<string> hasher;
+
+    // initialize the hasher
+    string_hasher(): hasher() {}
+
+    // overload the () operator
+    size_t operator()(const string& str) const
+    {
+        return hasher(str);
+    }
+};
 
 
 void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) {
@@ -89,7 +84,7 @@ void load_names_tsv_to_map(string filename, str_str_map* map) {
 }
 
 
-void sketch_dbretine(string asc_file, string names_file) {
+void sketch_dbretina(string asc_file, string names_file) {
     str_vec_map* asc_map = new str_vec_map();
     str_str_map* names_map = new str_str_map();
 
@@ -215,121 +210,134 @@ void sketch_dbretine(string asc_file, string names_file) {
 
 
 
-class DBRetina_json_parser {
-private:
-    string_hasher hasher;
 
-public:
+void parse_dbretina_json(string json_file, str_hashed_vec_map* map) {
+    string_hasher hasher = string_hasher();
+    string output_prefix = json_file.substr(0, json_file.find_last_of(".")).substr(json_file.find_last_of("/") + 1);
 
-    string json_file_name;
-    zstr::ifstream sig_stream;
-    json::value json;
-    string output_prefix;
-    str_hashed_vec_map* map = new str_hashed_vec_map();
+    zstr::ifstream sig_stream(json_file);
+    json::value json = json::parse(sig_stream);
+    string filetype = string(json["metadata"]["filetype"].as_string());
+    auto genes = json["data"].as_object();
 
-    void load_json(string json_file) {
-        zstr::ifstream sig_stream(json_file);
-        json::value json = json::parse(sig_stream);
-        string filetype = string(json["metadata"]["filetype"].as_string());
-        auto genes = json["data"].as_object();
+    if (filetype == "private") {
+        // Intermediate step to store reverse hashing
+        parallel_flat_hash_map<uint64_t, string> reverse_hash_map;
 
-        if (filetype == "private") {
-            // Intermediate step to store reverse hashing
-            parallel_flat_hash_map<uint64_t, string> reverse_hash_map;
-
-            // iterate over genes:
-            for (auto it = genes.begin(); it != genes.end(); ++it) {
-                string parent_name = it->first;
-                auto gene = it->second.as_array();
-                for (auto it2 = gene.begin(); it2 != gene.end(); ++it2) {
-                    string str_child = it2->as_string();
-                    uint64_t hashed_child = hasher(str_child);
-                    reverse_hash_map[hashed_child] = str_child;
-                    map->operator[](parent_name).emplace(hashed_child);
-                }
+        // iterate over genes:
+        for (auto it = genes.begin(); it != genes.end(); ++it) {
+            string parent_name = it->first;
+            auto gene = it->second.as_array();
+            for (auto it2 = gene.begin(); it2 != gene.end(); ++it2) {
+                string str_child = it2->as_string();
+                uint64_t hashed_child = hasher(str_child);
+                reverse_hash_map[hashed_child] = str_child;
+                map->operator[](parent_name).emplace(hashed_child);
             }
-
-        }
-        else if (filetype == "public") {
-            // iterate over genes:
-            for (auto it = genes.begin(); it != genes.end(); it++) {
-                string parent_name = it->first;
-                cout << "parent_name: " << parent_name << endl;
-                auto gene = it->second.as_array();
-                map->operator[](parent_name) = parallel_flat_hash_set<uint64_t>(gene.size());
-                for (auto it2 = gene.begin(); it2 != gene.end(); it2++) {
-                    map->operator[](parent_name).insert(to_uint64(it2->as_string()));
-                }
-            }
-        }
-        else {
-            cout << "Unknown filetype: " << filetype << endl;
-            exit(0);
         }
 
     }
-
-    void export_map_to_tsv(string output_file) {
-        ofstream file(output_file);
-        for (auto it = map->begin(); it != map->end(); ++it) {
-            file << it->first << "\t";
-            for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-                file << *it2;
-                if (next(it2) != it->second.end()) {
-                    file << ", ";
-                }
+    else if (filetype == "public") {
+        // iterate over genes:
+        for (auto it = genes.begin(); it != genes.end(); it++) {
+            string parent_name = it->first;
+            cout << "parent_name: " << parent_name << endl;
+            auto gene = it->second.as_array();
+            map->operator[](parent_name) = parallel_flat_hash_set<uint64_t>(gene.size());
+            for (auto it2 = gene.begin(); it2 != gene.end(); it2++) {
+                map->operator[](parent_name).insert(to_uint64(it2->as_string()));
             }
-            file << endl;
         }
-        file.close();
     }
-
-    DBRetina_json_parser(string json_file) {
-        json_file_name = json_file;
-        sig_stream.open(json_file);
-        json = json::parse(sig_stream);
-        hasher = string_hasher();
-        output_prefix = json_file.substr(0, json_file.find_last_of(".")).substr(json_file.find_last_of("/") + 1);
-        load_json(json_file);
-        cout << "exporting map" << endl;
-        export_map_to_tsv(output_prefix + "_map.tsv");
+    else {
+        cout << "Unknown filetype: " << filetype << endl;
+        exit(0);
     }
-
-};
-
-
-
-
-int main(int argc, char* argv[]) {
-
-    string asc_file = argv[1];
-    string names_file = argv[2];
-    string asc_file_wo_extension = asc_file.substr(0, asc_file.find_last_of("."));
-    string asc_file_base_name_without_extension = asc_file_wo_extension.substr(asc_file_wo_extension.find_last_of("/") + 1);
-    string private_output_file = asc_file_base_name_without_extension + "_private.json";
-    string public_output_file = asc_file_base_name_without_extension + "_public.json";
-
-    sketch_dbretine(asc_file, names_file);
-
-    DBRetina_json_parser parser(private_output_file);
-
-    // zstr::ifstream sig_stream(private_output_file);
-    // json::value json = json::parse(sig_stream);
-
-    // cout << "size: " << json.size() << endl;
-
-    // string filetype = json["metadata"]["filetype"].as_string();
-    // auto genes = json["data"].as_object();
-
-    // cout << "Size of genes: " << genes.size() << endl;
-
-    // // iterate over genes:
-    // for (auto it = genes.begin(); it != genes.end(); ++it) {
-    //     cout << it->first << endl;
-    //     auto gene = it->second.as_array();
-    //     for (auto it2 = gene.begin(); it2 != gene.end(); ++it2) {
-    //         cout << it2->as_string() << endl;
-    //     }
-    // }
-
 }
+
+
+// void DBRetina_json_parser::load_json(string json_file) {
+//     zstr::ifstream sig_stream(json_file);
+//     json::value json = json::parse(sig_stream);
+//     string filetype = string(json["metadata"]["filetype"].as_string());
+//     auto genes = json["data"].as_object();
+
+//     if (filetype == "private") {
+//         // Intermediate step to store reverse hashing
+//         parallel_flat_hash_map<uint64_t, string> reverse_hash_map;
+
+//         // iterate over genes:
+//         for (auto it = genes.begin(); it != genes.end(); ++it) {
+//             string parent_name = it->first;
+//             auto gene = it->second.as_array();
+//             for (auto it2 = gene.begin(); it2 != gene.end(); ++it2) {
+//                 string str_child = it2->as_string();
+//                 uint64_t hashed_child = hasher(str_child);
+//                 reverse_hash_map[hashed_child] = str_child;
+//                 map->operator[](parent_name).emplace(hashed_child);
+//             }
+//         }
+
+//     }
+//     else if (filetype == "public") {
+//         // iterate over genes:
+//         for (auto it = genes.begin(); it != genes.end(); it++) {
+//             string parent_name = it->first;
+//             cout << "parent_name: " << parent_name << endl;
+//             auto gene = it->second.as_array();
+//             map->operator[](parent_name) = parallel_flat_hash_set<uint64_t>(gene.size());
+//             for (auto it2 = gene.begin(); it2 != gene.end(); it2++) {
+//                 map->operator[](parent_name).insert(to_uint64(it2->as_string()));
+//             }
+//         }
+//     }
+//     else {
+//         cout << "Unknown filetype: " << filetype << endl;
+//         exit(0);
+//     }
+
+// }
+
+// void DBRetina_json_parser::export_map_to_tsv(string output_file) {
+//     ofstream file(output_file);
+//     for (auto it = map->begin(); it != map->end(); ++it) {
+//         file << it->first << "\t";
+//         for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+//             file << *it2;
+//             if (next(it2) != it->second.end()) {
+//                 file << ", ";
+//             }
+//         }
+//         file << endl;
+//     }
+//     file.close();
+// }
+
+// DBRetina_json_parser::DBRetina_json_parser(string json_file) {
+//     json_file_name = json_file;
+//     sig_stream.open(json_file);
+//     json = json::parse(sig_stream);
+//     hasher = string_hasher();
+//     output_prefix = json_file.substr(0, json_file.find_last_of(".")).substr(json_file.find_last_of("/") + 1);
+//     load_json(json_file);
+//     cout << "exporting map" << endl;
+//     export_map_to_tsv(output_prefix + "_map.tsv");
+// }
+
+
+
+
+// int main(int argc, char* argv[]) {
+
+//     string asc_file = argv[1];
+//     string names_file = argv[2];
+//     string asc_file_wo_extension = asc_file.substr(0, asc_file.find_last_of("."));
+//     string asc_file_base_name_without_extension = asc_file_wo_extension.substr(asc_file_wo_extension.find_last_of("/") + 1);
+//     string private_output_file = asc_file_base_name_without_extension + "_private.json";
+//     string public_output_file = asc_file_base_name_without_extension + "_public.json";
+
+//     sketch_dbretine(asc_file, names_file);
+
+//     DBRetina_json_parser parser(private_output_file);
+
+// }
