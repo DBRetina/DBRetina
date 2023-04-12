@@ -54,6 +54,7 @@ struct string_hasher
 void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) {
     string line, parent, child;
     ifstream read(filename);
+    getline(read, line); // skip first line
     while (std::getline(read, line)) // read whole line into line
     {
         std::istringstream iss(line); // string stream
@@ -70,6 +71,7 @@ void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) 
 void load_names_tsv_to_map(string filename, str_str_map* map) {
     string line, child, parent;
     ifstream read(filename);
+    getline(read, line); // skip first line
     while (std::getline(read, line)) // read whole line into line
     {
         std::istringstream iss(line); // string stream

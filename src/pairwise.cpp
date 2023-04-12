@@ -9,6 +9,7 @@
 #include "parallel_hashmap/phmap.h"
 #include "parallel_hashmap/phmap_dump.h"
 #include <cassert>
+#include <math.h>
 
 using boost::adaptors::transformed;
 using boost::algorithm::join;
@@ -138,7 +139,7 @@ namespace kSpider {
         
 
         // TODO: should be csv, rename later.
-        // std::ifstream data(index_prefix + "_kSpider_colorCount.tsv");
+        // std::ifstream data(index_prefix + "_DBRetina_colorCount.tsv");
         // if (!data.is_open()) std::exit(EXIT_FAILURE);
         // std::string str;
         // std::getline(data, str); // skip the first line
@@ -171,7 +172,7 @@ namespace kSpider {
 
 
         std::ofstream fstream_kmerCount;
-        fstream_kmerCount.open(index_prefix + "_kSpider_seqToKmersNo.tsv");
+        fstream_kmerCount.open(index_prefix + "_DBRetina_seqToKmersNo.tsv");
         fstream_kmerCount << "ID\tseq\tkmers\n";
         uint64_t counter = 0;
         for (const auto& item : groupID_to_kmerCount) {
@@ -237,40 +238,58 @@ namespace kSpider {
         }
 
         cout << "pairwise hashmap construction: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
-        cout << "writing pairwise matrix to " << index_prefix << "_kSpider_pairwise.tsv" << endl;
+        cout << "writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv" << endl;
 
         std::ofstream myfile;
-        myfile.open(index_prefix + "_kSpider_pairwise.tsv");
+        myfile.open(index_prefix + "_DBRetina_pairwise.tsv");
         myfile
-            << "group_1"
-            << "\tgroup_2"
-            << "\tshared_genes"
-            // << "\tmin_containment"
-            // << "\tavg_containment"
-            // << "\tmax_containment"
+            << "source_1"
+            << "\tsource_2"
+            << "\tshared_kmers"
+            << "\tmin_containment"
+            << "\tavg_containment"
+            << "\tmax_containment"
+            << "\tochiai"
+            << "\tjaccard"
             << '\n';
         uint64_t line_count = 0;
         for (const auto& edge : edges) {
             uint64_t shared_kmers = edge.second;
             uint32_t source_1 = edge.first.first;
             uint32_t source_2 = edge.first.second;
-            // uint32_t source_1_kmers = groupID_to_kmerCount[source_1];
-            // uint32_t source_2_kmers = groupID_to_kmerCount[source_2];
+            uint32_t source_1_kmers = groupID_to_kmerCount[source_1];
+            uint32_t source_2_kmers = groupID_to_kmerCount[source_2];
 
-            // float cont_1_in_2 = (float)shared_kmers / source_2_kmers;
-            // float cont_2_in_1 = (float)shared_kmers / source_1_kmers;
-            // float min_containment = min(cont_1_in_2, cont_2_in_1);
-            // float avg_containment = (cont_1_in_2 + cont_2_in_1) / 2.0;
-            // float max_containment = max(cont_1_in_2, cont_2_in_1);
+            // containments
+            float cont_1_in_2 = (float)shared_kmers / source_2_kmers;
+            float cont_2_in_1 = (float)shared_kmers / source_1_kmers;
+            float min_containment = min(cont_1_in_2, cont_2_in_1);
+            float avg_containment = (cont_1_in_2 + cont_2_in_1) / 2.0;
+            float max_containment = max(cont_1_in_2, cont_2_in_1);
+
+            // Ochiai distance
+            float ochiai = ((float)shared_kmers / sqrt((float)source_1_kmers * (float)source_2_kmers));            
+
+            // Jaccard distance (if size of samples is roughly similar)
+            // J(A, B) = 1 - |A ∩ B| / (|A| + |B| - |A ∩ B|)
+            float jaccard = (float)shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers);
+
+            // Kulczynski distance needs abundance of each sample
+            // float kulczynski = (float)shared_kmers / (source_1_kmers + source_2_kmers) * 2;
+
+            
+            
 
             myfile
                 << source_1
                 << '\t' << source_2
                 << '\t' << shared_kmers
-                // << '\t' << min_containment
-                // << '\t' << avg_containment
-                // << '\t' << max_containment
-                << '\n';
+                << '\t' << min_containment
+                << '\t' << avg_containment
+                << '\t' << max_containment
+                << '\t' << ochiai
+                << '\t' << jaccard;
+                myfile << '\n';
         }
         myfile.close();
     }

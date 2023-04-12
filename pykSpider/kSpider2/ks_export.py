@@ -8,6 +8,7 @@ import click
 import pandas as pd
 from kSpider2.click_context import cli
 from scipy.cluster.hierarchy import linkage, to_tree, ClusterWarning
+import numpy as np
 from warnings import simplefilter
 simplefilter("ignore", ClusterWarning)
 
@@ -42,18 +43,18 @@ def get_newick(node, parent_dist, leaf_names, newick='') -> str:
 @click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
 # @click.option('--dist-mat', "distance_matrix", is_flag=True, help="Convert pairwise matrix to NxN distance matrix", default=False)
 @click.option('--newick', "newick", is_flag=True, help="Convert pairwise (containment) matrix to newick format", default=False)
-@click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ani']")
+@click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
 @click.option('-o', "overwritten_output", default="na", required=False, type=click.STRING, help="custom output file name prefix")
 @click.pass_context
 def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     """
-    Export kSpider pairwise to multiple formats.
+    Export DBRetina pairwise to multiple formats.
     """
     
     index_basename = os.path.basename(index_prefix)
-    kSpider_pairwise_tsv = f"{index_prefix}_kSpider_pairwise.tsv"
+    DBRetina_pairwise_tsv = f"{index_prefix}_DBRetina_pairwise.tsv"
     namesMap_file = f"{index_prefix}.namesMap"
-    seqToKmers_tsv = f"{index_prefix}_kSpider_seqToKmersNo.tsv"
+    seqToKmers_tsv = f"{index_prefix}_DBRetina_seqToKmersNo.tsv"
     
     LOGGER = ctx.obj
     
@@ -61,7 +62,8 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
         "min_cont": 3,
         "avg_cont": 4,
         "max_cont": 5,
-        "ani": 99
+        "ochiai": 6,
+        "jaccard": 7,
     }
     
     if distance_type not in distance_to_col:
@@ -69,14 +71,14 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     
     dist_col = distance_to_col[distance_type]
     if dist_col == "ani":
-        with open(kSpider_pairwise_tsv, 'r') as pairwise_tsv:
+        with open(DBRetina_pairwise_tsv, 'r') as pairwise_tsv:
             if "ani" not in next(pairwise_tsv).lower():
-                LOGGER.ERROR("ANI was selected but was not found in the pairwise file.\nPlease, run kSpider pairwise --extend_with_ani -i <index_prefix> script")
+                LOGGER.ERROR("ANI was selected but was not found in the pairwise file.\nPlease, run DBRetina pairwise --extend_with_ani -i <index_prefix> script")
     
     
     
     # Check for existing pairwise file
-    for _file in [kSpider_pairwise_tsv, namesMap_file, seqToKmers_tsv]:
+    for _file in [DBRetina_pairwise_tsv, namesMap_file, seqToKmers_tsv]:
         if not os.path.exists(_file):
             LOGGER.ERROR(f"File {_file} is not found.")
 
@@ -98,43 +100,26 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     with open(namesMap_file) as NAMES:
         next(NAMES)
         for line in NAMES:
-            line = line.strip().split()
+            line = line.strip().split(' ')
             _id = line[0]
             _name = line[1]
             namesMap_dict[_id] = _name
 
-    """Parse kSpider's pairwise
+    """Parse DBRetina's pairwise
     """
     
     distances = dict()
-    labeled_out = f"kSpider_{index_basename}_pairwise.tsv"
-    distmatrix_out = f"kSpider_{index_basename}_distmat.tsv"
-    newick_out = f"kSpider_{index_basename}.newick"
+    labeled_out = f"DBRetina_{index_basename}_pairwise.tsv"
+    distmatrix_out = f"DBRetina_{index_basename}_distmat.tsv"
+    newick_out = f"DBRetina_{index_basename}.newick"
     
     if overwritten_output != "na":
         labeled_out = f"{overwritten_output}_pairwise.tsv"
         distmatrix_out = f"{overwritten_output}_distmat.tsv"
         newick_out = f"{overwritten_output}.newick"
-    
-    if distance_type == "ani":
-        with open(kSpider_pairwise_tsv) as PAIRWISE, open(labeled_out, 'w') as NEW, open(index_prefix + "_kSpider_pairwise.ani_col.tsv") as ANI:
-            ctx.obj.INFO(f"Writing pairwise matrix to {labeled_out}")
-            NEW.write(f"source1\tsource2\t{distance_type}\n")
-            # Skip header
-            next(PAIRWISE)
-            next(ANI)
-            for line in PAIRWISE:
-                line = (line.strip().split('\t'))
-                origin_grp1 = line[0]
-                origin_grp2 = line[1]
-                grp1 = namesMap_dict[origin_grp1]
-                grp2 = namesMap_dict[origin_grp2]
-                dist_metric = float(next(ANI).strip())
-                distances[(grp1, grp2)] = dist_metric
-                NEW.write(f"{grp1}\t{grp2}\t{dist_metric}\n")
                 
     else:
-        with open(kSpider_pairwise_tsv) as PAIRWISE, open(labeled_out, 'w') as NEW:
+        with open(DBRetina_pairwise_tsv) as PAIRWISE, open(labeled_out, 'w') as NEW:
             ctx.obj.INFO(f"Writing pairwise matrix to {labeled_out}")
             NEW.write(f"grp1\tgrp2\t{distance_type}\n")
             # Skip header
@@ -149,6 +134,23 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
                 distances[(grp1, grp2)] = dist_metric
                 NEW.write(f"{grp1}\t{grp2}\t{dist_metric}\n")
 
+    
+    elements = set()
+    for pair in distances.keys():
+        elements.update(pair[:2])
+    index_map = {element: i for i, element in enumerate(sorted(elements))}
+    n = len(elements)
+    dist_matrix = np.zeros((n, n))
+    # Fill in the upper triangle of the distance matrix with the pairwise distances
+    for (src1, src2), dist in distances.items():
+        i = index_map[src1]
+        j = index_map[src2]
+        dist_matrix[i, j] = dist_matrix[j, i] = dist
+    src_names = sorted(elements)
+    dist_df = pd.DataFrame(dist_matrix, index=src_names, columns=src_names)
+    dist_df.to_csv(distmatrix_out + ".new.tsv", sep='\t')
+    
+    
     unique_ids = sorted(set([x for y in distances.keys() for x in y]))
     df = pd.DataFrame(index=unique_ids, columns=unique_ids)
     for k, v in distances.items():
