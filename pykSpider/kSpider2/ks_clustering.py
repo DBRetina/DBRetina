@@ -123,7 +123,7 @@ New help messages
 @click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_containment', 'avg_containment', 'max_containment', 'ochiai', 'jaccard']")
 @click.pass_context
 def main(ctx, index_prefix, cutoff, distance_type):
-    """Sequence clustering."""
+    """Clustering."""
     cutoff = float(cutoff) * 100
     kCl = Clusters(logger_obj=ctx.obj, index_prefix=index_prefix,
                    cut_off_threshold=cutoff, dist_type=distance_type)
