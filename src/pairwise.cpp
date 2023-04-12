@@ -242,34 +242,34 @@ namespace kSpider {
         std::ofstream myfile;
         myfile.open(index_prefix + "_kSpider_pairwise.tsv");
         myfile
-            << "source_1"
-            << "\tsource_2"
-            << "\tshared_kmers"
-            << "\tmin_containment"
-            << "\tavg_containment"
-            << "\tmax_containment"
+            << "group_1"
+            << "\tgroup_2"
+            << "\tshared_genes"
+            // << "\tmin_containment"
+            // << "\tavg_containment"
+            // << "\tmax_containment"
             << '\n';
         uint64_t line_count = 0;
         for (const auto& edge : edges) {
             uint64_t shared_kmers = edge.second;
             uint32_t source_1 = edge.first.first;
             uint32_t source_2 = edge.first.second;
-            uint32_t source_1_kmers = groupID_to_kmerCount[source_1];
-            uint32_t source_2_kmers = groupID_to_kmerCount[source_2];
+            // uint32_t source_1_kmers = groupID_to_kmerCount[source_1];
+            // uint32_t source_2_kmers = groupID_to_kmerCount[source_2];
 
-            float cont_1_in_2 = (float)shared_kmers / source_2_kmers;
-            float cont_2_in_1 = (float)shared_kmers / source_1_kmers;
-            float min_containment = min(cont_1_in_2, cont_2_in_1);
-            float avg_containment = (cont_1_in_2 + cont_2_in_1) / 2.0;
-            float max_containment = max(cont_1_in_2, cont_2_in_1);
+            // float cont_1_in_2 = (float)shared_kmers / source_2_kmers;
+            // float cont_2_in_1 = (float)shared_kmers / source_1_kmers;
+            // float min_containment = min(cont_1_in_2, cont_2_in_1);
+            // float avg_containment = (cont_1_in_2 + cont_2_in_1) / 2.0;
+            // float max_containment = max(cont_1_in_2, cont_2_in_1);
 
             myfile
                 << source_1
                 << '\t' << source_2
                 << '\t' << shared_kmers
-                << '\t' << min_containment
-                << '\t' << avg_containment
-                << '\t' << max_containment
+                // << '\t' << min_containment
+                // << '\t' << avg_containment
+                // << '\t' << max_containment
                 << '\n';
         }
         myfile.close();
