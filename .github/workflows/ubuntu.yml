@@ -29,7 +29,7 @@ jobs:
         run: cmake -BkSpider_BUILD_DIR
 
       - name: build
-        run: cmake --build kSpider_BUILD_DIR -j1
+        run: cmake --build kSpider_BUILD_DIR -j4
 
       - name: collect code coverage
         run: bash <(curl -s https://codecov.io/bash) || echo "Codecov did not collect coverage reports"

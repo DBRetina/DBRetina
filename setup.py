@@ -101,6 +101,8 @@ INCLUDES = [
     'lib/kProcessor/ThirdParty/sdsl-lite/include',
     'lib/kProcessor/ThirdParty/ntCard/include',
     'lib/kProcessor/ThirdParty/kmerDecoder/lib/parallel-hashmap',
+    'lib/json_parser/lib/include',
+    'lib/zstr/src',
 ]
 
 check_exist(INCLUDES)
@@ -187,9 +189,9 @@ class BuildPy(build_py):
 
 
 
-setup(name='kSpider',
+setup(name='DBRetina',
       version=get_version(),
-      description="""A simple yet powerful sequence clustering tool""",
+      description="""DBRetina Python Package""",
       ext_modules=[kSpider_module],
       py_modules=['kSpider_internal'],
       packages=find_packages('pykSpider'),
@@ -211,11 +213,11 @@ setup(name='kSpider',
       include_package_data=True,
       entry_points='''
         [console_scripts]
-        kSpider=kSpider2:cli
+        DBRetina=kSpider2:cli
     ''',
       project_urls={
-          'Bug Reports': 'https://github.com/dib-lab/kSpider/issues',
-          'Source': 'https://github.com/dib-lab/kSpider/issues',
+          'Bug Reports': 'https://github.com/DBRetina/DBRetina/issues',
+          'Source': 'https://github.com/DBRetina/DBRetina/issues',
       },
       )
 

@@ -19,7 +19,7 @@ function cleanup() {
     rm -rf src/swig_interfaces/kSpider_internal_wrap.cpp
     rm -rf pykSpider/internal/kSpider_internal.py
     rm -rf *so
-    rm -rf pykSpider/kSpider.egg-info/
+    rm -rf pykSpider/DBRetina.egg-info/
     rm -rf build/bdist.linux-x86_64
 }
 
@@ -36,9 +36,9 @@ $(which python) setup.py bdist_wheel
 
 cd dist/
 
-$(which python) -m pip uninstall kSpider -y
+$(which python) -m pip uninstall DBRetina -y
 
-$(which python) -m pip install kSpider*cp*.whl
+$(which python) -m pip install DBRetina*cp*.whl``
 
 rm -rf build/temp
 rm -rf build/lib.linux*
@@ -48,5 +48,5 @@ rm -rf *pyc
 rm -rf src/swig_interfaces/kSpider_internal_wrap.cpp
 rm -rf kSpider_internal.py
 rm -rf *so
-rm -rf pykSpider/kSpider.egg-info/
+rm -rf pykSpider/DBRetina.egg-info/
 rm -rf build/bdist.linux-x86_64
