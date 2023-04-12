@@ -66,7 +66,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           user: __token__
-          password: ${{ secrets.TEST_PYPI_API_KEY }}
+          password: ${{ secrets.TEST_PYPI_DBRETINA_API_KEY }}
           repository_url: https://test.pypi.org/legacy/
           packages_dir: ${{steps.fetch_artifacts.outputs.download-path}}/artifact/
           skip_existing: true
@@ -88,7 +88,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           user: __token__
-          password: ${{ secrets.PYPI_KSPIDER2_API_KEY }}
+          password: ${{ secrets.PYPI_DBRETINA_API_KEY }}
           packages_dir: ${{steps.fetch_artifacts.outputs.download-path}}/artifact/
           skip_existing: true
           verbose: true
