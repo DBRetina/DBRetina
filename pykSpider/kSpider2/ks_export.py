@@ -136,19 +136,19 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
 
     
     elements = set()
-    for pair in distances.keys():
-        elements.update(pair[:2])
-    index_map = {element: i for i, element in enumerate(sorted(elements))}
-    n = len(elements)
-    dist_matrix = np.zeros((n, n))
-    # Fill in the upper triangle of the distance matrix with the pairwise distances
-    for (src1, src2), dist in distances.items():
-        i = index_map[src1]
-        j = index_map[src2]
-        dist_matrix[i, j] = dist_matrix[j, i] = dist
-    src_names = sorted(elements)
-    dist_df = pd.DataFrame(dist_matrix, index=src_names, columns=src_names)
-    dist_df.to_csv(distmatrix_out + ".new.tsv", sep='\t')
+    # for pair in distances.keys():
+    #     elements.update(pair[:2])
+    # index_map = {element: i for i, element in enumerate(sorted(elements))}
+    # n = len(elements)
+    # dist_matrix = np.zeros((n, n))
+    # # Fill in the upper triangle of the distance matrix with the pairwise distances
+    # for (src1, src2), dist in distances.items():
+    #     i = index_map[src1]
+    #     j = index_map[src2]
+    #     dist_matrix[i, j] = dist_matrix[j, i] = dist
+    # src_names = sorted(elements)
+    # dist_df = pd.DataFrame(dist_matrix, index=src_names, columns=src_names)
+    # dist_df.to_csv(distmatrix_out + ".new.tsv", sep='\t')
     
     
     unique_ids = sorted(set([x for y in distances.keys() for x in y]))
