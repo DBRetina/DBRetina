@@ -13,7 +13,8 @@ class Clusters:
         "min_cont": 3,
         "avg_cont": 4,
         "max_cont": 5,
-        "ani": 6,
+        "ochiai": 6,
+        "jaccard": 7,
     }
 
     seq_to_kmers = dict()
@@ -26,10 +27,10 @@ class Clusters:
         self.edges_batch_number = 10_000_000
         self.names_file = index_prefix + ".namesMap"
         self.cut_off_threshold = cut_off_threshold
-        self.seqToKmers_file = index_prefix + "_kSpider_seqToKmersNo.tsv"
-        self.pairwise_file = index_prefix + "_kSpider_pairwise.tsv"
+        self.seqToKmers_file = index_prefix + "_DBRetina_seqToKmersNo.tsv"
+        self.pairwise_file = index_prefix + "_DBRetina_pairwise.tsv"
         self.output = index_prefix + \
-            f"_kSpider_clusters_{cut_off_threshold}%.tsv"
+            f"_DBRetina_clusters_{cut_off_threshold}%.tsv"
         self.shared_kmers_threshold = 200
         self.Logger.INFO("Loading TSV pairwise file")
         self.load_seq_to_kmers(self.seqToKmers_file)
@@ -37,10 +38,6 @@ class Clusters:
         if dist_type not in self.distance_to_col:
             logger_obj.ERROR("unknown distance!")
         self.dist_col = self.distance_to_col[dist_type]
-
-        if dist_type == "ani":
-            if not os.path.exists(self.index_prefix + "_kSpider_pairwise.ani_col.tsv"):
-                logger_obj.ERROR(f"ANI was selected, but the ani file {self.index_prefix}_kSpider_pairwise.ani_col.tsv was not found!")
 
         self.graph = rx.PyGraph()
         self.nodes_indeces = self.graph.add_nodes_from(
@@ -67,54 +64,27 @@ class Clusters:
         print("[i] constructing graph")
         with open(self.pairwise_file, 'r') as pairwise_tsv:
             next(pairwise_tsv)  # skip header
-            if self.dist_type == "ani":
-                with open(self.index_prefix + "_kSpider_pairwise.ani_col.tsv") as ani_col_file:
-                    next(ani_col_file) # skip header
-                    for row in pairwise_tsv:
-                        row = row.strip().split('\t')
-                        seq1 = int(row[0]) - 1
-                        seq2 = int(row[1]) - 1
+            for row in pairwise_tsv:
+                row = row.strip().split('\t')
+                seq1 = int(row[0]) - 1
+                seq2 = int(row[1]) - 1
+                distance = float(row[self.dist_col]) * 100
 
-                        line = next(ani_col_file)
-                        distance = float(line.strip()) * 100.0
+                # don't make graph edge
+                if distance < self.cut_off_threshold:
+                    continue
 
-                        # don't make graph edge
-                        if distance < self.cut_off_threshold:
-                            continue
-
-                        if batch_counter < self.edges_batch_number:
-                            batch_counter += 1
-                            edges_tuples.append((seq1, seq2, distance))
-                        else:
-                            self.graph.add_edges_from(edges_tuples)
-                            batch_counter = 0
-                            edges_tuples.clear()
-
-                    else:
-                        if len(edges_tuples):
-                            self.graph.add_edges_from(edges_tuples)
-            else:
-                for row in pairwise_tsv:
-                    row = row.strip().split('\t')
-                    seq1 = int(row[0]) - 1
-                    seq2 = int(row[1]) - 1
-                    distance = float(row[self.dist_col]) * 100
-
-                    # don't make graph edge
-                    if distance < self.cut_off_threshold:
-                        continue
-
-                    if batch_counter < self.edges_batch_number:
-                        batch_counter += 1
-                        edges_tuples.append((seq1, seq2, distance))
-                    else:
-                        self.graph.add_edges_from(edges_tuples)
-                        batch_counter = 0
-                        edges_tuples.clear()
-
+                if batch_counter < self.edges_batch_number:
+                    batch_counter += 1
+                    edges_tuples.append((seq1, seq2, distance))
                 else:
-                    if len(edges_tuples):
-                        self.graph.add_edges_from(edges_tuples)
+                    self.graph.add_edges_from(edges_tuples)
+                    batch_counter = 0
+                    edges_tuples.clear()
+
+            else:
+                if len(edges_tuples):
+                    self.graph.add_edges_from(edges_tuples)
 
     def cluster_graph(self):
         self.connected_components = rx.connected_components(self.graph)
@@ -122,7 +92,7 @@ class Clusters:
             f"number of clusters: {len(self.connected_components)}")
         single_components = 0
         retworkx_export = self.index_prefix + \
-            f"_kSpider_graph_{self.cut_off_threshold}%.json"
+            f"_DBRetina_graph_{self.cut_off_threshold}%.json"
         # and {self.output} ...")
         self.Logger.INFO(f"writing {retworkx_export}")
         # rx.node_link_json(self.graph, path = retworkx_export)
@@ -150,7 +120,7 @@ New help messages
 @cli.command(name="cluster", help_priority=4)
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 1, clamp=False), default=0.0, show_default=True, help="cluster sequences with (containment > cutoff)")
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="Index file prefix")
-@click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_containment', 'avg_containment', 'max_containment', 'ani']")
+@click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_containment', 'avg_containment', 'max_containment', 'ochiai', 'jaccard']")
 @click.pass_context
 def main(ctx, index_prefix, cutoff, distance_type):
     """Sequence clustering."""
