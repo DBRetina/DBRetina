@@ -172,7 +172,7 @@ namespace kSpider {
 
 
         std::ofstream fstream_kmerCount;
-        fstream_kmerCount.open(index_prefix + "_DBRetina_seqToKmersNo.tsv");
+        fstream_kmerCount.open(index_prefix + "_DBRetina_genesNo.tsv");
         fstream_kmerCount << "ID\tseq\tkmers\n";
         uint64_t counter = 0;
         for (const auto& item : groupID_to_kmerCount) {

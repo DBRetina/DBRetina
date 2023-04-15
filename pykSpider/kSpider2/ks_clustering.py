@@ -23,14 +23,13 @@ class Clusters:
     def __init__(self, logger_obj, index_prefix, cut_off_threshold, dist_type):
         self.index_prefix = index_prefix
         self.Logger = logger_obj
-        self.dist_type = dist_type
         self.edges_batch_number = 10_000_000
-        self.names_file = index_prefix + ".namesMap"
+        self.dist_type = dist_type
+        self.names_file = f"{index_prefix}.namesMap"
         self.cut_off_threshold = cut_off_threshold
-        self.seqToKmers_file = index_prefix + "_DBRetina_seqToKmersNo.tsv"
-        self.pairwise_file = index_prefix + "_DBRetina_pairwise.tsv"
-        self.output = index_prefix + \
-            f"_DBRetina_clusters_{cut_off_threshold}%.tsv"
+        self.seqToKmers_file = f"{index_prefix}_DBRetina_genesNo.tsv"
+        self.pairwise_file = f"{index_prefix}_DBRetina_pairwise.tsv"
+        self.output = f"{index_prefix}_DBRetina_clusters_{cut_off_threshold}%.tsv"
         self.shared_kmers_threshold = 200
         self.Logger.INFO("Loading TSV pairwise file")
         self.load_seq_to_kmers(self.seqToKmers_file)
