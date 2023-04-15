@@ -20,8 +20,8 @@ namespace kSpider{
     // void paired_end_to_kDataFrame(string r1_file_name, string r2_file_name, int kSize, int chunk_size, int downsampling_ratio, bool remove_singletones);
     // void single_end_to_kDataFrame(string r1_file_name, int kSize, int chunk_size, int downsampling_ration, bool remove_singletones);
     // void protein_to_kDataFrame(string r1_file_name, int kSize, int chunk_size, bool is_dayhoff, string output_prefix, int downsampling_ration = 1);
-    void dbretina_indexing(string json_file);
+    void dbretina_indexing(string json_file, string user_index_prefix);
 };
 
-void sketch_dbretina(string asc_file, string names_file);
+void sketch_dbretina(string asc_file, string names_file="NA");
 void parse_dbretina_json(string json_file, str_hashed_vec_map* map);

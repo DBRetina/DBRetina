@@ -10,7 +10,7 @@ import os
 import json
 
 
-@cli.command(name="sketch", help_priority=1)
+@cli.command(name="sketch", help_priority=1, hidden=True)
 @click.option('-a', '--asc', "asc_file", required=True, type=click.Path(exists=True), help="ASC file")
 @click.option('-n', '--names', "names_file", required=True, type=click.Path(exists=True), help="Names file")
 @click.pass_context

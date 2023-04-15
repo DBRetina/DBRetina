@@ -4,17 +4,15 @@ import os
 import click
 from kSpider2.click_context import cli
 import rustworkx as rx
-from tqdm import tqdm
-
 
 class Clusters:
 
     distance_to_col = {
-        "min_cont": 3,
-        "avg_cont": 4,
-        "max_cont": 5,
-        "ochiai": 6,
-        "jaccard": 7,
+        "min_cont": 5,
+        "avg_cont": 6,
+        "max_cont": 7,
+        "ochiai": 8,
+        "jaccard": 9,
     }
 
     seq_to_kmers = dict()
@@ -53,7 +51,7 @@ class Clusters:
         with open(self.names_file, 'r') as namesMap:
             next(namesMap)  # skip the header
             for row in namesMap:
-                row = row.strip().split()
+                row = row.strip().split('|')
                 self.names_map[int(row[0])] = row[1]
 
     def construct_graph(self):
@@ -65,8 +63,6 @@ class Clusters:
             next(pairwise_tsv)  # skip header
             for row in pairwise_tsv:
                 row = row.strip().split('\t')
-                seq1 = int(row[0]) - 1
-                seq2 = int(row[1]) - 1
                 distance = float(row[self.dist_col]) * 100
 
                 # don't make graph edge
@@ -75,15 +71,16 @@ class Clusters:
 
                 if batch_counter < self.edges_batch_number:
                     batch_counter += 1
+                    seq1 = int(row[0]) - 1
+                    seq2 = int(row[1]) - 1
                     edges_tuples.append((seq1, seq2, distance))
                 else:
                     self.graph.add_edges_from(edges_tuples)
                     batch_counter = 0
                     edges_tuples.clear()
 
-            else:
-                if len(edges_tuples):
-                    self.graph.add_edges_from(edges_tuples)
+            if len(edges_tuples):
+                self.graph.add_edges_from(edges_tuples)
 
     def cluster_graph(self):
         self.connected_components = rx.connected_components(self.graph)
@@ -103,7 +100,7 @@ class Clusters:
                 #     continue
                 named_component = [self.names_map[node + 1]
                                    for node in component]
-                CLUSTERS.write(','.join(named_component) + '\n')
+                CLUSTERS.write('|'.join(named_component) + '\n')
 
 
 """

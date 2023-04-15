@@ -20,7 +20,7 @@ using hashed_MAP = parallel_flat_hash_map<string, parallel_flat_hash_set<uint64_
 
 void load_tsv_to_map(string filename, str_vec_map* map);
 void load_names_tsv_to_map(string filename, str_str_map* map);
-void sketch_dbretina(string asc_file, string names_file);
+void sketch_dbretina(string asc_file, string names_file="NA");
 void parse_dbretina_json(string json_file, str_hashed_vec_map* map);
 
 // class DBRetina_json_parser {

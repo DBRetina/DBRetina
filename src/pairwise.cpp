@@ -83,6 +83,35 @@ inline void map_insert(int_int_map& _MAP, uint32_t& key, uint32_t& value) {
 }
 
 
+inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string>& map) {
+    std::ifstream inputFile(filename);
+
+    if (!inputFile.is_open()) {
+        std::cerr << "Error opening the file: " << filename << std::endl;
+        return;
+    }
+
+    std::string line;
+    std::getline(inputFile, line); // skip first line
+    while (std::getline(inputFile, line)) {
+        std::istringstream lineStream(line);
+        std::string column1, column2;
+
+        if (std::getline(lineStream, column1, '|') && std::getline(lineStream, column2, '|')) {
+            transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
+            map.operator[](stoi(column1)) = column2;
+        }
+        else {
+            std::cerr << "Invalid line format: " << line << std::endl;
+            inputFile.close();
+            return;
+        }
+    }
+
+    inputFile.close();
+}
+
+
 namespace kSpider {
 
     void set_to_vector(const phmap::flat_hash_set<uint32_t>& set, vector<uint32_t>& vec) {
@@ -93,7 +122,7 @@ namespace kSpider {
         }
     }
 
-    void load_colors_to_sources(const std::string& filename, int_vec_map * map)
+    void load_colors_to_sources(const std::string& filename, int_vec_map* map)
     {
         phmap::BinaryInputArchive ar_in(filename.c_str());
         size_t size;
@@ -128,6 +157,9 @@ namespace kSpider {
         int_vec_map color_to_ids; // = new phmap::flat_hash_map<uint64_t, phmap::flat_hash_set<uint32_t>>;
         string colors_map_file = index_prefix + "_color_to_sources.bin";
         load_colors_to_sources(colors_map_file, &color_to_ids);
+        flat_hash_map<int, std::string> namesMap;
+        load_namesMap(index_prefix + ".namesMap", namesMap);
+        assert(namesMap.size());
 
         auto begin_time = Time::now();
 
@@ -136,7 +168,7 @@ namespace kSpider {
         begin_time = Time::now();
         int_int_map colorsCount;
         load_colors_count(index_prefix + "_color_count.bin", colorsCount);
-        
+
 
         // TODO: should be csv, rename later.
         // std::ifstream data(index_prefix + "_DBRetina_colorCount.tsv");
@@ -155,7 +187,7 @@ namespace kSpider {
 
         cout << "parsing index colors: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
         begin_time = Time::now();
-        
+
         // for (const auto& record : color_to_ids) {
         //     uint32_t colorCount = colorsCount[record.first];
         //     for (auto group_id : record.second) {
@@ -165,7 +197,7 @@ namespace kSpider {
 
         // Loading kmer counts
         flat_hash_map<uint32_t, uint32_t> groupID_to_kmerCount;
-        string _file_id_to_kmer_count = index_prefix + "_groupID_to_kmerCount.bin";
+        string _file_id_to_kmer_count = index_prefix + "_groupID_to_geneCount.bin";
         phmap::BinaryInputArchive ar_in_kmer_count(_file_id_to_kmer_count.c_str());
         groupID_to_kmerCount.phmap_load(ar_in_kmer_count);
         assert(groupID_to_kmerCount.size());
@@ -173,13 +205,13 @@ namespace kSpider {
 
         std::ofstream fstream_kmerCount;
         fstream_kmerCount.open(index_prefix + "_DBRetina_genesNo.tsv");
-        fstream_kmerCount << "ID\tseq\tkmers\n";
+        fstream_kmerCount << "ID\tgroup\tgenes\n";
         uint64_t counter = 0;
         for (const auto& item : groupID_to_kmerCount) {
             fstream_kmerCount << ++counter << '\t' << item.first << '\t' << item.second << '\n';
         }
         fstream_kmerCount.close();
-        cout << "kmer counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        cout << "genes counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
         // Loading done
 
@@ -224,7 +256,7 @@ namespace kSpider {
                         [ccount](PAIRS_COUNTER::value_type& v) { v.second += ccount; },           // called only when key was already present
                         ccount
                     );
-                    
+
                     // ** BUG FIX ** was creating wrong shared_kmers
                     // auto _p = make_pair(_seq1, _seq2);
                     // uint32_t ccount = colorsCount[item.first];
@@ -243,9 +275,11 @@ namespace kSpider {
         std::ofstream myfile;
         myfile.open(index_prefix + "_DBRetina_pairwise.tsv");
         myfile
-            << "source_1"
-            << "\tsource_2"
-            << "\tshared_kmers"
+            << "group_1_ID"
+            << "\tgroup_2_ID"
+            << "\tgroup_1_name"
+            << "\tgroup_2_name"
+            << "\tshared_genes"
             << "\tmin_containment"
             << "\tavg_containment"
             << "\tmax_containment"
@@ -268,7 +302,7 @@ namespace kSpider {
             float max_containment = max(cont_1_in_2, cont_2_in_1);
 
             // Ochiai distance
-            float ochiai = ((float)shared_kmers / sqrt((float)source_1_kmers * (float)source_2_kmers));            
+            float ochiai = ((float)shared_kmers / sqrt((float)source_1_kmers * (float)source_2_kmers));
 
             // Jaccard distance (if size of samples is roughly similar)
             // J(A, B) = 1 - |A ∩ B| / (|A| + |B| - |A ∩ B|)
@@ -277,19 +311,21 @@ namespace kSpider {
             // Kulczynski distance needs abundance of each sample
             // float kulczynski = (float)shared_kmers / (source_1_kmers + source_2_kmers) * 2;
 
-            
-            
+
+
 
             myfile
                 << source_1
                 << '\t' << source_2
+                << '\t' << namesMap[source_1]
+                << '\t' << namesMap[source_2]
                 << '\t' << shared_kmers
                 << '\t' << min_containment
                 << '\t' << avg_containment
                 << '\t' << max_containment
                 << '\t' << ochiai
                 << '\t' << jaccard;
-                myfile << '\n';
+            myfile << '\n';
         }
         myfile.close();
     }

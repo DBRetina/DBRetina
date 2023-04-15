@@ -41,7 +41,6 @@ def get_newick(node, parent_dist, leaf_names, newick='') -> str:
 
 @cli.command(name="export", help_priority=5)
 @click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
-# @click.option('--dist-mat', "distance_matrix", is_flag=True, help="Convert pairwise matrix to NxN distance matrix", default=False)
 @click.option('--newick', "newick", is_flag=True, help="Convert pairwise (containment) matrix to newick format", default=False)
 @click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
 @click.option('-o', "overwritten_output", default="na", required=False, type=click.STRING, help="custom output file name prefix")
@@ -54,29 +53,23 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     index_basename = os.path.basename(index_prefix)
     DBRetina_pairwise_tsv = f"{index_prefix}_DBRetina_pairwise.tsv"
     namesMap_file = f"{index_prefix}.namesMap"
-    seqToKmers_tsv = f"{index_prefix}_DBRetina_seqToKmersNo.tsv"
-    
+    seqToKmers_tsv = f"{index_prefix}_DBRetina_genesNo.tsv"
+
     LOGGER = ctx.obj
-    
+
     distance_to_col = {
-        "min_cont": 3,
-        "avg_cont": 4,
-        "max_cont": 5,
-        "ochiai": 6,
-        "jaccard": 7,
+        "min_cont": 5,
+        "avg_cont": 6,
+        "max_cont": 7,
+        "ochiai": 8,
+        "jaccard": 9,
     }
-    
+
     if distance_type not in distance_to_col:
         LOGGER.ERROR("unknown distance!")
-    
-    dist_col = distance_to_col[distance_type]
-    if dist_col == "ani":
-        with open(DBRetina_pairwise_tsv, 'r') as pairwise_tsv:
-            if "ani" not in next(pairwise_tsv).lower():
-                LOGGER.ERROR("ANI was selected but was not found in the pairwise file.\nPlease, run DBRetina pairwise --extend_with_ani -i <index_prefix> script")
-    
-    
-    
+
+    dist_col = distance_to_col[distance_type]    
+
     # Check for existing pairwise file
     for _file in [DBRetina_pairwise_tsv, namesMap_file, seqToKmers_tsv]:
         if not os.path.exists(_file):
@@ -85,7 +78,7 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     """
     # Load kmer count per record
     """
-    seq_to_kmers = dict()
+    seq_to_kmers = {}
     with open(seqToKmers_tsv) as KMER_COUNT:
         next(KMER_COUNT)
         for line in KMER_COUNT:
@@ -96,7 +89,7 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     # Parse namesmap
     """
 
-    namesMap_dict = dict()
+    namesMap_dict = {}
     with open(namesMap_file) as NAMES:
         next(NAMES)
         for line in NAMES:
@@ -107,21 +100,21 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
 
     """Parse DBRetina's pairwise
     """
-    
-    distances = dict()
+
+    distances = {}
     labeled_out = f"DBRetina_{index_basename}_pairwise.tsv"
     distmatrix_out = f"DBRetina_{index_basename}_distmat.tsv"
     newick_out = f"DBRetina_{index_basename}.newick"
-    
+
     if overwritten_output != "na":
         labeled_out = f"{overwritten_output}_pairwise.tsv"
         distmatrix_out = f"{overwritten_output}_distmat.tsv"
         newick_out = f"{overwritten_output}.newick"
-                
+
     else:
         with open(DBRetina_pairwise_tsv) as PAIRWISE, open(labeled_out, 'w') as NEW:
             ctx.obj.INFO(f"Writing pairwise matrix to {labeled_out}")
-            NEW.write(f"grp1\tgrp2\t{distance_type}\n")
+            NEW.write(f"group1\tgroup2\t{distance_type}\n")
             # Skip header
             next(PAIRWISE)
             for line in PAIRWISE:
@@ -134,7 +127,7 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
                 distances[(grp1, grp2)] = dist_metric
                 NEW.write(f"{grp1}\t{grp2}\t{dist_metric}\n")
 
-    
+
     elements = set()
     # for pair in distances.keys():
     #     elements.update(pair[:2])
@@ -149,8 +142,8 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     # src_names = sorted(elements)
     # dist_df = pd.DataFrame(dist_matrix, index=src_names, columns=src_names)
     # dist_df.to_csv(distmatrix_out + ".new.tsv", sep='\t')
-    
-    
+
+
     unique_ids = sorted(set([x for y in distances.keys() for x in y]))
     df = pd.DataFrame(index=unique_ids, columns=unique_ids)
     for k, v in distances.items():
@@ -160,7 +153,7 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     df = df.fillna(0)
     LOGGER.INFO(f"Writing distance matrix to {distmatrix_out}")
     df.to_csv(distmatrix_out, sep='\t')
-        
+
     if newick:
         loaded_df = pd.read_csv(distmatrix_out, sep='\t')
         LOGGER.INFO(f"Writing newick to {newick_out}.")

@@ -50,39 +50,64 @@ struct string_hasher
     }
 };
 
+void load_tsv_to_map(string filename, str_vec_map* map, str_str_map * names_map) {
 
-void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) {
-    string line, parent, child;
-    ifstream read(filename);
-    getline(read, line); // skip first line
-    while (std::getline(read, line)) // read whole line into line
-    {
-        std::istringstream iss(line); // string stream
-        getline(iss, parent, '\t'); // read first part up to comma, ignore the comma
-        iss >> child; // read the second part
-        // lower case the key string
-        transform(parent.begin(), parent.end(), parent.begin(), ::tolower);
-        // lower case the value string
-        transform(child.begin(), child.end(), child.begin(), ::tolower);
-        map->operator[](names_map->operator[](parent)).emplace(child);
+    std::ifstream inputFile(filename);
+
+    if (!inputFile.is_open()) {
+        std::cerr << "Error opening the file: " << filename << std::endl;
+        return;
     }
+
+    std::string line;
+    std::getline(inputFile, line); // skip first line
+    while (std::getline(inputFile, line)) {
+        std::istringstream lineStream(line);
+        std::string column1, column2;
+
+        if (std::getline(lineStream, column1, '\t') && std::getline(lineStream, column2, '\t')) {
+            transform(column1.begin(), column1.end(), column1.begin(), ::tolower);
+            transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
+            map->operator[](names_map->operator[](column1)).emplace(column2);
+        }
+        else {
+            std::cerr << "Invalid line format: " << line << std::endl;
+            inputFile.close();
+            return;
+        }
+    }
+
+    inputFile.close();
 }
 
+
 void load_names_tsv_to_map(string filename, str_str_map* map) {
-    string line, child, parent;
-    ifstream read(filename);
-    getline(read, line); // skip first line
-    while (std::getline(read, line)) // read whole line into line
-    {
-        std::istringstream iss(line); // string stream
-        getline(iss, child, '\t'); // read first part up to comma, ignore the comma
-        iss >> parent; // read the second part
-        // lower case the key string
-        transform(child.begin(), child.end(), child.begin(), ::tolower);
-        // lower case the value string
-        transform(parent.begin(), parent.end(), parent.begin(), ::tolower);
-        map->operator[](child) = parent;
+    std::ifstream inputFile(filename);
+
+    if (!inputFile.is_open()) {
+        std::cerr << "Error opening the file: " << filename << std::endl;
+        return;
     }
+
+    std::string line;
+    std::getline(inputFile, line); // skip first line
+    while (std::getline(inputFile, line)) {
+        std::istringstream lineStream(line);
+        std::string column1, column2;
+
+        if (std::getline(lineStream, column1, '\t') && std::getline(lineStream, column2, '\t')) {
+            transform(column1.begin(), column1.end(), column1.begin(), ::tolower);
+            transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
+            map->operator[](column1) = column2;
+        }
+        else {
+            std::cerr << "Invalid line format: " << line << std::endl;
+            inputFile.close();
+            return;
+        }
+    }
+
+    inputFile.close();
 }
 
 
@@ -166,7 +191,7 @@ void sketch_dbretina(string asc_file, string names_file) {
 
 
     // Intermediate step to store reverse hashing
-    parallel_flat_hash_map<uint64_t, string> reverse_hash_map;
+    // parallel_flat_hash_map<uint64_t, string> reverse_hash_map; // disabled reverse hashing
 
 
     // dumping json to be indexed
@@ -185,7 +210,7 @@ void sketch_dbretina(string asc_file, string names_file) {
         for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
         {
             uint64_t hashed_child = hasher(*it2);
-            reverse_hash_map[hashed_child] = *it2;
+            // reverse_hash_map[hashed_child] = *it2; // disabled reverse hashing
             file << "\"" << hashed_child << "\"";
             if (next(it2) != it->second.end())
             {
@@ -201,12 +226,12 @@ void sketch_dbretina(string asc_file, string names_file) {
     file << "}}";
     file.close();
 
-    // dump reverse hash map to TSV
-    ofstream reverse_hash_map_file(asc_file_base_name_without_extension + "_reverse.tsv");
-    for (auto it = reverse_hash_map.begin(); it != reverse_hash_map.end(); ++it)
-    {
-        reverse_hash_map_file << it->first << "\t" << it->second << endl;
-    }
+    // dump reverse hash map to TSV // disabled reverse hashing
+    // ofstream reverse_hash_map_file(asc_file_base_name_without_extension + "_reverse.tsv");
+    // for (auto it = reverse_hash_map.begin(); it != reverse_hash_map.end(); ++it)
+    // {
+    //     reverse_hash_map_file << it->first << "\t" << it->second << endl;
+    // }
 
 }
 

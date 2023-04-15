@@ -5,8 +5,6 @@ import sys
 import _kSpider_internal as kSpider_internal
 import click
 from kSpider2.click_context import cli
-import os
-
 
 
 @cli.command(name="pairwise", help_priority=3)
@@ -15,7 +13,7 @@ import os
 @click.pass_context
 def main(ctx, index_prefix, user_threads):
     """
-    Generate containment pairwise matrix.
+    Generate pairwise TSV.
     """
     ctx.obj.INFO(
         f"Constructing the pairwise matrix using {user_threads} cores.")

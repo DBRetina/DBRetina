@@ -22,7 +22,7 @@
 
 namespace kSpider {
 
-    void dbretina_indexing(string json_file) {
+    void dbretina_indexing(string json_file, string user_index_prefix) {
 
         kDataFrame* frame;
         while (json_file.size() > 0 && json_file[json_file.size() - 1] == '/') json_file.erase(json_file.size() - 1, 1);
@@ -216,7 +216,7 @@ namespace kSpider {
                     }
 
                 }
-                cout << "   saved_kmers(~" << frame->size() << ")." << endl;
+                cout << "   saved_genes(~" << frame->size() << ")." << endl;
                 cout << "   colors(~" << legend->size() << ")." << endl << endl;
 
                 break;
@@ -226,7 +226,7 @@ namespace kSpider {
         }
 
 
-        string output_prefix = "idx_" + json_prefix;
+        string output_prefix = user_index_prefix;
 
         // Dump kmer count
         flat_hash_map<uint32_t, uint32_t> groupID_to_kmerCount;
@@ -234,7 +234,7 @@ namespace kSpider {
             groupID_to_kmerCount[groupNameMap[groupName]] = kmerCount;
         }
 
-        phmap::BinaryOutputArchive ar_out(string(output_prefix + "_groupID_to_kmerCount.bin").c_str());
+        phmap::BinaryOutputArchive ar_out(string(output_prefix + "_groupID_to_geneCount.bin").c_str());
         groupID_to_kmerCount.phmap_dump(ar_out);
 
 
@@ -258,14 +258,20 @@ namespace kSpider {
         phmap::BinaryOutputArchive ar_out_3(string(output_prefix + "_color_count.bin").c_str());
         colorsCount.phmap_dump(ar_out_3);
 
+        // Dump KF
+        frame->save(output_prefix);
+
         // export namesMap
         ofstream namesMapOut(output_prefix + ".namesMap");
         namesMapOut << namesMap.size() << endl;
         for (auto it : namesMap)
         {
-            namesMapOut << groupNameMap[it.second] << " " << it.second << endl;
+            namesMapOut << groupNameMap[it.second] << "|" << it.second << endl;
         }
         namesMapOut.close();
+
+
+        
 
         // Write extra info
         ofstream file(output_prefix + ".extra");
