@@ -109,7 +109,6 @@ namespace kSpider {
 
         // START
         for (auto& group : groupName_to_kmerSet) {
-            total_groups_number++;
             string group_name = group.first;
             parallel_flat_hash_set<uint64_t>& kmerSet = group.second;
 
@@ -117,7 +116,7 @@ namespace kSpider {
             for (auto it = kmerSet.begin(); it != kmerSet.end(); ++it) {
 
 
-                cout << "Processing " << ++processed_sigs_count << "/" << total_groups_number << " | " << group_name << " k:" << selective_kSize << " ... " << endl;
+                cout << "Processing " << ++processed_sigs_count << "/" << total_groups_number << " | " << group_name << " ... " << endl;
 
 
                 flat_hash_map<uint64_t, uint64_t> convertMap;
