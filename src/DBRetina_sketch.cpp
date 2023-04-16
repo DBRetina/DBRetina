@@ -50,7 +50,7 @@ struct string_hasher
     }
 };
 
-void load_tsv_to_map(string filename, str_vec_map* map, str_str_map * names_map) {
+void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) {
 
     std::ifstream inputFile(filename);
 
@@ -69,6 +69,36 @@ void load_tsv_to_map(string filename, str_vec_map* map, str_str_map * names_map)
             transform(column1.begin(), column1.end(), column1.begin(), ::tolower);
             transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
             map->operator[](names_map->operator[](column1)).emplace(column2);
+        }
+        else {
+            std::cerr << "Invalid line format: " << line << std::endl;
+            inputFile.close();
+            return;
+        }
+    }
+
+    inputFile.close();
+}
+
+void load_tsv_to_map_no_names(string filename, str_vec_map* map) {
+
+    std::ifstream inputFile(filename);
+
+    if (!inputFile.is_open()) {
+        std::cerr << "Error opening the file: " << filename << std::endl;
+        return;
+    }
+
+    std::string line;
+    std::getline(inputFile, line); // skip first line
+    while (std::getline(inputFile, line)) {
+        std::istringstream lineStream(line);
+        std::string column1, column2;
+
+        if (std::getline(lineStream, column1, '\t') && std::getline(lineStream, column2, '\t')) {
+            transform(column1.begin(), column1.end(), column1.begin(), ::tolower);
+            transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
+            map->operator[](column1).emplace(column2);
         }
         else {
             std::cerr << "Invalid line format: " << line << std::endl;
@@ -120,14 +150,19 @@ void sketch_dbretina(string asc_file, string names_file) {
     string private_output_file = asc_file_base_name_without_extension + "_private.json";
     string public_output_file = asc_file_base_name_without_extension + "_public.json";
 
+    if (names_file == "NA") {
+        load_tsv_to_map_no_names(asc_file, asc_map);
+        cout << "number of loaded groups: " << names_map->size() << endl;
+    }
+    else {
+        load_names_tsv_to_map(names_file, names_map);
+        load_tsv_to_map(asc_file, asc_map, names_map);
+        cout << "number of loaded groups: " << names_map->size() << endl;
+        cout << "number of loaded asc:" << asc_map->size() << endl;
+    }
 
-    load_names_tsv_to_map(names_file, names_map);
-    load_tsv_to_map(asc_file, asc_map, names_map);
-    cout << "number of loaded groups: " << names_map->size() << endl;
-    cout << "number of loaded asc:" << asc_map->size() << endl;
-
+    /* DISABLED NAMESFILE EXPORT
     parallel_flat_hash_map<string, parallel_flat_hash_set<string>> transformed_names;
-
     for (auto it = names_map->begin(); it != names_map->end(); ++it)
     {
         transformed_names[it->second].insert(it->first);
@@ -156,13 +191,14 @@ void sketch_dbretina(string asc_file, string names_file) {
     }
     file << "}";
     file.close();
-
+*/
 
 
     auto hasher = string_hasher();
 
     // Public version
-    file.open(private_output_file);
+    // file.open(private_output_file); .. related to the previous disabling
+    ofstream file(private_output_file);
     file << "{";
     file << "\"" << "metadata" << "\": {"
         << "\"" << "filetype" << "\": \"" << "private" << "\""

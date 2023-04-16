@@ -12,13 +12,15 @@ from glob import glob
 @cli.command(name="index", help_priority=1)
 # @click.option('-j', '--json', "json_file", required=True, help="hashes json file)")
 @click.option('-a', '--asc', "asc_file", required=True, type=click.Path(exists=True), help="ASC file")
-@click.option('-n', '--names', "names_file", required=True, type=click.Path(exists=True), help="Names file")
+@click.option('-n', '--names', "names_file", required=False, type=click.Path(exists=True), help="Optional names file")
 @click.option('-o', '--output', "output_prefix", required=False, default=None, help="index output file prefix")
 @click.pass_context
 def main(ctx, asc_file, names_file, output_prefix):
     """
     Index hashes JSON file.
     """
+    
+    if not names_file: names_file = "NA"
     
     
     if not output_prefix:

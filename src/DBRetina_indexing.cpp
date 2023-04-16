@@ -270,7 +270,7 @@ namespace kSpider {
         namesMapOut.close();
 
 
-        
+
 
         // Write extra info
         ofstream file(output_prefix + ".extra");
