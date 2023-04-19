@@ -36,21 +36,24 @@ inline uint64_t to_uint64(std::string const& value) {
     return result;
 }
 
-struct string_hasher
-{
-    std::hash<string> hasher;
-
-    // initialize the hasher
-    string_hasher(): hasher() {}
-
-    // overload the () operator
-    size_t operator()(const string& str) const
-    {
-        return hasher(str);
+string remove_double_quotes(string str) {
+    if (str[0] == '\"' && str[str.size() - 1] == '\"') {
+        str = str.substr(1, str.size() - 2);
     }
-};
+    return str;
+}
+
+bool detect_pipe_character_from_string(string& str) {
+    if (str.find('|') != string::npos) {
+        return true;
+    }
+    return false;
+}
+
 
 void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) {
+
+
 
     std::ifstream inputFile(filename);
 
@@ -61,14 +64,47 @@ void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) 
 
     std::string line;
     std::getline(inputFile, line); // skip first line
+
     while (std::getline(inputFile, line)) {
         std::istringstream lineStream(line);
-        std::string column1, column2;
+        std::string group, gene;
 
-        if (std::getline(lineStream, column1, '\t') && std::getline(lineStream, column2, '\t')) {
-            transform(column1.begin(), column1.end(), column1.begin(), ::tolower);
-            transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
-            map->operator[](names_map->operator[](column1)).emplace(column2);
+        if (std::getline(lineStream, group, '\t') && std::getline(lineStream, gene, '\t')) {
+
+            // detect if empty strings
+            if (group.empty() || gene.empty()) {
+                std::cerr << "Invalid line format: " << line << std::endl;
+                std::cerr << "Empty strings detected in the input file. Please remove them and try again.";
+                inputFile.close();
+                exit(1);
+            }
+
+            // detect pipe character, exit
+            if (detect_pipe_character_from_string(group) || detect_pipe_character_from_string(gene)) {
+                std::cerr << "Invalid line format: " << line << std::endl;
+                std::cerr << "Pipe character detected in the input file. Please remove it and try again.";
+                inputFile.close();
+                exit(1);
+            }
+
+            // remove quotes
+            group.erase(std::remove(group.begin(), group.end(), '"'), group.end());
+            gene.erase(std::remove(gene.begin(), gene.end(), '"'), gene.end());
+
+            // all to lower case
+            transform(group.begin(), group.end(), group.begin(), ::tolower);
+            transform(gene.begin(), gene.end(), gene.begin(), ::tolower);
+
+
+            // add only if found in namesmap
+            if (names_map->find(group) != names_map->end()) {
+                map->operator[](group).emplace(gene);
+            }
+            else { // else add as the group itself
+                map->operator[](names_map->operator[](group)).emplace(gene);
+                cout << "Warning: group name(" << group << ") does not exist in the names file." << endl;
+            }
+
         }
         else {
             std::cerr << "Invalid line format: " << line << std::endl;
@@ -78,6 +114,7 @@ void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) 
     }
 
     inputFile.close();
+
 }
 
 void load_tsv_to_map_no_names(string filename, str_vec_map* map) {
@@ -93,12 +130,29 @@ void load_tsv_to_map_no_names(string filename, str_vec_map* map) {
     std::getline(inputFile, line); // skip first line
     while (std::getline(inputFile, line)) {
         std::istringstream lineStream(line);
-        std::string column1, column2;
+        std::string group, gene;
 
-        if (std::getline(lineStream, column1, '\t') && std::getline(lineStream, column2, '\t')) {
-            transform(column1.begin(), column1.end(), column1.begin(), ::tolower);
-            transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
-            map->operator[](column1).emplace(column2);
+
+        if (std::getline(lineStream, group, '\t') && std::getline(lineStream, gene, '\t')) {
+
+            // detect pipe character, exit
+            if (detect_pipe_character_from_string(group) || detect_pipe_character_from_string(gene)) {
+                std::cerr << "Invalid line format: " << line << std::endl;
+                std::cerr << "Pipe character detected in the input file. Please remove it and try again.";
+                inputFile.close();
+                exit(1);
+            }
+
+            // remove quotes
+            group.erase(std::remove(group.begin(), group.end(), '"'), group.end());
+            gene.erase(std::remove(gene.begin(), gene.end(), '"'), gene.end());
+
+            // all to lower case
+            transform(group.begin(), group.end(), group.begin(), ::tolower);
+            transform(gene.begin(), gene.end(), gene.begin(), ::tolower);
+
+
+            map->operator[](group).emplace(gene);
         }
         else {
             std::cerr << "Invalid line format: " << line << std::endl;
@@ -110,6 +164,118 @@ void load_tsv_to_map_no_names(string filename, str_vec_map* map) {
     inputFile.close();
 }
 
+void inverted_load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) {
+
+
+
+    std::ifstream inputFile(filename);
+
+    if (!inputFile.is_open()) {
+        std::cerr << "Error opening the file: " << filename << std::endl;
+        return;
+    }
+
+    std::string line;
+    std::getline(inputFile, line); // skip first line
+
+    while (std::getline(inputFile, line)) {
+        std::istringstream lineStream(line);
+        std::string group, gene;
+
+        if (std::getline(lineStream, group, '\t') && std::getline(lineStream, gene, '\t')) {
+
+            // detect if empty strings
+            if (group.empty() || gene.empty()) {
+                std::cerr << "Invalid line format: " << line << std::endl;
+                std::cerr << "Empty strings detected in the input file. Please remove them and try again.";
+                inputFile.close();
+                exit(1);
+            }
+
+            // detect pipe character, exit
+            if (detect_pipe_character_from_string(group) || detect_pipe_character_from_string(gene)) {
+                std::cerr << "Invalid line format: " << line << std::endl;
+                std::cerr << "Pipe character detected in the input file. Please remove it and try again.";
+                inputFile.close();
+                exit(1);
+            }
+
+            // remove quotes
+            group.erase(std::remove(group.begin(), group.end(), '"'), group.end());
+            gene.erase(std::remove(gene.begin(), gene.end(), '"'), gene.end());
+
+            // all to lower case
+            transform(group.begin(), group.end(), group.begin(), ::tolower);
+            transform(gene.begin(), gene.end(), gene.begin(), ::tolower);
+
+
+            // add only if found in namesmap
+            if (names_map->find(group) != names_map->end()) {
+                map->operator[](group).emplace(gene);
+            }
+            else { // else add as the group itself
+                map->operator[](names_map->operator[](group)).emplace(gene);
+                cout << "Warning: group name(" << group << ") does not exist in the names file." << endl;
+            }
+        }
+        else {
+            std::cerr << "Invalid line format: " << line << std::endl;
+            inputFile.close();
+            return;
+        }
+    }
+
+    inputFile.close();
+
+}
+
+
+void inverted_load_tsv_to_map_no_names(string filename, str_vec_map* map) {
+
+    std::ifstream inputFile(filename);
+
+    if (!inputFile.is_open()) {
+        std::cerr << "Error opening the file: " << filename << std::endl;
+        return;
+    }
+
+    std::string line;
+    std::getline(inputFile, line); // skip first line
+    while (std::getline(inputFile, line)) {
+        std::istringstream lineStream(line);
+        std::string group, gene;
+
+
+        if (std::getline(lineStream, group, '\t') && std::getline(lineStream, gene, '\t')) {
+
+            // detect pipe character, exit
+            if (detect_pipe_character_from_string(group) || detect_pipe_character_from_string(gene)) {
+                std::cerr << "Invalid line format: " << line << std::endl;
+                std::cerr << "Pipe character detected in the input file. Please remove it and try again.";
+                inputFile.close();
+                exit(1);
+            }
+
+            // remove quotes
+            group.erase(std::remove(group.begin(), group.end(), '"'), group.end());
+            gene.erase(std::remove(gene.begin(), gene.end(), '"'), gene.end());
+
+            // all to lower case
+            transform(group.begin(), group.end(), group.begin(), ::tolower);
+            transform(gene.begin(), gene.end(), gene.begin(), ::tolower);
+
+
+            map->operator[](gene).emplace(group);
+        }
+        else {
+            std::cerr << "Invalid line format: " << line << std::endl;
+            inputFile.close();
+            return;
+        }
+    }
+
+    inputFile.close();
+}
 
 void load_names_tsv_to_map(string filename, str_str_map* map) {
     std::ifstream inputFile(filename);
@@ -128,6 +294,15 @@ void load_names_tsv_to_map(string filename, str_str_map* map) {
         if (std::getline(lineStream, column1, '\t') && std::getline(lineStream, column2, '\t')) {
             transform(column1.begin(), column1.end(), column1.begin(), ::tolower);
             transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
+
+            // check if empty string
+            if (column1.empty() || column2.empty()) {
+                std::cerr << "Invalid line format: " << line << std::endl;
+                std::cerr << "Empty string detected in the input file. Please remove it and try again.";
+                inputFile.close();
+                exit(1);
+            }
+
             map->operator[](column1) = column2;
         }
         else {
@@ -141,7 +316,7 @@ void load_names_tsv_to_map(string filename, str_str_map* map) {
 }
 
 
-void sketch_dbretina(string asc_file, string names_file) {
+void sketch_dbretina(string asc_file, string names_file, bool inverted) {
     str_vec_map* asc_map = new str_vec_map();
     str_str_map* names_map = new str_str_map();
 
@@ -151,15 +326,29 @@ void sketch_dbretina(string asc_file, string names_file) {
     string public_output_file = asc_file_base_name_without_extension + "_public.json";
 
     if (names_file == "NA") {
-        load_tsv_to_map_no_names(asc_file, asc_map);
+        if (inverted)
+            inverted_load_tsv_to_map_no_names(asc_file, asc_map);
+        else
+            load_tsv_to_map_no_names(asc_file, asc_map);
+
         cout << "number of loaded groups: " << names_map->size() << endl;
     }
     else {
         load_names_tsv_to_map(names_file, names_map);
-        load_tsv_to_map(asc_file, asc_map, names_map);
-        cout << "number of loaded groups: " << names_map->size() << endl;
-        cout << "number of loaded asc:" << asc_map->size() << endl;
+        if (inverted)
+            inverted_load_tsv_to_map(asc_file, asc_map, names_map);
+        else
+            load_tsv_to_map(asc_file, asc_map, names_map);
+
+        // cout << "number of loaded unique groups: " << names_map->size() << endl;
+        // cout << "number of loaded asc:" << asc_map->size() << endl;
     }
+
+    // print asc_map
+    // for (auto it = asc_map->begin(); it != asc_map->end(); ++it){
+    //     cout << """" << it->first << """" << " -> ";
+    //     cout << endl;
+    // }
 
     /* DISABLED NAMESFILE EXPORT
     parallel_flat_hash_map<string, parallel_flat_hash_set<string>> transformed_names;
@@ -242,6 +431,7 @@ void sketch_dbretina(string asc_file, string names_file) {
     for (auto it = asc_map->begin(); it != asc_map->end(); ++it)
     {
         string parent_group = it->first;
+
         file << "\"" << parent_group << "\": [";
         for (auto it2 = it->second.begin(); it2 != it->second.end(); ++it2)
         {
@@ -304,7 +494,6 @@ void parse_dbretina_json(string json_file, str_hashed_vec_map* map) {
         // iterate over genes:
         for (auto it = genes.begin(); it != genes.end(); it++) {
             string parent_name = it->first;
-            cout << "parent_name: " << parent_name << endl;
             auto gene = it->second.as_array();
             map->operator[](parent_name) = parallel_flat_hash_set<uint64_t>(gene.size());
             for (auto it2 = gene.begin(); it2 != gene.end(); it2++) {
