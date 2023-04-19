@@ -96,7 +96,7 @@ void query(string index_prefix, string query_file, string output_prefix, bool in
 
     // naming
     string key_val_suffix, val_key_suffix;
-    if (!inverted) {
+    if (inverted) {
         key_val_suffix = "_group_to_genes.tsv";
         val_key_suffix = "_gene_to_groupsCount.tsv";
     }
