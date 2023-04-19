@@ -35,19 +35,6 @@ inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string
     inputFile.close();
 }
 
-inline vector<string> load_query_file_single_column(string filename) {
-    vector<string> queries;
-    ifstream query_file(filename);
-    string line;
-    while (getline(query_file, line)) {
-        // lowecase line
-        transform(line.begin(), line.end(), line.begin(), ::tolower);
-        // remove double quotes
-        line.erase(remove(line.begin(), line.end(), '"'), line.end());
-        queries.push_back(line);
-    }
-    return queries;
-}
 
 inline void set_to_vector(const phmap::flat_hash_set<uint32_t>& set, vector<uint32_t>& vec) {
     vec.clear();
@@ -55,6 +42,20 @@ inline void set_to_vector(const phmap::flat_hash_set<uint32_t>& set, vector<uint
     for (auto& i : set) {
         vec.push_back(i);
     }
+}
+
+inline parallel_flat_hash_set<string> load_query_file_single_column(string filename) {
+    parallel_flat_hash_set<string> queries;
+    ifstream query_file(filename);
+    string line;
+    while (getline(query_file, line)) {
+        // lowecase line
+        transform(line.begin(), line.end(), line.begin(), ::tolower);
+        // remove double quotes
+        line.erase(remove(line.begin(), line.end(), '"'), line.end());
+        queries.emplace(line);
+    }
+    return queries;
 }
 
 inline void load_colors_to_sources(const std::string& filename, int_vec_map* map)
