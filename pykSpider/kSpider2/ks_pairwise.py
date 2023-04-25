@@ -7,7 +7,7 @@ import click
 from kSpider2.click_context import cli
 
 
-@cli.command(name="pairwise", help_priority=3)
+@cli.command(name="pairwise", help_priority=2)
 @click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
 @click.option('-t', '--threads', "user_threads", default=1, required=False, type=int, help="number of cores")
 @click.pass_context

@@ -17,7 +17,7 @@ from glob import glob
 @click.pass_context
 def main(ctx, asc_file, names_file, output_prefix, inverted):
     """
-    Index hashes JSON file.
+    Index the input data files.
     """
     
     if not names_file: names_file = "NA"

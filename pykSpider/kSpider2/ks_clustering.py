@@ -113,13 +113,14 @@ New help messages
 """
 
 
-@cli.command(name="cluster", help_priority=4)
+@cli.command(name="cluster", help_priority=3)
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 1, clamp=False), default=0.0, show_default=True, help="cluster sequences with (containment > cutoff)")
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="Index file prefix")
 @click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_containment', 'avg_containment', 'max_containment', 'ochiai', 'jaccard']")
 @click.pass_context
 def main(ctx, index_prefix, cutoff, distance_type):
-    """Clustering."""
+    """Graph-based clustering of the pairwise TSV file."""
+    
     cutoff = float(cutoff) * 100
     kCl = Clusters(logger_obj=ctx.obj, index_prefix=index_prefix,
                    cut_off_threshold=cutoff, dist_type=distance_type)

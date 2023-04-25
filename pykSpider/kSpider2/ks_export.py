@@ -39,7 +39,7 @@ def get_newick(node, parent_dist, leaf_names, newick='') -> str:
         return newick
 
 
-@cli.command(name="export", help_priority=5)
+@cli.command(name="export", help_priority=4)
 @click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
 @click.option('--newick', "newick", is_flag=True, help="Convert pairwise (containment) matrix to newick format", default=False)
 @click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
@@ -47,7 +47,7 @@ def get_newick(node, parent_dist, leaf_names, newick='') -> str:
 @click.pass_context
 def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     """
-    Export DBRetina pairwise to multiple formats.
+    Export the pairwise TSV to dissimilarity matrix or newick format.
     """
     
     index_basename = os.path.basename(index_prefix)
