@@ -10,7 +10,7 @@ import os
 import json
 
 
-@cli.command(name="sketch", help_priority=3, hidden=True)
+@cli.command(name="query", help_priority=3)
 @click.option('-q', '--query', "query_file", required=True, type=click.Path(exists=True), help="query line separated file")
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="Index file prefix")
 @click.option('-o', '--output', "output_prefix", required=False, default=None, help="index output file prefix")
