@@ -149,7 +149,8 @@ namespace kSpider {
         }
     }
 
-    void pairwise(string index_prefix, int user_threads) {
+
+    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold) {
 
         // Read colors
 
@@ -287,6 +288,9 @@ namespace kSpider {
             << '\n';
         uint64_t line_count = 0;
         for (const auto& edge : edges) {
+
+            flat_hash_map<string, float> distance_metrics;
+
             uint64_t shared_kmers = edge.second;
             uint32_t source_1 = edge.first.first;
             uint32_t source_2 = edge.first.second;
@@ -296,22 +300,23 @@ namespace kSpider {
             // containments
             float cont_1_in_2 = (float)shared_kmers / source_2_kmers;
             float cont_2_in_1 = (float)shared_kmers / source_1_kmers;
-            float min_containment = min(cont_1_in_2, cont_2_in_1);
-            float avg_containment = (cont_1_in_2 + cont_2_in_1) / 2.0;
-            float max_containment = max(cont_1_in_2, cont_2_in_1);
+
+            distance_metrics["min_containment"] = min(cont_1_in_2, cont_2_in_1);
+            distance_metrics["avg_containment"] = (cont_1_in_2 + cont_2_in_1) / 2.0;
+            distance_metrics["max_containment"] = max(cont_1_in_2, cont_2_in_1);
+            
 
             // Ochiai distance
-            float ochiai = ((float)shared_kmers / sqrt((float)source_1_kmers * (float)source_2_kmers));
+            distance_metrics["ochiai"] = ((float)shared_kmers / sqrt((float)source_1_kmers * (float)source_2_kmers));
 
             // Jaccard distance (if size of samples is roughly similar)
             // J(A, B) = 1 - |A ∩ B| / (|A| + |B| - |A ∩ B|)
-            float jaccard = (float)shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers);
+            distance_metrics["jaccard"] = (float)shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers);
 
             // Kulczynski distance needs abundance of each sample
             // float kulczynski = (float)shared_kmers / (source_1_kmers + source_2_kmers) * 2;
 
-
-
+            if(distance_metrics[cutoff_distance_type] < cutoff_threshold) continue;
 
             myfile
                 << source_1
@@ -319,11 +324,11 @@ namespace kSpider {
                 << '\t' << namesMap[source_1]
                 << '\t' << namesMap[source_2]
                 << '\t' << shared_kmers
-                << '\t' << min_containment
-                << '\t' << avg_containment
-                << '\t' << max_containment
-                << '\t' << ochiai
-                << '\t' << jaccard;
+                << '\t' << distance_metrics["min_containment"]
+                << '\t' << distance_metrics["avg_containment"]
+                << '\t' << distance_metrics["max_containment"]
+                << '\t' << distance_metrics["ochiai"]
+                << '\t' << distance_metrics["jaccard"];
             myfile << '\n';
         }
         myfile.close();
