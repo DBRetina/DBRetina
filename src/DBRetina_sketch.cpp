@@ -323,28 +323,21 @@ void load_names_tsv_to_map(string filename, str_str_map* map) {
 }
 
 
-void sketch_dbretina(string asc_file, string names_file, bool inverted) {
+void sketch_dbretina(string asc_file, string names_file, string user_prefix) {
     str_vec_map* asc_map = new str_vec_map();
     str_str_map* names_map = new str_str_map();
 
     string asc_file_wo_extension = asc_file.substr(0, asc_file.find_last_of("."));
     string asc_file_base_name_without_extension = asc_file_wo_extension.substr(asc_file_wo_extension.find_last_of("/") + 1);
-    string private_output_file = asc_file_base_name_without_extension + "_private.json";
-    string public_output_file = asc_file_base_name_without_extension + "_public.json";
+    string private_output_file = user_prefix + "_raw.json";
+    string public_output_file = user_prefix + "_hashes.json";
 
     if (names_file == "NA") {
-        if (inverted)
-            inverted_load_tsv_to_map_no_names(asc_file, asc_map);
-        else
-            load_tsv_to_map_no_names(asc_file, asc_map);
+        load_tsv_to_map_no_names(asc_file, asc_map);
     }
     else {
         load_names_tsv_to_map(names_file, names_map);
-        if (inverted)
-            inverted_load_tsv_to_map(asc_file, asc_map, names_map);
-        else
-            load_tsv_to_map(asc_file, asc_map, names_map);
-
+        load_tsv_to_map(asc_file, asc_map, names_map);
         // cout << "number of loaded unique groups: " << names_map->size() << endl;
         // cout << "number of loaded asc:" << asc_map->size() << endl;
     }

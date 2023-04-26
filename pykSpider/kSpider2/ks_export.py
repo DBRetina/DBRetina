@@ -53,7 +53,7 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     index_basename = os.path.basename(index_prefix)
     DBRetina_pairwise_tsv = f"{index_prefix}_DBRetina_pairwise.tsv"
     namesMap_file = f"{index_prefix}.namesMap"
-    seqToKmers_tsv = f"{index_prefix}_DBRetina_genesNo.tsv"
+    seqToKmers_tsv = f"{index_prefix}_DBRetina_featuresNo.tsv"
 
     LOGGER = ctx.obj
 

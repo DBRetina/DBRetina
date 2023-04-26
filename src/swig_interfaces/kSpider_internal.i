@@ -23,6 +23,6 @@ namespace kSpider{
     void dbretina_indexing(string json_file, string user_index_prefix);
 };
 
-void sketch_dbretina(string asc_file, string names_file= "NA", bool inverted = false);
+void sketch_dbretina(string asc_file, string names_file, string user_prefix);
 void parse_dbretina_json(string json_file, str_hashed_vec_map* map);
-void query(string index_prefix, string query_file, string output_prefix, bool inverted);
+void query(string index_prefix, string query_file, string output_prefix);

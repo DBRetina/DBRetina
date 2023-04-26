@@ -96,7 +96,6 @@ inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string
     while (std::getline(inputFile, line)) {
         std::istringstream lineStream(line);
         std::string column1, column2;
-
         if (std::getline(lineStream, column1, '|') && std::getline(lineStream, column2, '|')) {
             transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
             map.operator[](stoi(column1)) = column2;
@@ -197,21 +196,21 @@ namespace kSpider {
 
         // Loading kmer counts
         flat_hash_map<uint32_t, uint32_t> groupID_to_kmerCount;
-        string _file_id_to_kmer_count = index_prefix + "_groupID_to_geneCount.bin";
+        string _file_id_to_kmer_count = index_prefix + "_groupID_to_featureCount.bin";
         phmap::BinaryInputArchive ar_in_kmer_count(_file_id_to_kmer_count.c_str());
         groupID_to_kmerCount.phmap_load(ar_in_kmer_count);
         assert(groupID_to_kmerCount.size());
 
 
         std::ofstream fstream_kmerCount;
-        fstream_kmerCount.open(index_prefix + "_DBRetina_genesNo.tsv");
-        fstream_kmerCount << "ID\tgroup\tgenes\n";
+        fstream_kmerCount.open(index_prefix + "_DBRetina_featuresNo.tsv");
+        fstream_kmerCount << "ID\tgroup\tfeatures\n";
         uint64_t counter = 0;
         for (const auto& item : groupID_to_kmerCount) {
             fstream_kmerCount << ++counter << '\t' << item.first << '\t' << item.second << '\n';
         }
         fstream_kmerCount.close();
-        cout << "genes counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        cout << "features counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
         // Loading done
 
@@ -279,7 +278,7 @@ namespace kSpider {
             << "\tgroup_2_ID"
             << "\tgroup_1_name"
             << "\tgroup_2_name"
-            << "\tshared_genes"
+            << "\tshared_features"
             << "\tmin_containment"
             << "\tavg_containment"
             << "\tmax_containment"

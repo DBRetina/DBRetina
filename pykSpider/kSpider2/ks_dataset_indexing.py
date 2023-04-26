@@ -12,33 +12,28 @@ from glob import glob
 @cli.command(name="index", help_priority=1)
 @click.option('-a', '--asc', "asc_file", required=True, type=click.Path(exists=True), help="associations file")
 @click.option('-n', '--names', "names_file", required=False, type=click.Path(exists=True), help="names file")
-@click.option('-o', '--output', "output_prefix", required=True, help="index output file prefix (it will be changed by the program)")
-@click.option('--inverted', is_flag=True, help="Inverted index (use this option if you want to query group names and get their associated features.)")
+@click.option('-o', '--output', "output_prefix", required=True, help="output file prefix")
 @click.pass_context
-def main(ctx, asc_file, names_file, output_prefix, inverted):
+def main(ctx, asc_file, names_file, output_prefix):
     """
     Index the input data files.
     """
-    
-    if not names_file: names_file = "NA"
+
+    if not names_file:
+        names_file = "NA"
 
     if not output_prefix:
         output_prefix = os.path.basename(asc_file)
         output_prefix = os.path.splitext(output_prefix)[0]
         output_prefix = "idx" + "_" + output_prefix
 
-    if inverted:
-        output_prefix = f"{output_prefix}_group_to_features"
-    else:
-        output_prefix = f"{output_prefix}_feature_to_groups"
-
-    kSpider_internal.sketch_dbretina(asc_file, names_file, inverted)
+    kSpider_internal.sketch_dbretina(asc_file, names_file, output_prefix)
     asc_basename = os.path.basename(asc_file)
     asc_basename_without_extension = os.path.splitext(asc_basename)[0]
-    json_file = f"{asc_basename_without_extension}_public.json"
+    json_file = f"{output_prefix}_hashes.json"
 
     ctx.obj.SUCCESS("File(s) has been sketched.")
-    
+
     ctx.obj.INFO(f"Indexing {asc_file}")
     kSpider_internal.dbretina_indexing(json_file, output_prefix)
     ctx.obj.SUCCESS("DONE!")

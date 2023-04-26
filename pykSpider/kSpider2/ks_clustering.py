@@ -25,9 +25,9 @@ class Clusters:
         self.dist_type = dist_type
         self.names_file = f"{index_prefix}.namesMap"
         self.cut_off_threshold = cut_off_threshold
-        self.seqToKmers_file = f"{index_prefix}_DBRetina_genesNo.tsv"
+        self.seqToKmers_file = f"{index_prefix}_DBRetina_featuresNo.tsv"
         self.pairwise_file = f"{index_prefix}_DBRetina_pairwise.tsv"
-        self.output = f"{index_prefix}_DBRetina_clusters_{cut_off_threshold}%.tsv"
+        self.output = f"{index_prefix}_DBRetina_clusters_{cut_off_threshold}%.txt"
         self.shared_kmers_threshold = 200
         self.Logger.INFO("Loading TSV pairwise file")
         self.load_seq_to_kmers(self.seqToKmers_file)
@@ -88,7 +88,7 @@ class Clusters:
             f"number of clusters: {len(self.connected_components)}")
         single_components = 0
         retworkx_export = self.index_prefix + \
-            f"_DBRetina_graph_{self.cut_off_threshold}%.json"
+            f"_DBRetina_graph_{self.cut_off_threshold}%.txt"
         # and {self.output} ...")
         self.Logger.INFO(f"writing {retworkx_export}")
         # rx.node_link_json(self.graph, path = retworkx_export)
@@ -114,9 +114,9 @@ New help messages
 
 
 @cli.command(name="cluster", help_priority=3)
-@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 1, clamp=False), default=0.0, show_default=True, help="cluster sequences with (containment > cutoff)")
+@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 1, clamp=False), default=0.0, show_default=True, help="cluster the supergroups with (distance > cutoff)")
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="Index file prefix")
-@click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_containment', 'avg_containment', 'max_containment', 'ochiai', 'jaccard']")
+@click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
 @click.pass_context
 def main(ctx, index_prefix, cutoff, distance_type):
     """Graph-based clustering of the pairwise TSV file."""

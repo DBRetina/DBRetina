@@ -215,7 +215,7 @@ namespace kSpider {
                     }
 
                 }
-                cout << "   saved_genes(~" << frame->size() << ")." << endl;
+                cout << "   saved_features(~" << frame->size() << ")." << endl;
                 cout << "   colors(~" << legend->size() << ")." << endl << endl;
 
                 break;
@@ -233,7 +233,7 @@ namespace kSpider {
             groupID_to_kmerCount[groupNameMap[groupName]] = kmerCount;
         }
 
-        phmap::BinaryOutputArchive ar_out(string(output_prefix + "_groupID_to_geneCount.bin").c_str());
+        phmap::BinaryOutputArchive ar_out(string(output_prefix + "_groupID_to_featureCount.bin").c_str());
         groupID_to_kmerCount.phmap_dump(ar_out);
 
 
