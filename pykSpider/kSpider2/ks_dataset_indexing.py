@@ -10,10 +10,10 @@ from glob import glob
 
 
 @cli.command(name="index", help_priority=1)
-@click.option('-a', '--asc', "asc_file", required=True, type=click.Path(exists=True), help="ASC file")
-@click.option('-n', '--names', "names_file", required=False, type=click.Path(exists=True), help="Optional names file")
-@click.option('-o', '--output', "output_prefix", required=False, default=None, help="index output file prefix")
-@click.option('--inverted', is_flag=True, help="Inverted index (use this option if you want to query group names and get their genes.)")
+@click.option('-a', '--asc', "asc_file", required=True, type=click.Path(exists=True), help="associations file")
+@click.option('-n', '--names', "names_file", required=False, type=click.Path(exists=True), help="names file")
+@click.option('-o', '--output', "output_prefix", required=True, help="index output file prefix (it will be changed by the program)")
+@click.option('--inverted', is_flag=True, help="Inverted index (use this option if you want to query group names and get their associated features.)")
 @click.pass_context
 def main(ctx, asc_file, names_file, output_prefix, inverted):
     """
@@ -28,9 +28,9 @@ def main(ctx, asc_file, names_file, output_prefix, inverted):
         output_prefix = "idx" + "_" + output_prefix
 
     if inverted:
-        output_prefix = f"{output_prefix}_group_to_genes"
+        output_prefix = f"{output_prefix}_group_to_features"
     else:
-        output_prefix = f"{output_prefix}_gene_to_groups"
+        output_prefix = f"{output_prefix}_feature_to_groups"
 
     kSpider_internal.sketch_dbretina(asc_file, names_file, inverted)
     asc_basename = os.path.basename(asc_file)

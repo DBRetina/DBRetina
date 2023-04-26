@@ -7,21 +7,24 @@
 using int_vec_map = parallel_flat_hash_map<uint32_t, vector<uint32_t>, std::hash<uint32_t>, std::equal_to<uint32_t>, std::allocator<std::pair<const uint32_t, vector<uint32_t>>>, 1>;
 
 
-inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string>& map) {
+void load_namesMap(string filename, phmap::flat_hash_map<int, std::string>& map) {
     std::ifstream inputFile(filename);
-
     if (!inputFile.is_open()) {
         std::cerr << "Error opening the file: " << filename << std::endl;
         return;
     }
+
+    // open file for writing
 
     std::string line;
     std::getline(inputFile, line); // skip first line
     while (std::getline(inputFile, line)) {
         std::istringstream lineStream(line);
         std::string column1, column2;
+        cout << line << ": ";
 
         if (std::getline(lineStream, column1, '|') && std::getline(lineStream, column2, '|')) {
+            cout << column1 << "|" << column2 << std::endl;
             transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
             map.operator[](stoi(column1)) = column2;
         }
@@ -31,7 +34,6 @@ inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string
             return;
         }
     }
-
     inputFile.close();
 }
 
@@ -94,15 +96,23 @@ void query(string index_prefix, string query_file, string output_prefix, bool in
     phmap::flat_hash_map<int, std::string> namesmap;
     load_namesMap(namesmap_file, namesmap);
 
+    // write namesmap to file
+    ofstream namesmap_file_out;
+    namesmap_file_out.open(output_prefix + "_new_namesMap.tsv");
+    for (auto& [k, v] : namesmap) {
+        namesmap_file_out << k << "|" << v << endl;
+    }
+    namesmap_file_out.close();
+
     // naming
     string key_val_suffix, val_key_suffix;
     if (inverted) {
-        key_val_suffix = "_group_to_genes.tsv";
-        val_key_suffix = "_gene_to_groupsCount.tsv";
+        key_val_suffix = "_group_to_features.tsv";
+        val_key_suffix = "_feature_to_groupsCount.tsv";
     }
     else {
-        key_val_suffix = "_gene_to_groups.tsv";
-        val_key_suffix = "_group_to_genesCount.tsv";
+        key_val_suffix = "_feature_to_groups.tsv";
+        val_key_suffix = "_group_to_featuresCount.tsv";
     }
 
 
@@ -122,7 +132,13 @@ void query(string index_prefix, string query_file, string output_prefix, bool in
         uint64_t hashed_q = hasher(q);
         auto color = kf->getCount(hashed_q);
         auto sources = color_to_ids[color];
+        assert(sources.size() > 0);
         for (auto s : sources) {
+            // only if found in namesmap
+            if (namesmap.find(s) == namesmap.end()) {
+                cerr << "[ERROR] namesmap file is altered." << endl;
+                exit(1);
+            }
             results[q].push_back(namesmap[s]);
             inverted_results[namesmap[s]]++;
         }

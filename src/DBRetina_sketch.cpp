@@ -53,6 +53,7 @@ bool detect_pipe_character_from_string(string& str) {
 
 void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) {
 
+    parallel_flat_hash_set<std::string> unfound;
 
 
     std::ifstream inputFile(filename);
@@ -98,11 +99,14 @@ void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) 
 
             // add only if found in namesmap
             if (names_map->find(group) != names_map->end()) {
-                map->operator[](group).emplace(gene);
+                map->operator[](names_map->operator[](group)).emplace(gene);
             }
             else { // else add as the group itself
-                map->operator[](names_map->operator[](group)).emplace(gene);
-                cout << "Warning: group name(" << group << ") does not exist in the names file." << endl;
+                map->operator[](group).emplace(gene);
+                if (unfound.find(group) == unfound.end()) {
+                    unfound.emplace(group);
+                    cout << "Warning: group name(" << group << ") does not exist in the names file." << endl;
+                }
             }
 
         }
@@ -166,6 +170,7 @@ void load_tsv_to_map_no_names(string filename, str_vec_map* map) {
 
 void inverted_load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) {
 
+    parallel_flat_hash_set<std::string> unfound;
 
 
     std::ifstream inputFile(filename);
@@ -211,11 +216,13 @@ void inverted_load_tsv_to_map(string filename, str_vec_map* map, str_str_map* na
 
             // add only if found in namesmap
             if (names_map->find(group) != names_map->end()) {
-                map->operator[](group).emplace(gene);
+                map->operator[](names_map->operator[](group)).emplace(gene);
             }
             else { // else add as the group itself
-                map->operator[](names_map->operator[](group)).emplace(gene);
-                cout << "Warning: group name(" << group << ") does not exist in the names file." << endl;
+                if (unfound.find(group) == unfound.end()) {
+                    unfound.emplace(group);
+                    cout << "Warning: group name(" << group << ") does not exist in the names file." << endl;
+                }
             }
         }
         else {
@@ -286,7 +293,7 @@ void load_names_tsv_to_map(string filename, str_str_map* map) {
     }
 
     std::string line;
-    std::getline(inputFile, line); // skip first line
+    // std::getline(inputFile, line); // skip first line
     while (std::getline(inputFile, line)) {
         std::istringstream lineStream(line);
         std::string column1, column2;
@@ -330,8 +337,6 @@ void sketch_dbretina(string asc_file, string names_file, bool inverted) {
             inverted_load_tsv_to_map_no_names(asc_file, asc_map);
         else
             load_tsv_to_map_no_names(asc_file, asc_map);
-
-        cout << "number of loaded groups: " << names_map->size() << endl;
     }
     else {
         load_names_tsv_to_map(names_file, names_map);

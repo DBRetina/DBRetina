@@ -21,15 +21,15 @@ def main(ctx, query_file, index_prefix, output_prefix):
     """
 
     inverted = False
-    if "_group_to_genes" in index_prefix:
+    if "_group_to_features" in index_prefix:
         inverted = True
-        key_val_suffix = "_group_to_genes.tsv"
-        val_key_suffix = "_gene_to_groupsCount.tsv"  
+        key_val_suffix = "_group_to_features.tsv"
+        val_key_suffix = "_feature_to_groupsCount.tsv"  
         ctx.obj.INFO("Inverted index detected. Group names will be expected in the query file.")
         
     else:
-        key_val_suffix = "_gene_to_groups.tsv"
-        val_key_suffix = "_group_to_genesCount.tsv"
+        key_val_suffix = "_feature_to_groups.tsv"
+        val_key_suffix = "_group_to_featuresCount.tsv"
         ctx.obj.INFO("Gene names will be expected in the query file.")
         
     kSpider_internal.query(index_prefix, query_file, output_prefix, inverted)
