@@ -10,7 +10,7 @@ import os
 import json
 
 
-@cli.command(name="query", help_priority=5)
+@cli.command(name="query", help_priority=6)
 @click.option('-q', '--query', "query_file", required=True, type=click.Path(exists=True), help="query line separated file")
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="index file prefix")
 @click.option('-o', '--output', "output_prefix", required=True, default=None, help="output file prefix")

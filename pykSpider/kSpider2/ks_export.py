@@ -39,7 +39,7 @@ def get_newick(node, parent_dist, leaf_names, newick='') -> str:
         return newick
 
 
-@cli.command(name="export", help_priority=4)
+@cli.command(name="export", help_priority=5)
 @click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
 @click.option('--newick', "newick", is_flag=True, help="Convert pairwise (containment) matrix to newick format", default=False)
 @click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
