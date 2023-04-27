@@ -70,6 +70,77 @@ private:
 
 };
 
+class Stats {
+private:
+    flat_hash_map<string, flat_hash_map<string, uint64_t>> stats;
+
+public:
+
+    Stats() {
+        vector<string> distances = { "min_cont", "avg_cont", "max_cont", "ochiai", "jaccard" };
+
+        for (string& distance : distances) {
+            for (int value = 0; value < 100; value += 5) {
+                string range = to_string(value) + "-" + to_string(value + 5);
+                this->stats[distance][range] = 0;
+            }
+        }
+    }
+
+    void print_stats_in_json_format() {
+        cout << "{" << endl;
+        for (auto& [range, stats] : this->stats) {
+            cout << "\t\"" << range << "\": {" << endl;
+            for (auto& [stat_name, stat_value] : stats) {
+                cout << "\t\t\"" << stat_name << "\": " << stat_value << "," << endl;
+            }
+            cout << "\t}," << endl;
+        }
+        cout << "}" << endl;
+    }
+
+    void stats_to_json_file(string filename) {
+        ofstream myfile;
+        myfile.open(filename);
+        myfile << "{" << endl;
+        for (auto& [range, stats] : this->stats) {
+            myfile << "\t\"" << range << "\": {" << endl;
+            for (auto& [stat_name, stat_value] : stats) {
+                myfile << "\t\t\"" << stat_name << "\": " << stat_value << "," << endl;
+            }
+            myfile << "\t}," << endl;
+        }
+        myfile << "}" << endl;
+        myfile.close();
+    }
+
+    string map_value_to_range(double& value) {
+        int lower = static_cast<int>(std::floor(value / 5)) * 5;
+        int upper = lower + 5;
+        if (upper > 100) upper = 100;
+        return std::to_string(lower) + "-" + std::to_string(upper);
+    }
+
+    
+
+    void add_stat(string stat_name, double value) {
+        string range = this->map_value_to_range(value);
+        if (this->stats.find(stat_name) == this->stats.end()) {
+            this->stats[stat_name] = flat_hash_map<string, uint64_t>();
+        }
+        if (this->stats[stat_name].find(range) == this->stats[stat_name].end()) {
+            this->stats[stat_name][range] = 0;
+        }
+        this->stats[stat_name][range] += 1;
+    }
+
+
+    ~Stats() {
+        this->stats.clear();
+    }
+
+
+};
 
 template <typename T>
 void ascending(T& dFirst, T& dSecond)
@@ -153,6 +224,7 @@ namespace kSpider {
     void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold) {
 
         // Read colors
+        cutoff_threshold *= 100;
 
         int_vec_map color_to_ids; // = new phmap::flat_hash_map<uint64_t, phmap::flat_hash_set<uint32_t>>;
         string colors_map_file = index_prefix + "_color_to_sources.bin";
@@ -217,9 +289,9 @@ namespace kSpider {
 
         begin_time = Time::now();
         clock_t begin_detailed_pairwise_comb, begin_detailed_pairwise_edges, begin_detailed_pairwise_edges_insertion;
-        float detailed_pairwise_comb = 0.0;
-        float detailed_pairwise_edges = 0.0;
-        float detailed_pairwise_edges_insertion = 0.0;
+        double detailed_pairwise_comb = 0.0;
+        double detailed_pairwise_edges = 0.0;
+        double detailed_pairwise_edges_insertion = 0.0;
 
         PAIRS_COUNTER edges;
 
@@ -272,6 +344,14 @@ namespace kSpider {
         cout << "pairwise hashmap construction: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
         cout << "writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv" << endl;
 
+        Stats distances_stats;
+
+        auto formatDouble = [](double val) {
+            char buffer[20];
+            std::snprintf(buffer, sizeof(buffer), "%.1f", val);
+            return std::string(buffer);
+        };
+
         std::ofstream myfile;
         myfile.open(index_prefix + "_DBRetina_pairwise.tsv");
         myfile
@@ -289,7 +369,7 @@ namespace kSpider {
         uint64_t line_count = 0;
         for (const auto& edge : edges) {
 
-            flat_hash_map<string, float> distance_metrics;
+            flat_hash_map<string, double> distance_metrics;
 
             uint64_t shared_kmers = edge.second;
             uint32_t source_1 = edge.first.first;
@@ -298,25 +378,33 @@ namespace kSpider {
             uint32_t source_2_kmers = groupID_to_kmerCount[source_2];
 
             // containments
-            float cont_1_in_2 = (float)shared_kmers / source_2_kmers;
-            float cont_2_in_1 = (float)shared_kmers / source_1_kmers;
+            double cont_1_in_2 = (double)shared_kmers / source_2_kmers;
+            double cont_2_in_1 = (double)shared_kmers / source_1_kmers;
 
-            distance_metrics["min_containment"] = min(cont_1_in_2, cont_2_in_1);
-            distance_metrics["avg_containment"] = (cont_1_in_2 + cont_2_in_1) / 2.0;
-            distance_metrics["max_containment"] = max(cont_1_in_2, cont_2_in_1);
-            
+            distance_metrics["min_containment"] = min(cont_1_in_2, cont_2_in_1) * 100;
+            distance_metrics["avg_containment"] = ((cont_1_in_2 + cont_2_in_1) / 2.0) * 100;
+            distance_metrics["max_containment"] = (max(cont_1_in_2, cont_2_in_1)) * 100;
+
 
             // Ochiai distance
-            distance_metrics["ochiai"] = ((float)shared_kmers / sqrt((float)source_1_kmers * (float)source_2_kmers));
+            distance_metrics["ochiai"] = 100 * ((double)shared_kmers / sqrt((double)source_1_kmers * (double)source_2_kmers));
+
 
             // Jaccard distance (if size of samples is roughly similar)
             // J(A, B) = 1 - |A ∩ B| / (|A| + |B| - |A ∩ B|)
-            distance_metrics["jaccard"] = (float)shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers);
+            distance_metrics["jaccard"] = 100 * ((double)shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers));
 
             // Kulczynski distance needs abundance of each sample
-            // float kulczynski = (float)shared_kmers / (source_1_kmers + source_2_kmers) * 2;
+            // double kulczynski = (double)shared_kmers / (source_1_kmers + source_2_kmers) * 2;
 
-            if(distance_metrics[cutoff_distance_type] < cutoff_threshold) continue;
+            if (distance_metrics[cutoff_distance_type] < cutoff_threshold) continue;
+
+            distances_stats.add_stat("min_cont", distance_metrics["min_containment"]);
+            distances_stats.add_stat("avg_cont", distance_metrics["avg_containment"]);
+            distances_stats.add_stat("max_cont", distance_metrics["max_containment"]);
+            distances_stats.add_stat("ochiai", distance_metrics["ochiai"]);
+            distances_stats.add_stat("jaccard", distance_metrics["jaccard"]);
+
 
             myfile
                 << source_1
@@ -324,13 +412,14 @@ namespace kSpider {
                 << '\t' << namesMap[source_1]
                 << '\t' << namesMap[source_2]
                 << '\t' << shared_kmers
-                << '\t' << distance_metrics["min_containment"]
-                << '\t' << distance_metrics["avg_containment"]
-                << '\t' << distance_metrics["max_containment"]
-                << '\t' << distance_metrics["ochiai"]
-                << '\t' << distance_metrics["jaccard"];
+                << '\t' << formatDouble(distance_metrics["min_containment"])
+                << '\t' << formatDouble(distance_metrics["avg_containment"])
+                << '\t' << formatDouble(distance_metrics["max_containment"])
+                << '\t' << formatDouble(distance_metrics["ochiai"])
+                << '\t' << formatDouble(distance_metrics["jaccard"]);
             myfile << '\n';
         }
         myfile.close();
+        distances_stats.stats_to_json_file(index_prefix + "_DBRetina_pairwise_stats.json");
     }
 }
