@@ -224,8 +224,6 @@ namespace kSpider {
     void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold) {
 
         // Read colors
-        cutoff_threshold *= 100;
-
         int_vec_map color_to_ids; // = new phmap::flat_hash_map<uint64_t, phmap::flat_hash_set<uint32_t>>;
         string colors_map_file = index_prefix + "_color_to_sources.bin";
         load_colors_to_sources(colors_map_file, &color_to_ids);

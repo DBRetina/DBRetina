@@ -31,7 +31,7 @@ def execute_bash_command(command):
 @click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.STRING, help="the pairwise TSV file")
 @click.option('-g', '--groups-file', "groups_file", required=False, default="NA", type=click.Path(exists=True), help="single-column supergroups file")
 @click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
-@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 1, clamp=False), default=0.0, show_default=True, help="filter out distances < cutoff")
+@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="filter out distances < cutoff")
 @click.pass_context
 def main(ctx, pairwise_file, groups_file, distance_type, cutoff):
     """
@@ -58,10 +58,10 @@ def main(ctx, pairwise_file, groups_file, distance_type, cutoff):
 
     if cutoff != 0.0:
         filtered_file = pairwise_file.replace(
-            '.tsv', f"_{distance_type}_{cutoff*100}%.tsv")
+            '.tsv', f"_{distance_type}_{cutoff}%.tsv")
 
         ctx.obj.INFO(
-            f"Filtering by cutoff({cutoff*100}%) on {distance_type}\nPlease wait...")
+            f"Filtering by cutoff({cutoff}%) on {distance_type}\nPlease wait...")
         command = f"cat {original_file} | LC_ALL=C awk awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' > {filtered_file}"
         result = execute_bash_command(command)
     elif groups_file != "NA":

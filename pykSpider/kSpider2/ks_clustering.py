@@ -63,7 +63,7 @@ class Clusters:
             next(pairwise_tsv)  # skip header
             for row in pairwise_tsv:
                 row = row.strip().split('\t')
-                distance = float(row[self.dist_col]) * 100
+                distance = float(row[self.dist_col])
 
                 # don't make graph edge
                 if distance < self.cut_off_threshold:
@@ -114,14 +114,14 @@ New help messages
 
 
 @cli.command(name="cluster", help_priority=4)
-@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 1, clamp=False), default=0.0, show_default=True, help="cluster the supergroups with (distance > cutoff)")
+@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="cluster the supergroups with (distance > cutoff)")
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="Index file prefix")
 @click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
 @click.pass_context
 def main(ctx, index_prefix, cutoff, distance_type):
     """Graph-based clustering of the pairwise TSV file."""
     
-    cutoff = float(cutoff) * 100
+    cutoff = float(cutoff)
     kCl = Clusters(logger_obj=ctx.obj, index_prefix=index_prefix,
                    cut_off_threshold=cutoff, dist_type=distance_type)
     ctx.obj.INFO("Building the main graph...")
