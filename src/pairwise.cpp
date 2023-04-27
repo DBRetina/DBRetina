@@ -223,6 +223,13 @@ namespace kSpider {
 
     void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold) {
 
+        vector<string> allowed_distances = { "min_cont", "avg_cont", "max_cont", "ochiai", "jaccard" };
+        // cutoff_distance_type must be in allowed_distances
+        if (std::find(allowed_distances.begin(), allowed_distances.end(), cutoff_distance_type) == allowed_distances.end()) {
+            cerr << "cutoff_distance_type must be in " << '{ "min_cont", "avg_cont", "max_cont", "ochiai", "jaccard" }' << endl;
+            exit(1);
+        }
+
         // Read colors
         int_vec_map color_to_ids; // = new phmap::flat_hash_map<uint64_t, phmap::flat_hash_set<uint32_t>>;
         string colors_map_file = index_prefix + "_color_to_sources.bin";
@@ -379,9 +386,9 @@ namespace kSpider {
             double cont_1_in_2 = (double)shared_kmers / source_2_kmers;
             double cont_2_in_1 = (double)shared_kmers / source_1_kmers;
 
-            distance_metrics["min_containment"] = min(cont_1_in_2, cont_2_in_1) * 100;
-            distance_metrics["avg_containment"] = ((cont_1_in_2 + cont_2_in_1) / 2.0) * 100;
-            distance_metrics["max_containment"] = (max(cont_1_in_2, cont_2_in_1)) * 100;
+            distance_metrics["min_cont"] = min(cont_1_in_2, cont_2_in_1) * 100;
+            distance_metrics["avg_cont"] = ((cont_1_in_2 + cont_2_in_1) / 2.0) * 100;
+            distance_metrics["max_cont"] = (max(cont_1_in_2, cont_2_in_1)) * 100;
 
 
             // Ochiai distance
@@ -397,9 +404,9 @@ namespace kSpider {
 
             if (distance_metrics[cutoff_distance_type] < cutoff_threshold) continue;
 
-            distances_stats.add_stat("min_cont", distance_metrics["min_containment"]);
-            distances_stats.add_stat("avg_cont", distance_metrics["avg_containment"]);
-            distances_stats.add_stat("max_cont", distance_metrics["max_containment"]);
+            distances_stats.add_stat("min_cont", distance_metrics["min_cont"]);
+            distances_stats.add_stat("avg_cont", distance_metrics["avg_cont"]);
+            distances_stats.add_stat("max_cont", distance_metrics["max_cont"]);
             distances_stats.add_stat("ochiai", distance_metrics["ochiai"]);
             distances_stats.add_stat("jaccard", distance_metrics["jaccard"]);
 
@@ -410,9 +417,9 @@ namespace kSpider {
                 << '\t' << namesMap[source_1]
                 << '\t' << namesMap[source_2]
                 << '\t' << shared_kmers
-                << '\t' << formatDouble(distance_metrics["min_containment"])
-                << '\t' << formatDouble(distance_metrics["avg_containment"])
-                << '\t' << formatDouble(distance_metrics["max_containment"])
+                << '\t' << formatDouble(distance_metrics["min_cont"])
+                << '\t' << formatDouble(distance_metrics["avg_cont"])
+                << '\t' << formatDouble(distance_metrics["max_cont"])
                 << '\t' << formatDouble(distance_metrics["ochiai"])
                 << '\t' << formatDouble(distance_metrics["jaccard"]);
             myfile << '\n';
