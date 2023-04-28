@@ -103,12 +103,26 @@ public:
         ofstream myfile;
         myfile.open(filename);
         myfile << "{" << endl;
+        int json_end_counter = this->stats.size();
         for (auto& [range, stats] : this->stats) {
+            json_end_counter--;
             myfile << "\t\"" << range << "\": {" << endl;
-            for (auto& [stat_name, stat_value] : stats) {
-                myfile << "\t\t\"" << stat_name << "\": " << stat_value << "," << endl;
+
+            // iterate over stats by index
+            for (int i = 0; i < stats.size(); i++) {
+                auto& [stat_name, stat_value] = *std::next(stats.begin(), i);
+                myfile << "\t\t\"" << stat_name << "\": " << stat_value;
+                if (i < stats.size() - 1) {
+                    myfile << ",";
+                }
+                myfile << endl;
             }
-            myfile << "\t}," << endl;
+            if (json_end_counter > 0) {
+                myfile << "\t}," << endl;
+            }
+            else {
+                myfile << "\t}" << endl;
+            }
         }
         myfile << "}" << endl;
         myfile.close();
@@ -396,7 +410,7 @@ namespace kSpider {
 
 
             // Jaccard distance (if size of samples is roughly similar)
-            // J(A, B) = 1 - |A ∩ B| / (|A| + |B| - |A ∩ B|)
+            // J(A, B) = 1 - |A ∩ B| / (|A| + |B| - |A ∩ B|) <- this is distance not similarity
             distance_metrics["jaccard"] = 100 * ((double)shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers));
 
             // Kulczynski distance needs abundance of each sample
