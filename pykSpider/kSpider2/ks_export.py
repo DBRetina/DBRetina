@@ -3,7 +3,7 @@
 from __future__ import division
 
 import os
-import _kSpider_internal as kSpider_internal
+import sys
 import click
 import pandas as pd
 from kSpider2.click_context import cli
@@ -11,6 +11,26 @@ from scipy.cluster.hierarchy import linkage, to_tree, ClusterWarning
 import numpy as np
 from warnings import simplefilter
 simplefilter("ignore", ClusterWarning)
+from Bio import Phylo
+from Bio.Phylo import BaseTree
+import matplotlib.pyplot as plt
+from scipy.cluster.hierarchy import dendrogram
+import plotly.figure_factory as ff
+from scipy.spatial.distance import squareform
+import seaborn as sns
+
+# update recursive limit
+sys.setrecursionlimit(15000)
+
+
+# Recursive function to convert linkage tree to BioPython Tree
+def convert_tree(tree):
+    if tree.is_leaf():
+        return BaseTree.Clade(branch_length=tree.dist, name=str(tree.id))
+    else:
+        left = convert_tree(tree.get_left())
+        right = convert_tree(tree.get_right())
+        return BaseTree.Clade(branch_length=tree.dist, clades=[left, right])
 
 
 # Thanks to https://stackoverflow.com/a/31878514/3371177
@@ -40,20 +60,19 @@ def get_newick(node, parent_dist, leaf_names, newick='') -> str:
 
 
 @cli.command(name="export", help_priority=5)
-@click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
+@click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="Index file prefix")
+@click.option('-p', '--pairwise', 'pairwise_file', required=False, type=click.Path(exists=True), help="filtered pairwise TSV file")
 @click.option('--newick', "newick", is_flag=True, help="Convert pairwise (containment) matrix to newick format", default=False)
 @click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
 @click.option('-o', "overwritten_output", default="na", required=False, type=click.STRING, help="custom output file name prefix")
 @click.pass_context
-def main(ctx, index_prefix, newick, distance_type, overwritten_output):
+def main(ctx, index_prefix, pairwise_file, newick, distance_type, overwritten_output):
     """
     Export the pairwise TSV to dissimilarity matrix or newick format.
     """
-    
-    index_basename = os.path.basename(index_prefix)
-    DBRetina_pairwise_tsv = f"{index_prefix}_DBRetina_pairwise.tsv"
-    namesMap_file = f"{index_prefix}.namesMap"
-    seqToKmers_tsv = f"{index_prefix}_DBRetina_featuresNo.tsv"
+    if(not pairwise_file):
+        ctx.obj.INFO("No pairwise file provided, using the default one")
+        pairwise_file = f"{index_prefix}_DBRetina_pairwise.tsv"
 
     LOGGER = ctx.obj
 
@@ -71,61 +90,31 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     dist_col = distance_to_col[distance_type]    
 
     # Check for existing pairwise file
-    for _file in [DBRetina_pairwise_tsv, namesMap_file, seqToKmers_tsv]:
+    for _file in [pairwise_file]:
         if not os.path.exists(_file):
             LOGGER.ERROR(f"File {_file} is not found.")
-
-    """
-    # Load kmer count per record
-    """
-    seq_to_kmers = {}
-    with open(seqToKmers_tsv) as KMER_COUNT:
-        next(KMER_COUNT)
-        for line in KMER_COUNT:
-            seq_ID, no_of_kmers = tuple(line.strip().split('\t')[1:])
-            seq_to_kmers[seq_ID] = int(no_of_kmers)
-
-    """
-    # Parse namesmap
-    """
-
-    namesMap_dict = {}
-    with open(namesMap_file) as NAMES:
-        next(NAMES)
-        for line in NAMES:
-            line = line.strip().split(' ')
-            _id = line[0]
-            _name = line[1]
-            namesMap_dict[_id] = _name
 
     """Parse DBRetina's pairwise
     """
 
-    distances = {}
-    labeled_out = f"DBRetina_{index_basename}_pairwise.tsv"
-    distmatrix_out = f"DBRetina_{index_basename}_distmat.tsv"
-    newick_out = f"DBRetina_{index_basename}.newick"
+    distances = {}    
+    newick_out = pairwise_file.replace(".tsv", f"_{distance_type}.newick")
+    distmatrix_out = pairwise_file.replace(".tsv", f"_{distance_type}_distmat.tsv")
 
     if overwritten_output != "na":
-        labeled_out = f"{overwritten_output}_pairwise.tsv"
-        distmatrix_out = f"{overwritten_output}_distmat.tsv"
-        newick_out = f"{overwritten_output}.newick"
+        distmatrix_out = f"{overwritten_output}_{distance_type}_distmat.tsv"
+        newick_out = f"{overwritten_output}_{distance_type}.newick"
 
-    else:
-        with open(DBRetina_pairwise_tsv) as PAIRWISE, open(labeled_out, 'w') as NEW:
-            ctx.obj.INFO(f"Writing pairwise matrix to {labeled_out}")
-            NEW.write(f"group1\tgroup2\t{distance_type}\n")
-            # Skip header
-            next(PAIRWISE)
-            for line in PAIRWISE:
-                line = (line.strip().split('\t'))
-                origin_grp1 = line[0]
-                origin_grp2 = line[1]
-                grp1 = namesMap_dict[origin_grp1]
-                grp2 = namesMap_dict[origin_grp2]
-                dist_metric = float(line[dist_col])
-                distances[(grp1, grp2)] = dist_metric
-                NEW.write(f"{grp1}\t{grp2}\t{dist_metric}\n")
+    with open(pairwise_file) as PAIRWISE:
+        next(PAIRWISE) # Skip header
+        for line in PAIRWISE:
+            line = (line.strip().split('\t'))
+            # add double quotes to group names
+            grp1 = f"\"{line[2]}\""
+            grp2 = f"\"{line[3]}\""
+            dist_metric = float(line[dist_col])
+            # convert xx% to 0.xx for the distance matrix
+            distances[(grp1, grp2)] = dist_metric / 100
 
 
     elements = set()
@@ -144,9 +133,10 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
     # dist_df.to_csv(distmatrix_out + ".new.tsv", sep='\t')
 
 
-    unique_ids = sorted(set([x for y in distances.keys() for x in y]))
+    unique_ids = sorted({x for y in distances for x in y})
     df = pd.DataFrame(index=unique_ids, columns=unique_ids)
     for k, v in distances.items():
+        # 1-v for dissimilarity
         df.loc[k[0], k[1]] = 1-v
         df.loc[k[1], k[0]] = 1-v
 
@@ -159,7 +149,7 @@ def main(ctx, index_prefix, newick, distance_type, overwritten_output):
         LOGGER.INFO(f"Writing newick to {newick_out}.")
         names = list(loaded_df.columns[1:])
         dist = loaded_df[loaded_df.columns[1:]].to_numpy()
-        Z = linkage(dist, 'single')
+        Z = linkage(dist, 'average')
         tree = to_tree(Z, False)
 
         newick = get_newick(tree, tree.dist, names)
