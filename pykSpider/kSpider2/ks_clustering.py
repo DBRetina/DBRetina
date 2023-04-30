@@ -161,7 +161,7 @@ class Clusters:
 
         # Add a colorbar
         cbar = plt.colorbar(scatter)
-        cbar.set_label('Normalized Cluster Sizes', fontsize=15)
+        cbar.set_label('Cluster Sizes', fontsize=15)
         
         ax.set_title('Bubble Plot of Cluster Sizes', fontsize=20)
         ax.set_xlabel('Random X', fontsize=15)
