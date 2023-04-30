@@ -8,6 +8,8 @@ import click
 from kSpider2.click_context import cli
 import matplotlib.pyplot as plt
 import seaborn as sns
+import os
+import sys
 
 
 def plot_histogram(features_counts, output_file):
@@ -29,28 +31,129 @@ def plot_histogram(features_counts, output_file):
     plt.savefig(output_file, dpi=500)
 
 
+def validate_numbers(ctx, param, value):
+    if not len(value):
+        return []
+    try:
+        return [int(num) for num in value.split(',')]
+    except ValueError as e:
+        raise click.BadParameter(
+            'Numbers must be a comma-separated list of integers') from e
+
+
+def path_to_absolute_path(ctx, param, value):
+    return value if value == "NA" else os.path.abspath(value)
+
+
+def inject_index_command(index_prefix):
+    extra_file = f"{index_prefix}.extra"
+    if not os.path.exists(extra_file):
+        return ""
+    with open(extra_file, "r") as f:
+        for line in f:
+            line = line.strip().split(":")
+            if line[0] == "command":
+                return line[1]
+        return ""
+
+
+def get_command():
+    _sys_argv = sys.argv
+    for i in range(len(_sys_argv)):
+        if _sys_argv[i] == "-i":
+            _sys_argv[i+1] = os.path.abspath(_sys_argv[i+1])
+    return "#command: DBRetina " + " ".join(_sys_argv[1:])
+
+
 @cli.command(name="query", help_priority=6)
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="index file prefix")
-@click.option('-q', '--query', "query_file", required=True, type=click.Path(exists=True), help="line-separated file of supergroups")
+@click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
+@click.option('--clusters-file', "clusters_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
+@click.option('--cluster-ids', "cluster_ids", callback=validate_numbers, required=False, default="", help="comma-separated list of cluster IDs")
 @click.option('-o', '--output', "output_prefix", required=True, default=None, help="output file prefix")
 @click.pass_context
-def main(ctx, query_file, index_prefix, output_prefix):
-    """
-    Query DBRetina index.
+def main(ctx, groups_file, clusters_file, cluster_ids, index_prefix, output_prefix):
+    """Query DBRetina index.
+
+Detailed description:
+
+    Query DBRetina index and get the supergroups of the features in a set of groups (provided as a single-column file or cluster IDs in a DBRetina cluster file).
+
+Examples:
+
+    1- groups file                    | DBRetina query -i index_prefix -g groups_file -o output_prefix
+    
+    2- clusters file with cluster IDs | DBRetina query -i index_prefix --clusters-file clusters_file --cluster-ids 1,2,3 -o output_prefix
+    
     """
 
-    key_val_suffix = "_feature_to_groups.tsv"
-    val_key_suffix = "_features_count_per_group.tsv"
-    features_to_groups_file = output_prefix + key_val_suffix
-    counts_file = output_prefix + val_key_suffix
+    # if all are NA
+    if groups_file == "NA" and clusters_file == "NA" and not len(cluster_ids):
+        ctx.obj.ERROR("DBRetina's query command requires a groups_file or (clusters_file and cluster_ids).")
+
+    # if clusters_file then must be cluster_id
+    if clusters_file != "NA" and not len(cluster_ids):
+        ctx.obj.ERROR(
+            "DBRetina's filter command requires cluster_id(s) if clusters_file is provided.")
+    elif clusters_file == "NA" and len(cluster_ids):
+        ctx.obj.ERROR(
+            "DBRetina's filter command requires a clusters_file if cluster_id(s) is provided.")
+
+    # can't filter by groups_file and clusters_file at the same time
+    if groups_file != "NA" and clusters_file != "NA":
+        ctx.obj.ERROR(
+            "DBRetina's filter command can't filter by groups_file and clusters_file at the same time.")
+
+    commands = inject_index_command(index_prefix) + '\n' + get_command()
+
+    _tmp_file = ".DBRetina.tmp.group"
+    query_file = ""
+    all_ids = set()
+    if clusters_file != "NA":
+        query_file = _tmp_file
+        with (open(clusters_file) as f, open(query_file, 'w') as W):            
+            # skip comments
+            while True:
+                pos = clusters_file.tell()
+                line = clusters_file.readline()
+                if not line.startswith('#'):
+                    clusters_file.seek(pos)
+                    break
+            # skip header
+            next(f)
+            for line in f:
+                line = line.strip().split('\t')
+                cluster_id = int(line[0])
+                if cluster_id in cluster_ids:
+                    all_ids.add(cluster_id)
+                    W.write(line[2].replace('|', '\n') + '\n')
+
+        unfound_ids = set(cluster_ids).difference(all_ids)
+        if len(unfound_ids):
+            ctx.obj.WARNING(
+                f"Couldn't find the following cluster IDs: {unfound_ids}")
+
+    else:
+        query_file = groups_file
+
+
+    features_to_groups_file = f"{output_prefix}_feature_to_groups.tsv"
+    counts_file = f"{output_prefix}_features_count_per_group.tsv"
     features_counts = []
     with open(counts_file) as f:
         features_counts.extend(int(line.strip().split('\t')[1]) for line in f)
 
     output_file = f"{output_prefix}_features_count_per_group_histogram.png"
-    ctx.obj.INFO(f"Plotting histogram of features frequencies to {output_file}")
+    ctx.obj.INFO(
+        f"Plotting histogram of features frequencies to {output_file}")
     plot_histogram(features_counts, output_file)
 
-    kSpider_internal.query(index_prefix, query_file, output_prefix)
-    ctx.obj.INFO(f"writing query results to {features_to_groups_file}, and {counts_file}")
+    kSpider_internal.query(index_prefix, query_file, output_prefix, commands)
+    ctx.obj.INFO(
+        f"writing query results to {features_to_groups_file}, and {counts_file}")
+
+    # if _tmp_file exists, remove it
+    if os.path.exists(_tmp_file):
+        os.remove(_tmp_file)
+
     ctx.obj.SUCCESS("Query done!")
