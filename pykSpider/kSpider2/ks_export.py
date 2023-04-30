@@ -18,20 +18,19 @@ from scipy.cluster.hierarchy import dendrogram
 import plotly.figure_factory as ff
 from scipy.spatial.distance import squareform
 import seaborn as sns
+from ete3 import Tree, TreeStyle
+from io import StringIO
+from skbio import read
+from skbio.tree import TreeNode
+import re
 
-# update recursive limit
-sys.setrecursionlimit(15000)
+# def newick_str_escape(s):
+#     return s.replace('(', '-').replace(')', '-').replace(',', '-').replace(' ', '-')
 
-
-# Recursive function to convert linkage tree to BioPython Tree
-def convert_tree(tree):
-    if tree.is_leaf():
-        return BaseTree.Clade(branch_length=tree.dist, name=str(tree.id))
-    else:
-        left = convert_tree(tree.get_left())
-        right = convert_tree(tree.get_right())
-        return BaseTree.Clade(branch_length=tree.dist, clades=[left, right])
-
+def newick_str_escape(name):
+    # Remove special characters
+    name = re.sub(r'[:;(),\[\]\-\' ]', '_', name)
+    return name
 
 # Thanks to https://stackoverflow.com/a/31878514/3371177
 def get_newick(node, parent_dist, leaf_names, newick='') -> str:
@@ -110,8 +109,10 @@ def main(ctx, index_prefix, pairwise_file, newick, distance_type, overwritten_ou
         for line in PAIRWISE:
             line = (line.strip().split('\t'))
             # add double quotes to group names
-            grp1 = f"\"{line[2]}\""
-            grp2 = f"\"{line[3]}\""
+            grp1 = newick_str_escape(line[2])
+            grp2 = newick_str_escape(line[3])
+            # grp1 = f"\"{line[2]}\"".replace(" ", "_")
+            # grp2 = f"\"{line[3]}\"".replace(" ", "_")
             dist_metric = float(line[dist_col])
             # convert xx% to 0.xx for the distance matrix
             distances[(grp1, grp2)] = dist_metric / 100
@@ -151,9 +152,13 @@ def main(ctx, index_prefix, pairwise_file, newick, distance_type, overwritten_ou
         dist = loaded_df[loaded_df.columns[1:]].to_numpy()
         Z = linkage(dist, 'average')
         tree = to_tree(Z, False)
+        try:
+            newick = get_newick(tree, tree.dist, names)
+            with open(newick_out, 'w') as NW:
+                NW.write(newick)
 
-        newick = get_newick(tree, tree.dist, names)
-        with open(newick_out, 'w') as NW:
-            NW.write(newick)
+        except RecursionError as err:
+            LOGGER.ERROR(f"Couldn't handle the tree depth | {err}")    
+        
 
     LOGGER.SUCCESS("Done.")

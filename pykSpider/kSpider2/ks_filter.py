@@ -36,6 +36,14 @@ def execute_bash_command(command):
         return False
 
 
+def get_command():
+    _sys_argv = sys.argv
+    for i in range(len(_sys_argv)):
+        if os.path.isfile(_sys_argv[i]):
+            _sys_argv[i] = os.path.abspath(_sys_argv[i])
+    return "DBRetina " + " ".join(_sys_argv[1:])
+
+
 def increment_version(output):
     version = 1
     base_output = output.rsplit('.', 1)[0]
@@ -47,20 +55,25 @@ def increment_version(output):
             return output_version
         version += 1
 
+
 def validate_numbers(ctx, param, value):
-    if not len(value): return []
-    try: return [int(num) for num in value.split(',')]
+    if not len(value):
+        return []
+    try:
+        return [int(num) for num in value.split(',')]
     except ValueError as e:
-        raise click.BadParameter('Numbers must be a comma-separated list of integers') from e
+        raise click.BadParameter(
+            'Numbers must be a comma-separated list of integers') from e
+
 
 def path_to_absolute_path(ctx, param, value):
     return value if value == "NA" else os.path.abspath(value)
 
 
 @cli.command(name="filter", help_priority=3)
-@click.option('-p', '--pairwise', 'pairwise_file', callback = path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
-@click.option('-g', '--groups-file', "groups_file", callback = path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
-@click.option('--clusters-file', "clusters_file", callback = path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
+@click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
+@click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
+@click.option('--clusters-file', "clusters_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
 @click.option('--cluster-ids', "cluster_ids", callback=validate_numbers, required=False, default="", help="comma-separated list of cluster IDs")
 @click.option('-d', '--dist-type', "distance_type", required=False, default="NA", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="filter out distances < cutoff")
@@ -86,6 +99,8 @@ Examples:
 
     5- cluster file with cluster IDs     | dbretina filter -p pairwise.tsv --clusters-file clusters.tsv --clusters-id 8 -o filtered.tsv 
     """
+    
+    metadata = []
 
     # check if not any option is provided for filteration
     if distance_type == "NA" and cutoff == 0.0 and groups_file == "NA" and clusters_file == "NA":
@@ -137,10 +152,8 @@ Examples:
         output_file = increment_version(output_file)
         ctx.obj.WARNING(f"New output file {output_file}.")
 
-    groups_file_name = "NA"
-    if groups_file != "NA":
-        # basename without the unknown extension
-        groups_file_name = "".join(os.path.basename(groups_file).rsplit('.', 1)[0])
+    if groups_file != "NA" and not os.path.exists(groups_file):
+        ctx.obj.ERROR(f"Groups file {groups_file} doesn't exist.")
 
     comment_lines = 0
     with (open(pairwise_file) as f, open(output_file, 'w') as w):
@@ -149,14 +162,12 @@ Examples:
             if line.startswith("#"):
                 w.write(line)
             else:
-                w.write(f"#filter:cutoff({cutoff}),distance({distance_type}),groups_file={groups_file_name},\n")
-                full_user_click_command = ' '.join(sys.argv)
-                w.write(f"#command:{full_user_click_command}")
+                w.write(f"#command: {get_command()}\n")
                 break
 
     ctx.obj.INFO(
         f"Filtering the pairwise matrix on the {distance_type} column with a cutoff of {cutoff} and groups file {groups_file}."
-        )
+    )
 
     _tmp_file = ".DBRetina.tmp.group"
 
@@ -164,6 +175,15 @@ Examples:
     if clusters_file != "NA":
         groups_file = _tmp_file
         with open(clusters_file) as f, open(_tmp_file, 'w') as W:
+            
+            # skip comments
+            while True:
+                pos = clusters_file.tell()
+                line = clusters_file.readline()
+                if not line.startswith('#'):
+                    clusters_file.seek(pos)
+                    break
+            
             next(f)
             for line in f:
                 line = line.strip().split('\t')
@@ -174,7 +194,8 @@ Examples:
 
     unfound_ids = set(cluster_ids).difference(all_ids)
     if len(unfound_ids):
-        ctx.obj.WARNING(f"Couldn't find the following cluster IDs: {unfound_ids}")
+        ctx.obj.WARNING(
+            f"Couldn't find the following cluster IDs: {unfound_ids}")
 
     # filter by both cutoff and groups
     if cutoff != 0.0 and groups_file != "NA":
@@ -182,7 +203,8 @@ Examples:
         result = execute_bash_command(awk_script)
 
     elif cutoff != 0.0:
-        ctx.obj.INFO(f"Filtering the pairwise matrix on the {distance_type} column with a cutoff of {cutoff}.")        
+        ctx.obj.INFO(
+            f"Filtering the pairwise matrix on the {distance_type} column with a cutoff of {cutoff}.")
         command = f"cat {pairwise_file} | grep '^[^#;]' | LC_ALL=C awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"
         result = execute_bash_command(command)
 

@@ -235,7 +235,7 @@ namespace kSpider {
     }
 
 
-    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold) {
+    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command) {
 
         vector<string> allowed_distances = { "min_cont", "avg_cont", "max_cont", "ochiai", "jaccard" };
         // cutoff_distance_type must be in allowed_distances
@@ -373,6 +373,9 @@ namespace kSpider {
 
         std::ofstream myfile;
         myfile.open(index_prefix + "_DBRetina_pairwise.tsv");
+        myfile << "#nodes:" << namesMap.size() << '\n';
+        myfile << "#command: " << full_command << '\n';
+
         myfile
             << "group_1_ID"
             << "\tgroup_2_ID"

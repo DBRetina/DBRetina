@@ -7,6 +7,22 @@ import click
 from kSpider2.click_context import cli
 import os
 from glob import glob
+import sys
+
+
+def append_line_to_file(line, file):
+    with open(file, "a") as f:
+        f.write(line + "\n")
+
+
+def get_command():
+    _sys_argv = sys.argv
+    for i in range(len(_sys_argv)):
+        if os.path.isfile(_sys_argv[i]):
+            _sys_argv[i] = os.path.abspath(_sys_argv[i])
+        if _sys_argv[i] == '-o':
+            _sys_argv[i+1] = os.path.abspath(_sys_argv[i+1])
+    return "DBRetina " + " ".join(_sys_argv[1:])
 
 
 @cli.command(name="index", help_priority=1)
@@ -36,4 +52,5 @@ def main(ctx, asc_file, names_file, output_prefix):
 
     ctx.obj.INFO(f"Indexing {asc_file}")
     kSpider_internal.dbretina_indexing(json_file, output_prefix)
+    append_line_to_file(f"command:{get_command()}", f"{output_prefix}.extra")
     ctx.obj.SUCCESS("DONE!")

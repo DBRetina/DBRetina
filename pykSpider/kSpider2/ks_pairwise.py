@@ -9,6 +9,7 @@ import json
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import os
 
 def plot_histogram(json_path, outout_file_path, use_log = False):
     # Load data from JSON file
@@ -68,6 +69,24 @@ def plot_histogram(json_path, outout_file_path, use_log = False):
     plt.tight_layout()
     plt.savefig(outout_file_path, dpi=600)
 
+def inject_index_command(index_prefix):
+    extra_file = f"{index_prefix}.extra"
+    if not os.path.exists(extra_file):
+        return ""
+    with open(extra_file, "r") as f:
+        for line in f:
+            line = line.strip().split(":")
+            if line[0] == "command":
+                return line[1]
+        return ""
+
+
+def get_command():
+    _sys_argv = sys.argv
+    for i in range(len(_sys_argv)):
+        if _sys_argv[i] == "-i":
+            _sys_argv[i+1] = os.path.abspath(_sys_argv[i+1])
+    return "#command: DBRetina " + " ".join(_sys_argv[1:])
 
 @cli.command(name="pairwise", help_priority=2)
 @click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
@@ -77,11 +96,14 @@ def plot_histogram(json_path, outout_file_path, use_log = False):
 @click.pass_context
 def main(ctx, index_prefix, user_threads, distance_type, cutoff):
     """
-    Generate pairwise TSV.
+    Calculate pairwise distances.
     """
+    
+    commands = inject_index_command(index_prefix) + '\n' + get_command()
+    
     ctx.obj.INFO(
         f"Constructing the pairwise matrix using {user_threads} cores.")
-    kSpider_internal.pairwise(index_prefix, user_threads, distance_type, cutoff)
+    kSpider_internal.pairwise(index_prefix, user_threads, distance_type, cutoff, commands)
     stats_json_path = f"{index_prefix}_DBRetina_pairwise_stats.json"
     linear_histo = f"{index_prefix}_DBRetina_distance_metrics_plot_linear.png"
     log_histo = f"{index_prefix}_DBRetina_distance_metrics_plot_log.png"

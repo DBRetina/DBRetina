@@ -4,6 +4,25 @@ import os
 import click
 from kSpider2.click_context import cli
 import rustworkx as rx
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import numpy as np
+import math
+import networkx as nx
+import plotly.graph_objects as go
+import sys
+
+
+def get_command():
+    _sys_argv = sys.argv
+    for i in range(len(_sys_argv)):
+        if os.path.isfile(_sys_argv[i]):
+            _sys_argv[i] = os.path.abspath(_sys_argv[i])
+        if _sys_argv[i] == '-o':
+            _sys_argv[i+1] = os.path.abspath(_sys_argv[i+1])
+    return "DBRetina " + " ".join(_sys_argv[1:])
+
 
 class Clusters:
 
@@ -18,41 +37,27 @@ class Clusters:
     seq_to_kmers = dict()
     names_map = dict()
 
-    def __init__(self, logger_obj, index_prefix, cut_off_threshold, dist_type):
-        self.index_prefix = index_prefix
+    def __init__(self, logger_obj, pairwise_file, cut_off_threshold, dist_type, output_prefix):
+        self.output_prefix = output_prefix
         self.Logger = logger_obj
         self.edges_batch_number = 10_000_000
         self.dist_type = dist_type
-        self.names_file = f"{index_prefix}.namesMap"
         self.cut_off_threshold = cut_off_threshold
-        self.seqToKmers_file = f"{index_prefix}_DBRetina_featuresNo.tsv"
-        self.pairwise_file = f"{index_prefix}_DBRetina_pairwise.tsv"
-        self.output = f"{index_prefix}_DBRetina_clusters_{cut_off_threshold}%.txt"
+        self.pairwise_file = pairwise_file
         self.shared_kmers_threshold = 200
+        self.original_nodes = {}
+        self.metadata = []
         self.Logger.INFO("Loading TSV pairwise file")
-        self.load_seq_to_kmers(self.seqToKmers_file)
-        self.tsv_get_namesmap()
         if dist_type not in self.distance_to_col:
             logger_obj.ERROR("unknown distance!")
         self.dist_col = self.distance_to_col[dist_type]
 
         self.graph = rx.PyGraph()
-        self.nodes_indeces = self.graph.add_nodes_from(
-            list(self.names_map.keys()))
 
-    def load_seq_to_kmers(self, tsv):
-        with open(tsv) as KMER_COUNT:
-            next(KMER_COUNT)
-            for line in KMER_COUNT:
-                seq_ID, no_of_kmers = tuple(line.strip().split('\t')[1:])
-                self.seq_to_kmers[int(seq_ID)] = int(no_of_kmers)
-
-    def tsv_get_namesmap(self):
-        with open(self.names_file, 'r') as namesMap:
-            next(namesMap)  # skip the header
-            for row in namesMap:
-                row = row.strip().split('|')
-                self.names_map[int(row[0])] = row[1]
+        total_nodes_no = int(
+            next(open(pairwise_file, 'r')).strip().split(':')[-1])
+        nodes_range = range(1, total_nodes_no + 1)
+        self.nodes_indeces = self.graph.add_nodes_from(list(nodes_range))
 
     def construct_graph(self):
         batch_counter = 0
@@ -60,7 +65,19 @@ class Clusters:
 
         print("[i] constructing graph")
         with open(self.pairwise_file, 'r') as pairwise_tsv:
-            next(pairwise_tsv)  # skip header
+
+            # skip comments
+            while True:
+                pos = pairwise_tsv.tell()
+                line = pairwise_tsv.readline()
+                if not line.startswith('#'):
+                    pairwise_tsv.seek(pos)
+                    break
+                else:
+                    self.metadata.append(line)            
+            self.metadata.append(f"#command: {get_command()}\n")
+
+            next(pairwise_tsv)  # Skip header
             for row in pairwise_tsv:
                 row = row.strip().split('\t')
                 distance = float(row[self.dist_col])
@@ -73,6 +90,9 @@ class Clusters:
                     batch_counter += 1
                     seq1 = int(row[0]) - 1
                     seq2 = int(row[1]) - 1
+                    self.original_nodes[int(row[0])] = row[2]
+                    self.original_nodes[int(row[1])] = row[3]
+
                     edges_tuples.append((seq1, seq2, distance))
                 else:
                     self.graph.add_edges_from(edges_tuples)
@@ -82,25 +102,104 @@ class Clusters:
             if len(edges_tuples):
                 self.graph.add_edges_from(edges_tuples)
 
+    def plot_histogram2(self, cluster_sizes):
+        plt.figure(figsize=(10, 6))
+        sns.set_style('whitegrid')
+        sns.histplot(cluster_sizes, kde=True, color='darkblue', bins=math.ceil(max(cluster_sizes)/10))
+        plt.title('Histogram of Cluster Sizes', fontsize=20)
+        plt.xlabel('Cluster Sizes', fontsize=15)
+        plt.ylabel('Count', fontsize=15)
+        plt.yscale('log')
+        plt.savefig(f"{self.output_prefix}_DBRetina_clusters_{self.cut_off_threshold}%.png", dpi=500)
+    
+    def plot_histogram(self, cluster_sizes):
+        # Set style and context to make a nicer plot
+        sns.set_style("white")
+        sns.set_context("talk")
+
+        plt.figure(figsize=(10,6))  # Set the figure size
+        plot = sns.histplot(cluster_sizes, kde=True, color='skyblue', binwidth=1, edgecolor='black')  # Generate histogram with KDE
+        
+        # Remove top and right axes spines
+        sns.despine()
+
+        plt.title('Histogram of Cluster Sizes with KDE')  # Set the title
+        plt.xlabel('Cluster Sizes')  # Set the x-label
+        plt.ylabel('Count')  # Set the y-label
+
+        # Set xticks to integer values
+        plt.xticks(np.arange(min(cluster_sizes), max(cluster_sizes)+1, 1.0))
+        
+        # Add a legend
+        plot.legend(labels=['KDE', 'Cluster Sizes'])
+        plt.savefig(f"{self.output_prefix}_DBRetina_clusters_{self.cut_off_threshold}%.png", dpi=500)
+
+    def plot_bubbles(self, cluster_sizes):
+         # Create a new figure
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Set the style using seaborn
+        sns.set_style("whitegrid")
+        
+        # Create arrays with the same size as cluster_sizes with random values for the x and y axes
+        x = np.random.rand(len(cluster_sizes))
+        y = np.random.rand(len(cluster_sizes))
+
+        # Scale the cluster sizes so they're more visually appealing
+        # scaled_sizes = [i**2 for i in cluster_sizes]
+        
+        # Create a scatter plot where the size of each point is proportional to the cluster size
+        scaled_sizes = [i**0.5 * 20 for i in cluster_sizes]  
+        # scaled_sizes = [i / max(cluster_sizes) for i in cluster_sizes]
+    
+        # Normalize the cluster sizes for the color mapping
+        normalized_sizes = [(i - min(cluster_sizes)) / (max(cluster_sizes) - min(cluster_sizes)) for i in cluster_sizes]
+
+
+
+        scatter = ax.scatter(x, y, s=scaled_sizes, c=cluster_sizes, cmap='viridis', alpha=0.6, edgecolors="w", linewidth=2)
+
+        # Add a colorbar
+        cbar = plt.colorbar(scatter)
+        cbar.set_label('Normalized Cluster Sizes', fontsize=15)
+        
+        ax.set_title('Bubble Plot of Cluster Sizes', fontsize=20)
+        ax.set_xlabel('Random X', fontsize=15)
+        ax.set_ylabel('Random Y', fontsize=15)
+        plt.savefig(f"{self.output_prefix}_DBRetina_clusters_{self.cut_off_threshold}%_bubbles.png", dpi=500)
+
     def cluster_graph(self):
+
+        cluster_sizes = []
+
         self.connected_components = rx.connected_components(self.graph)
-        self.Logger.INFO(
-            f"number of clusters: {len(self.connected_components)}")
         single_components = 0
-        retworkx_export = self.index_prefix + \
-            f"_DBRetina_graph_{self.cut_off_threshold}%.txt"
+        retworkx_export = f"{self.output_prefix}_DBRetina_clusters_{self.cut_off_threshold}%.tsv"
         # and {self.output} ...")
         self.Logger.INFO(f"writing {retworkx_export}")
         # rx.node_link_json(self.graph, path = retworkx_export)
-        with open(self.output, 'w') as CLUSTERS:
+        cluster_id = 1
+        with open(retworkx_export, 'w') as CLUSTERS:
+            for metadata_line in self.metadata:
+                CLUSTERS.write(metadata_line)
+
+            CLUSTERS.write(f"cluster_id\tcluster_size\tcluster_members\n")
             for component in self.connected_components:
                 # uncomment to exclude single genome clusters from exporting
-                # if len(component) == 1:
-                #     single_components += 1
-                #     continue
-                named_component = [self.names_map[node + 1]
+                if len(component) == 1 and list(component)[0] + 1 not in self.original_nodes:
+                    continue
+                named_component = [self.original_nodes[node + 1]
                                    for node in component]
-                CLUSTERS.write('|'.join(named_component) + '\n')
+                # CLUSTERS.write(cluster_id + '\t' + len(component) + '\t' + '|'.join(named_component) + '\n')
+                CLUSTERS.write(
+                    f"{cluster_id}\t{len(component)}\t{'|'.join(named_component)}\n")
+                cluster_sizes.append(len(component))
+                cluster_id += 1
+
+        self.Logger.INFO("plotting cluster sizes histogram and bubble plot")
+        self.plot_histogram(cluster_sizes)
+        self.plot_bubbles(cluster_sizes)
+        self.Logger.INFO(f"number of clusters: {cluster_id - 1}")
 
 
 """
@@ -115,15 +214,17 @@ New help messages
 
 @cli.command(name="cluster", help_priority=4)
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="cluster the supergroups with (distance > cutoff)")
-@click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="Index file prefix")
-@click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
+@click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")
+@click.option('-p', '--pairwise', 'pairwise_file', required=False, type=click.Path(exists=True), help="filtered pairwise TSV file")
+@click.option('-d', '--dist-type', "distance_type", required=True, show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
 @click.pass_context
-def main(ctx, index_prefix, cutoff, distance_type):
+def main(ctx, pairwise_file, cutoff, distance_type, output_prefix):
     """Graph-based clustering of the pairwise TSV file."""
-    
+
     cutoff = float(cutoff)
-    kCl = Clusters(logger_obj=ctx.obj, index_prefix=index_prefix,
-                   cut_off_threshold=cutoff, dist_type=distance_type)
+
+    kCl = Clusters(logger_obj=ctx.obj, pairwise_file=pairwise_file,
+                   cut_off_threshold=cutoff, dist_type=distance_type, output_prefix=output_prefix)
     ctx.obj.INFO("Building the main graph...")
     kCl.construct_graph()
     ctx.obj.INFO("Clustering...")
