@@ -171,7 +171,9 @@ setup(name='DBRetina',
           'scipy',
           'numpy',
           'rustworkx',
-          'tqdm'
+          'tqdm',
+          'seaborn',
+          'matplotlib',
       ],
       include_package_data=True,
       entry_points='''

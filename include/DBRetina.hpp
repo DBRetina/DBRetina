@@ -37,7 +37,7 @@ void load_tsv_to_map_no_names(string filename, str_vec_map* map);
 void load_names_tsv_to_map(string filename, str_str_map* map);
 void parse_dbretina_json(string json_file, str_hashed_vec_map* map);
 void sketch_dbretina(string asc_file, string names_file, string user_prefix = "NA");
-void query(string index_prefix, string query_file, string output_prefix);
+void query(string index_prefix, string query_file, string output_prefix, string commands);
 
 // class DBRetina_json_parser {
 

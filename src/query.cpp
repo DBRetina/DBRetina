@@ -86,7 +86,7 @@ inline std::string join(std::vector<std::string>& strings, std::string delim)
         });
 }
 
-void query(string index_prefix, string query_file, string output_prefix) {
+void query(string index_prefix, string query_file, string output_prefix, string commands) {
     int_vec_map color_to_ids;
     string colors_map_file = index_prefix + "_color_to_sources.bin";
     load_colors_to_sources(colors_map_file, &color_to_ids);
@@ -94,14 +94,6 @@ void query(string index_prefix, string query_file, string output_prefix) {
     string namesmap_file = index_prefix + ".namesMap";
     phmap::flat_hash_map<int, std::string> namesmap;
     load_namesMap(namesmap_file, namesmap);
-
-    // write namesmap to file
-    ofstream namesmap_file_out;
-    namesmap_file_out.open(output_prefix + "_new_namesMap.tsv");
-    for (auto& [k, v] : namesmap) {
-        namesmap_file_out << k << "|" << v << endl;
-    }
-    namesmap_file_out.close();
 
     // naming
     string key_val_suffix, val_key_suffix;
@@ -127,6 +119,9 @@ void query(string index_prefix, string query_file, string output_prefix) {
         auto color = kf->getCount(hashed_q);
         auto sources = color_to_ids[color];
         assert(sources.size() > 0);
+        
+        if(sources.size() == 0) ("no sources found for query: " + q);
+        
         for (auto s : sources) {
             // only if found in namesmap
             if (namesmap.find(s) == namesmap.end()) {
@@ -140,7 +135,8 @@ void query(string index_prefix, string query_file, string output_prefix) {
 
     // Export to TSV
     ofstream outfile;
-    outfile.open(output_prefix + key_val_suffix + ".tsv");
+    outfile.open(output_prefix + key_val_suffix);
+    outfile << commands << endl;
     for (auto r : results) {
         outfile << r.first << "\t";
         outfile << join(r.second, "|");
@@ -151,7 +147,8 @@ void query(string index_prefix, string query_file, string output_prefix) {
 
 
     ofstream outfile2;
-    outfile2.open(output_prefix + val_key_suffix + ".tsv");
+    outfile2.open(output_prefix + val_key_suffix);
+    outfile << commands << endl;
     for (auto r : inverted_results) {
         outfile2 << r.first << "\t" << r.second << endl;
     }

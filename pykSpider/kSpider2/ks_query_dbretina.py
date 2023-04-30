@@ -10,7 +10,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 import sys
+import json
+import hashlib
 
+def hash_string_to_unsigned_int64(input_string):
+    hash_object = hashlib.sha256(input_string.encode())
+    hex_dig = hash_object.hexdigest()
+    # Get the first 16 hexadecimal digits (64 bits) and convert to an integer
+    return int(hex_dig[:16], 16)
 
 def plot_histogram(features_counts, output_file):
     # Set style and context to make a nicer plot
@@ -65,6 +72,17 @@ def get_command():
     return "#command: DBRetina " + " ".join(_sys_argv[1:])
 
 
+def invert_json(json_file):
+    inverted_json = {}
+    for key, values in json_file.items():
+        for value in values:            
+            if value not in inverted_json:
+                inverted_json[value] = [key]
+            else:
+                inverted_json[value].append(key)
+    return inverted_json
+
+
 @cli.command(name="query", help_priority=6)
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="index file prefix")
 @click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
@@ -86,6 +104,45 @@ Examples:
     2- clusters file with cluster IDs | DBRetina query -i index_prefix --clusters-file clusters_file --cluster-ids 1,2,3 -o output_prefix
     
     """
+    
+    
+    # Inverting the index
+    inverted_index_prefix = f"inverted_{index_prefix}"
+    phmap_file = f"{inverted_index_prefix}.phmap"
+    if os.path.exists(phmap_file):
+        # Inverted index found
+        index_prefix = inverted_index_prefix
+    else:
+        raw_json_file = f"{index_prefix}_raw.json"
+        # load json in a dictionary:
+        with open(raw_json_file, "r") as f:
+            supergroups_to_features = json.loads(f.read())["data"]
+
+        inverted_supergroups_to_features = invert_json(supergroups_to_features)
+
+        new_json_raw_dict = {"data": {}, "metadata": {"filetype": "private"}}
+        new_json_hashes_dict = {"data": {}, "metadata": {"filetype": "public"}}        
+
+        for key, values in inverted_supergroups_to_features.items():
+            if key not in new_json_raw_dict["data"]:
+                new_json_raw_dict["data"][key] = []
+                new_json_hashes_dict["data"][key] = []
+            for value in values:                
+                new_json_raw_dict["data"][key].append(value)
+                new_json_hashes_dict["data"][key].append(str(hash_string_to_unsigned_int64(value)))
+
+        new_json_raw_file = f"{inverted_index_prefix}_raw.json"
+        new_json_hashes_file = f"{inverted_index_prefix}_hashes.json"
+        
+        with open(new_json_raw_file, "w") as f:
+            json.dump(new_json_raw_dict, f)
+        with open(new_json_hashes_file, "w") as f:
+            json.dump(new_json_hashes_dict, f)
+            
+        # Create the inverted index
+        kSpider_internal.dbretina_indexing(new_json_raw_file, inverted_index_prefix)
+        index_prefix = inverted_index_prefix
+    
 
     # if all are NA
     if groups_file == "NA" and clusters_file == "NA" and not len(cluster_ids):
@@ -104,7 +161,9 @@ Examples:
         ctx.obj.ERROR(
             "DBRetina's filter command can't filter by groups_file and clusters_file at the same time.")
 
-    commands = inject_index_command(index_prefix) + '\n' + get_command()
+    # commands = inject_index_command(index_prefix) + '\n' + get_command()
+    commands = get_command()
+
 
     _tmp_file = ".DBRetina.tmp.group"
     query_file = ""
@@ -114,10 +173,10 @@ Examples:
         with (open(clusters_file) as f, open(query_file, 'w') as W):            
             # skip comments
             while True:
-                pos = clusters_file.tell()
-                line = clusters_file.readline()
+                pos = f.tell()
+                line = f.readline()
                 if not line.startswith('#'):
-                    clusters_file.seek(pos)
+                    f.seek(pos)
                     break
             # skip header
             next(f)
@@ -139,6 +198,16 @@ Examples:
 
     features_to_groups_file = f"{output_prefix}_feature_to_groups.tsv"
     counts_file = f"{output_prefix}_features_count_per_group.tsv"
+    
+    print(f"querying on {index_prefix}")
+    kSpider_internal.query(index_prefix, query_file, output_prefix, commands)
+    ctx.obj.INFO(
+        f"writing query results to {features_to_groups_file}, and {counts_file}")
+
+    # if _tmp_file exists, remove it
+    if os.path.exists(_tmp_file):
+        os.remove(_tmp_file)
+
     features_counts = []
     with open(counts_file) as f:
         features_counts.extend(int(line.strip().split('\t')[1]) for line in f)
@@ -148,12 +217,6 @@ Examples:
         f"Plotting histogram of features frequencies to {output_file}")
     plot_histogram(features_counts, output_file)
 
-    kSpider_internal.query(index_prefix, query_file, output_prefix, commands)
-    ctx.obj.INFO(
-        f"writing query results to {features_to_groups_file}, and {counts_file}")
-
-    # if _tmp_file exists, remove it
-    if os.path.exists(_tmp_file):
-        os.remove(_tmp_file)
 
     ctx.obj.SUCCESS("Query done!")
+

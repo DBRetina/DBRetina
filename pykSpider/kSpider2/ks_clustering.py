@@ -1,16 +1,12 @@
 from __future__ import division
-from collections import defaultdict
 import os
 import click
 from kSpider2.click_context import cli
 import rustworkx as rx
 import matplotlib.pyplot as plt
 import seaborn as sns
-import pandas as pd
 import numpy as np
 import math
-import networkx as nx
-import plotly.graph_objects as go
 import sys
 
 
@@ -81,6 +77,8 @@ class Clusters:
             for row in pairwise_tsv:
                 row = row.strip().split('\t')
                 distance = float(row[self.dist_col])
+                self.original_nodes[int(row[0])] = row[2]
+                self.original_nodes[int(row[1])] = row[3]
 
                 # don't make graph edge
                 if distance < self.cut_off_threshold:
@@ -90,8 +88,6 @@ class Clusters:
                     batch_counter += 1
                     seq1 = int(row[0]) - 1
                     seq2 = int(row[1]) - 1
-                    self.original_nodes[int(row[0])] = row[2]
-                    self.original_nodes[int(row[1])] = row[3]
 
                     edges_tuples.append((seq1, seq2, distance))
                 else:
@@ -119,17 +115,10 @@ class Clusters:
 
         plt.figure(figsize=(10,6))  # Set the figure size
         plot = sns.histplot(cluster_sizes, color='skyblue', edgecolor='black', stat='count', bins=50)  # Generate histogram with KDE
-        # plt.yscale('log')  # Set y-axis to logarithmic scale
-        # plt.autoscale(enable=True, axis='x')  # Set x-axis to tight scale
-        # plt.autoscale(enable=True, axis='y', tight=True)  # Set y-axis to tight scale
-        
-        # Remove top and right axes spines
-        # sns.despine()
 
-        plt.title('Histogram of Cluster Sizes with KDE')  # Set the title
+        plt.title('Histogram of Cluster Sizes')  # Set the title
         plt.xlabel('Cluster Sizes')  # Set the x-label
         plt.ylabel('Count (log scale)')  # Set the y-label
-        # plt.xlim(1, 500)
         plt.yscale('log')
         
         # Add a legend
@@ -155,7 +144,7 @@ class Clusters:
         # scaled_sizes = [i / max(cluster_sizes) for i in cluster_sizes]
     
         # Normalize the cluster sizes for the color mapping
-        normalized_sizes = [(i - min(cluster_sizes)) / (max(cluster_sizes) - min(cluster_sizes)) for i in cluster_sizes]
+        # normalized_sizes = [(i - min(cluster_sizes)) / (max(cluster_sizes) - min(cluster_sizes)) for i in cluster_sizes]
 
 
 
@@ -211,14 +200,14 @@ New help messages
 1. containment cutoff (sim_cutoff): cluster sequences with (containment > cutoff) where containment = shared kmers % to the total kmers in the smallest node.
 2. connectivity cutoff (con_cutoff): cluster sequences with (connectivity > cutoff) where connectivity = shared kmers % to the total kmers in the largest node.
 3. min count cutoff (min_count): the min kmers count of a node to connect two clusters, otherwise the node will be reported twice in both clusters.
-"""
+""" 
 
 
 @cli.command(name="cluster", help_priority=4)
-@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="cluster the supergroups with (distance > cutoff)")
-@click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.option('-p', '--pairwise', 'pairwise_file', required=False, type=click.Path(exists=True), help="filtered pairwise TSV file")
 @click.option('-d', '--dist-type', "distance_type", required=True, show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
+@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="cluster the supergroups with (distance > cutoff)")
+@click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
 def main(ctx, pairwise_file, cutoff, distance_type, output_prefix):
     """Graph-based clustering of the pairwise TSV file."""

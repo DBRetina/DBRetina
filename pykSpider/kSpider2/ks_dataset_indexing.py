@@ -6,7 +6,6 @@ import _kSpider_internal as kSpider_internal
 import click
 from kSpider2.click_context import cli
 import os
-from glob import glob
 import sys
 
 

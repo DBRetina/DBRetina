@@ -100,7 +100,6 @@ Examples:
     5- cluster file with cluster IDs     | dbretina filter -p pairwise.tsv --clusters-file clusters.tsv --clusters-id 8 -o filtered.tsv 
     """
     
-    metadata = []
 
     # check if not any option is provided for filteration
     if distance_type == "NA" and cutoff == 0.0 and groups_file == "NA" and clusters_file == "NA":
@@ -163,6 +162,7 @@ Examples:
                 w.write(line)
             else:
                 w.write(f"#command: {get_command()}\n")
+                w.write(line)
                 break
 
     ctx.obj.INFO(
