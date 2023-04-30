@@ -118,20 +118,22 @@ class Clusters:
         sns.set_context("talk")
 
         plt.figure(figsize=(10,6))  # Set the figure size
-        plot = sns.histplot(cluster_sizes, kde=True, color='skyblue', binwidth=1, edgecolor='black')  # Generate histogram with KDE
+        plot = sns.histplot(cluster_sizes, color='skyblue', edgecolor='black', stat='count', bins=50)  # Generate histogram with KDE
+        # plt.yscale('log')  # Set y-axis to logarithmic scale
+        # plt.autoscale(enable=True, axis='x')  # Set x-axis to tight scale
+        # plt.autoscale(enable=True, axis='y', tight=True)  # Set y-axis to tight scale
         
         # Remove top and right axes spines
-        sns.despine()
+        # sns.despine()
 
         plt.title('Histogram of Cluster Sizes with KDE')  # Set the title
         plt.xlabel('Cluster Sizes')  # Set the x-label
-        plt.ylabel('Count')  # Set the y-label
-
-        # Set xticks to integer values
-        plt.xticks(np.arange(min(cluster_sizes), max(cluster_sizes)+1, 1.0))
+        plt.ylabel('Count (log scale)')  # Set the y-label
+        # plt.xlim(1, 500)
+        plt.yscale('log')
         
         # Add a legend
-        plot.legend(labels=['KDE', 'Cluster Sizes'])
+        # plot.legend(labels=['Cluster Sizes'])
         plt.savefig(f"{self.output_prefix}_DBRetina_clusters_{self.cut_off_threshold}%.png", dpi=500)
 
     def plot_bubbles(self, cluster_sizes):
