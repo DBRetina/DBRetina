@@ -8,7 +8,7 @@ import sys
 # Only update this when releasing stable
 MAJOR = 2
 MINOR = 2
-PATCH = 2
+PATCH = 3
 
 PYPI_PACKAGE = "DBRetina"
 
