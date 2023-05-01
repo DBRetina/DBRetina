@@ -3,25 +3,12 @@
 from __future__ import division
 
 import os
-import sys
 import click
 import pandas as pd
 from kSpider2.click_context import cli
 from scipy.cluster.hierarchy import linkage, to_tree, ClusterWarning
-import numpy as np
 from warnings import simplefilter
 simplefilter("ignore", ClusterWarning)
-from Bio import Phylo
-from Bio.Phylo import BaseTree
-import matplotlib.pyplot as plt
-from scipy.cluster.hierarchy import dendrogram
-import plotly.figure_factory as ff
-from scipy.spatial.distance import squareform
-import seaborn as sns
-from ete3 import Tree, TreeStyle
-from io import StringIO
-from skbio import read
-from skbio.tree import TreeNode
 import re
 
 # def newick_str_escape(s):

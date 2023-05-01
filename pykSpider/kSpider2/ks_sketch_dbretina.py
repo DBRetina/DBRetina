@@ -6,8 +6,6 @@ from click.decorators import option
 import _kSpider_internal as kSpider_internal
 import click
 from kSpider2.click_context import cli
-import os
-import json
 
 
 @cli.command(name="sketch", help_priority=1, hidden=True)
