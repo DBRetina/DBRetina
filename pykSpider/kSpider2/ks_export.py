@@ -59,20 +59,18 @@ def get_newick(node, parent_dist, leaf_names, newick='') -> str:
 
 
 @cli.command(name="export", help_priority=5)
-@click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="Index file prefix")
-@click.option('-p', '--pairwise', 'pairwise_file', required=False, type=click.Path(exists=True), help="filtered pairwise TSV file")
+@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="filtered pairwise TSV file")
 @click.option('--newick', "newick", is_flag=True, help="Convert pairwise (containment) matrix to newick format", default=False)
 @click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
 @click.option('-o', "overwritten_output", default="na", required=False, type=click.STRING, help="custom output file name prefix")
 @click.pass_context
 def main(ctx, index_prefix, pairwise_file, newick, distance_type, overwritten_output):
+    """Export to dissimilarity matrix and newick format.
+    
+    Export a pairwise TSV file to a dissimilarity matrix and (optionally) a newick-format file.
+    
     """
-    Export the pairwise TSV to dissimilarity matrix or newick format.
-    """
-    if(not pairwise_file):
-        ctx.obj.INFO("No pairwise file provided, using the default one")
-        pairwise_file = f"{index_prefix}_DBRetina_pairwise.tsv"
-
+ 
     LOGGER = ctx.obj
 
     distance_to_col = {

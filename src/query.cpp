@@ -59,7 +59,7 @@ inline parallel_flat_hash_set<string> load_query_file_single_column(string filen
     return queries;
 }
 
-inline void load_colors_to_sources(const std::string& filename, int_vec_map* map)
+inline void load_colors_to_matched_supergroups(const std::string& filename, int_vec_map* map)
 {
     phmap::BinaryInputArchive ar_in(filename.c_str());
     size_t size;
@@ -86,24 +86,23 @@ inline std::string join(std::vector<std::string>& strings, std::string delim)
         });
 }
 
-void query(string index_prefix, string query_file, string output_prefix, string commands) {
-    int_vec_map color_to_ids;
-    string colors_map_file = index_prefix + "_color_to_sources.bin";
-    load_colors_to_sources(colors_map_file, &color_to_ids);
+void query(string index_prefix, string inverted_index_prefix, string query_file, string output_prefix, string commands) {
 
-    string namesmap_file = index_prefix + ".namesMap";
-    phmap::flat_hash_map<int, std::string> namesmap;
-    load_namesMap(namesmap_file, namesmap);
+    // load kDataFrame
+    auto* inverted_kf = kDataFramePHMAP::load(inverted_index_prefix);
+    int_vec_map inverted_color_to_ids;
+    string inverted_colors_map_file = inverted_index_prefix + "_color_to_sources.bin";
+    load_colors_to_matched_supergroups(inverted_colors_map_file, &inverted_color_to_ids);
+    string inverted_namesmap_file = inverted_index_prefix + ".namesMap";
+    phmap::flat_hash_map<int, std::string> inverted_namesmap;
+    load_namesMap(inverted_namesmap_file, inverted_namesmap);
+
 
     // naming
     string key_val_suffix, val_key_suffix;
     key_val_suffix = "_feature_to_groups.tsv";
     val_key_suffix = "_features_count_per_group.tsv";
 
-
-
-    // load kDataFrame
-    auto* kf = kDataFramePHMAP::load(index_prefix);
 
     // load query file
     auto queries = load_query_file_single_column(query_file);
@@ -113,27 +112,65 @@ void query(string index_prefix, string query_file, string output_prefix, string 
     auto hasher = string_hasher();
     parallel_flat_hash_map<string, vector<string>> results;
     parallel_flat_hash_map<string, uint32_t> inverted_results;
+    parallel_flat_hash_map<string, vector<string>> feature_to_groups;
 
-    for (auto q : queries) {
-        uint64_t hashed_q = hasher(q);
-        auto color = kf->getCount(hashed_q);
-        auto sources = color_to_ids[color];
-        assert(sources.size() > 0);
-        
-        if(sources.size() == 0) ("no sources found for query: " + q);
-        
-        for (auto s : sources) {
+
+    flat_hash_map<string, bool> super_groups_of_interest;
+
+
+    ofstream outfile2;
+    outfile2.open(output_prefix + val_key_suffix);
+    outfile2 << commands << endl;
+    outfile2 << "feature\tsupergroups_count\tsupergroups" << endl;
+
+    /*
+        input(gene) -> color
+        color -> supergroup_ids
+        supergroup_ids -> supergroup_names
+
+    */
+
+    for (auto single_query : queries) {
+        super_groups_of_interest[single_query] = true;
+        uint64_t hashed_q = hasher(single_query);
+        auto color = inverted_kf->getCount(hashed_q);
+        auto matched_supergroups = inverted_color_to_ids[color];
+        assert(matched_supergroups.size() > 0);
+
+        if (matched_supergroups.size() == 0) cerr << "no matched_supergroups found for query: " + single_query;
+
+
+        for (auto supergroup_id : matched_supergroups) {
             // only if found in namesmap
-            if (namesmap.find(s) == namesmap.end()) {
-                cerr << "[ERROR] namesmap file is altered." << endl;
-                exit(1);
+            if (inverted_namesmap.find(supergroup_id) == inverted_namesmap.end()) {
+                throw std::runtime_error("[DEV BUG] supergroup_id not found in namesmap: [" + to_string(supergroup_id) + '\n');
             }
-            results[q].push_back(namesmap[s]);
-            inverted_results[namesmap[s]]++;
+            string supergroup_name = inverted_namesmap[supergroup_id];
+            // results[single_query].push_back(supergroup_name);
+            inverted_results[supergroup_name]++;
         }
     }
 
+    // free inverted index
+    cout << "freeing inverted index" << endl;
+    delete inverted_kf;
+    inverted_color_to_ids.clear();
+    inverted_namesmap.clear();
+
+
+
+    // load kDataFrame
+    auto* kf = kDataFramePHMAP::load(index_prefix);
+    int_vec_map color_to_ids;
+    string colors_map_file = index_prefix + "_color_to_sources.bin";
+    load_colors_to_matched_supergroups(colors_map_file, &color_to_ids);
+    string namesmap_file = index_prefix + ".namesMap";
+    phmap::flat_hash_map<int, std::string> namesmap;
+    load_namesMap(namesmap_file, namesmap);
+
+
     // Export to TSV
+    /*
     ofstream outfile;
     outfile.open(output_prefix + key_val_suffix);
     outfile << commands << endl;
@@ -143,14 +180,39 @@ void query(string index_prefix, string query_file, string output_prefix, string 
         outfile << endl;
     }
     outfile.close();
+    */
+
+    // sort inverted_results by groups_count:
+    std::vector<std::pair<string, int>> ordered_inverted_results(inverted_results.begin(), inverted_results.end());
+
+    std::sort(ordered_inverted_results.begin(), ordered_inverted_results.end(),
+        [](const std::pair<string, int>& a, const std::pair<string, int>& b) {
+            return a.second > b.second;
+        });
 
 
+    for (auto& [feature_name, groups_count] : ordered_inverted_results) {
+        outfile2 << feature_name << "\t" << groups_count << '\t';
 
-    ofstream outfile2;
-    outfile2.open(output_prefix + val_key_suffix);
-    outfile << commands << endl;
-    for (auto r : inverted_results) {
-        outfile2 << r.first << "\t" << r.second << endl;
+        uint64_t hashed_q = hasher(feature_name);
+        auto color = kf->getCount(hashed_q);
+        auto matched_supergroups = color_to_ids[color];
+        assert(matched_supergroups.size() > 0);
+        string delimiter = "";
+        for (int i = 0; i < matched_supergroups.size(); i++) {
+            auto supergroup_id = matched_supergroups[i];
+            string supergroup_name = namesmap[supergroup_id];
+            if (super_groups_of_interest[supergroup_name]) {
+                outfile2 << delimiter;
+                outfile2 << supergroup_name;
+                delimiter = "|";
+            }
+            // delimiter = "|";
+        }
+        // auto supergroup_id = matched_supergroups[matched_supergroups.size() - 1];
+        // if (super_groups_of_interest[namesmap[supergroup_id]])
+        //     outfile2 << namesmap[supergroup_id];
+        outfile2 << endl;
     }
     outfile2.close();
 

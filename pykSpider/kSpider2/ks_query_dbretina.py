@@ -21,20 +21,21 @@ def hash_string_to_unsigned_int64(input_string):
 
 def plot_histogram(features_counts, output_file):
     # Set style and context to make a nicer plot
-    sns.set_style("white")
-    sns.set_context("talk")
+    sns.set_style("whitegrid")
+    # sns.set_context("talk")
 
     plt.figure(figsize=(10, 6))  # Set the figure size
     plot = sns.histplot(features_counts, color='skyblue', edgecolor='black',
-                        stat='count', bins=50)  # Generate histogram with KDE
+                        stat='count', bins=50, discrete=True)  # Generate histogram with KDE
 
     plt.title('Histogram of features frequencies')  # Set the title
     plt.xlabel('Feature frequency')  # Set the x-label
     plt.ylabel('Count (log scale)')  # Set the y-label
     plt.yscale('log')
 
-    # Add a legend
+# Add a legend
     # plot.legend(labels=['Cluster Sizes'])
+    # plt.show()
     plt.savefig(output_file, dpi=500)
 
 
@@ -95,13 +96,17 @@ def main(ctx, groups_file, clusters_file, cluster_ids, index_prefix, output_pref
 
 Detailed description:
 
-    Query DBRetina index and get the supergroups of the features in a set of groups (provided as a single-column file or cluster IDs in a DBRetina cluster file).
+
+    Query a DBRetina index with a set of groups (provided as a single-column file or cluster IDs in a DBRetina cluster file). Output each feature and the associated supergroups.
+    
 
 Examples:
 
     1- groups file                    | DBRetina query -i index_prefix -g groups_file -o output_prefix
+
     
     2- clusters file with cluster IDs | DBRetina query -i index_prefix --clusters-file clusters_file --cluster-ids 1,2,3 -o output_prefix
+
     
     """
     
@@ -109,10 +114,8 @@ Examples:
     # Inverting the index
     inverted_index_prefix = f"inverted_{index_prefix}"
     phmap_file = f"{inverted_index_prefix}.phmap"
-    if os.path.exists(phmap_file):
-        # Inverted index found
-        index_prefix = inverted_index_prefix
-    else:
+    if not os.path.exists(phmap_file):
+        # inverted index not found
         raw_json_file = f"{index_prefix}_raw.json"
         # load json in a dictionary:
         with open(raw_json_file, "r") as f:
@@ -141,8 +144,7 @@ Examples:
             
         # Create the inverted index
         kSpider_internal.dbretina_indexing(new_json_raw_file, inverted_index_prefix)
-        index_prefix = inverted_index_prefix
-    
+        # index_prefix = inverted_index_prefix
 
     # if all are NA
     if groups_file == "NA" and clusters_file == "NA" and not len(cluster_ids):
@@ -198,9 +200,7 @@ Examples:
 
     features_to_groups_file = f"{output_prefix}_feature_to_groups.tsv"
     counts_file = f"{output_prefix}_features_count_per_group.tsv"
-    
-    print(f"querying on {index_prefix}")
-    kSpider_internal.query(index_prefix, query_file, output_prefix, commands)
+    kSpider_internal.query(index_prefix, inverted_index_prefix, query_file, output_prefix, commands)
     ctx.obj.INFO(
         f"writing query results to {features_to_groups_file}, and {counts_file}")
 
@@ -210,6 +210,10 @@ Examples:
 
     features_counts = []
     with open(counts_file) as f:
+        for line in f:
+            if not line.startswith('#'):
+                break
+                        
         features_counts.extend(int(line.strip().split('\t')[1]) for line in f)
 
     output_file = f"{output_prefix}_features_count_per_group_histogram.png"

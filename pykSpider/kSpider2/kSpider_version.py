@@ -8,18 +8,14 @@ import sys
 # Only update this when releasing stable
 MAJOR = 2
 MINOR = 2
-PATCH = 1
+PATCH = 2
 
 PYPI_PACKAGE = "DBRetina"
 
 def is_github_action():
-    if "GITHUB_WORKFLOW" in dict(os.environ.items()):
-        return True
-    else:
-        return False    
+    return "GITHUB_WORKFLOW" in dict(os.environ)    
 
 
 def get_version():
     
-    release_version = f"{MAJOR}.{MINOR}.{PATCH}"
-    return release_version
+    return f"{MAJOR}.{MINOR}.{PATCH}"

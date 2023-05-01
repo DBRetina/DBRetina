@@ -106,24 +106,51 @@ class Clusters:
         plt.xlabel('Cluster Sizes', fontsize=15)
         plt.ylabel('Count', fontsize=15)
         plt.yscale('log')
-        plt.savefig(f"{self.output_prefix}_DBRetina_clusters_{self.cut_off_threshold}%.png", dpi=500)
+        plt.savefig(f"{self.output_prefix}_DBRetina_clusters.png", dpi=500)
     
     def plot_histogram(self, cluster_sizes):
         # Set style and context to make a nicer plot
-        sns.set_style("white")
-        sns.set_context("talk")
+        sns.set_style("whitegrid")
+        # sns.set_context("talk")
 
-        plt.figure(figsize=(10,6))  # Set the figure size
-        plot = sns.histplot(cluster_sizes, color='skyblue', edgecolor='black', stat='count', bins=50)  # Generate histogram with KDE
+        plt.figure()  # Set the figure size
+        plot = sns.histplot(cluster_sizes, color='skyblue', edgecolor='black', stat='count', bins=50, discrete=True)  # Generate histogram with KDE
+        # plot = sns.(cluster_sizes, color='skyblue', edgecolor='black', stat='count', bins=50, hue=False)  # Generate histogram with KDE
 
         plt.title('Histogram of Cluster Sizes')  # Set the title
         plt.xlabel('Cluster Sizes')  # Set the x-label
         plt.ylabel('Count (log scale)')  # Set the y-label
         plt.yscale('log')
+        plt.xticks(np.arange(min(cluster_sizes), max(cluster_sizes)+1, 1))
+
         
         # Add a legend
         # plot.legend(labels=['Cluster Sizes'])
-        plt.savefig(f"{self.output_prefix}_DBRetina_clusters_{self.cut_off_threshold}%.png", dpi=500)
+        # plt.show()
+        plt.savefig(f"{self.output_prefix}_clusters.png", dpi=500)
+
+    def plot_histogram3(self, data):
+        """
+        This function creates a histogram using seaborn.
+
+        Parameters:
+        data (list): A list of numeric values.
+        """
+        
+        # Setting the style of seaborn to have better visuals
+        sns.set(style="whitegrid")
+
+        # Creating the histogram
+        plt.figure(figsize=(10,6))
+        bins = int((len(data)/2))  # square-root choice
+        sns.histplot(data, bins=bins, color='skyblue', kde=False)
+
+        # Setting labels and title
+        plt.xlabel('Values', fontsize=13)
+        plt.ylabel('Frequency', fontsize=13)
+        plt.title('Histogram', fontsize=16)
+        plt.show()
+        plt.savefig(f"{self.output_prefix}_clusters.png", dpi=500)
 
     def plot_bubbles(self, cluster_sizes):
          # Create a new figure
@@ -157,7 +184,7 @@ class Clusters:
         ax.set_title('Bubble Plot of Cluster Sizes', fontsize=20)
         ax.set_xlabel('Random X', fontsize=15)
         ax.set_ylabel('Random Y', fontsize=15)
-        plt.savefig(f"{self.output_prefix}_DBRetina_clusters_{self.cut_off_threshold}%_bubbles.png", dpi=500)
+        plt.savefig(f"{self.output_prefix}_clusters_bubbles.png", dpi=500)
 
     def cluster_graph(self):
 
@@ -165,7 +192,7 @@ class Clusters:
 
         self.connected_components = rx.connected_components(self.graph)
         single_components = 0
-        retworkx_export = f"{self.output_prefix}_DBRetina_clusters_{self.cut_off_threshold}%.tsv"
+        retworkx_export = f"{self.output_prefix}_clusters.tsv"
         # and {self.output} ...")
         self.Logger.INFO(f"writing {retworkx_export}")
         # rx.node_link_json(self.graph, path = retworkx_export)

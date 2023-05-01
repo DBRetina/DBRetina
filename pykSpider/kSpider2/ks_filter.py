@@ -77,7 +77,7 @@ def path_to_absolute_path(ctx, param, value):
 @click.option('--cluster-ids', "cluster_ids", callback=validate_numbers, required=False, default="", help="comma-separated list of cluster IDs")
 @click.option('-d', '--dist-type', "distance_type", required=False, default="NA", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="filter out distances < cutoff")
-@click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file")
+@click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
 def main(ctx, pairwise_file, groups_file, distance_type, cutoff, output_file, clusters_file, cluster_ids):
     """Filter a pairwise file.
@@ -146,10 +146,9 @@ Examples:
             f"DBRetina's filter command doesn't support the distance_type {distance_type}.")
 
     # check if output_file already exist
+    output_file += ".tsv"
     if os.path.exists(output_file):
-        ctx.obj.WARNING(f"Output file {output_file} already exists.")
-        output_file = increment_version(output_file)
-        ctx.obj.WARNING(f"New output file {output_file}.")
+        ctx.obj.WARNING(f"Output file {output_file} already exists, overwriting ...")
 
     if groups_file != "NA" and not os.path.exists(groups_file):
         ctx.obj.ERROR(f"Groups file {groups_file} doesn't exist.")
@@ -178,10 +177,10 @@ Examples:
             
             # skip comments
             while True:
-                pos = clusters_file.tell()
-                line = clusters_file.readline()
+                pos = f.tell()
+                line = f.readline()
                 if not line.startswith('#'):
-                    clusters_file.seek(pos)
+                    f.seek(pos)
                     break
             
             next(f)
@@ -199,18 +198,18 @@ Examples:
 
     # filter by both cutoff and groups
     if cutoff != 0.0 and groups_file != "NA":
-        awk_script = f"""cat {pairwise_file} | grep '^[^#;]' | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"""
+        awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"""
         result = execute_bash_command(awk_script)
 
     elif cutoff != 0.0:
         ctx.obj.INFO(
             f"Filtering the pairwise matrix on the {distance_type} column with a cutoff of {cutoff}.")
-        command = f"cat {pairwise_file} | grep '^[^#;]' | LC_ALL=C awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"
+        command = f"grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"
         result = execute_bash_command(command)
 
     elif groups_file != "NA":
         ctx.obj.INFO(f"Filtering by groups file {groups_file}\nPlease wait...")
-        awk_script = f"""cat {pairwise_file} | grep '^[^#;]' | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' >> {output_file}"""
+        awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 |LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' >> {output_file}"""
         result = execute_bash_command(awk_script)
 
     # if _tmp_file exists, remove it
