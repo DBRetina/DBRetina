@@ -12,7 +12,6 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.cluster.hierarchy import linkage, to_tree
-from ete3 import Tree
 from scipy.spatial.distance import squareform, pdist
 simplefilter("ignore", ClusterWarning)
 import math
