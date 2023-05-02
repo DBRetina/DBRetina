@@ -116,7 +116,7 @@ namespace kSpider {
             for (auto it = kmerSet.begin(); it != kmerSet.end(); ++it) {
 
 
-                cout << "Processing " << ++processed_sigs_count << "/" << total_groups_number << " | " << group_name << " ... " << endl;
+                // cout << "Processing " << ++processed_sigs_count << "/" << total_groups_number << " | " << group_name << " ... " << endl;
 
 
                 flat_hash_map<uint64_t, uint64_t> convertMap;
@@ -215,8 +215,8 @@ namespace kSpider {
                     }
 
                 }
-                cout << "   saved_features(~" << frame->size() << ")." << endl;
-                cout << "   colors(~" << legend->size() << ")." << endl << endl;
+                // cout << "   saved_features(~" << frame->size() << ")." << endl;
+                // cout << "   colors(~" << legend->size() << ")." << endl << endl;
 
                 break;
             }
