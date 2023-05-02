@@ -26,7 +26,7 @@ def plot_histogram(features_counts, output_file):
 
     plt.figure(figsize=(10, 6))  # Set the figure size
     plot = sns.histplot(features_counts, color='skyblue', edgecolor='black',
-                        stat='count', bins=50, discrete=True)  # Generate histogram with KDE
+                        stat='count', bins=10, discrete=False)  # Generate histogram with KDE
 
     plt.title('Histogram of features frequencies')  # Set the title
     plt.xlabel('Feature frequency')  # Set the x-label
@@ -104,7 +104,7 @@ Examples:
 
     1- groups file                    | DBRetina query -i index_prefix -g groups_file -o output_prefix
 
-    
+
     2- clusters file with cluster IDs | DBRetina query -i index_prefix --clusters-file clusters_file --cluster-ids 1,2,3 -o output_prefix
 
     

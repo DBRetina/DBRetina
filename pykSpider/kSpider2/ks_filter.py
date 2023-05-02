@@ -70,6 +70,13 @@ def path_to_absolute_path(ctx, param, value):
     return value if value == "NA" else os.path.abspath(value)
 
 
+
+def get_extended_nodes(nodes, kmer_size):
+    
+    return extended_nodes
+
+
+
 @cli.command(name="filter", help_priority=3)
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
@@ -77,9 +84,10 @@ def path_to_absolute_path(ctx, param, value):
 @click.option('--cluster-ids', "cluster_ids", callback=validate_numbers, required=False, default="", help="comma-separated list of cluster IDs")
 @click.option('-d', '--dist-type', "distance_type", required=False, default="NA", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="filter out distances < cutoff")
+@click.option('--extend', "extend", is_flag=True, default=False, show_default=True, help="include all supergroups that are linked to the given supergroups.")
 @click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
-def main(ctx, pairwise_file, groups_file, distance_type, cutoff, output_file, clusters_file, cluster_ids):
+def main(ctx, pairwise_file, groups_file, distance_type, cutoff, output_file, clusters_file, cluster_ids, extend):
     """Filter a pairwise file.
 
 
@@ -89,17 +97,21 @@ Detailed description:
 
 Examples:
 
-    1- distance cutoff only              | dbretina filter -p pairwise.tsv -d ochiai -c 0.5 -o filtered.tsv
+    1- distance cutoff only              | dbretina filter -p pairwise.tsv -d ochiai -c 60 -o filtered.tsv
 
-    2- distance cutoff and groups file   | dbretina filter -p pairwise.tsv -d min_cont -c 0.5 -g groups.tsv -o filtered.tsv
+    2- distance cutoff and groups file   | dbretina filter -p pairwise.tsv -d min_cont -c 97 -g groups.tsv -o filtered.tsv
 
-    3- distance cutoff and a cluster IDs | dbretina filter -p pairwise.tsv -d max_cont -c 0.5 --clusters-file clusters.tsv --clusters-id 8 -o filtered.tsv
+    3- distance cutoff and a cluster IDs | dbretina filter -p pairwise.tsv -d max_cont -c 77 --clusters-file clusters.tsv --clusters-id 8 -o filtered.tsv
 
     4- groups file only                  | dbretina filter -p pairwise.tsv -g groups.tsv -o filtered.tsv
 
     5- cluster file with cluster IDs     | dbretina filter -p pairwise.tsv --clusters-file clusters.tsv --clusters-id 8 -o filtered.tsv 
     """
     
+    # Extend must be used only when clusters file or groups file is provided
+    if extend and groups_file == "NA" and clusters_file == "NA":
+        ctx.obj.ERROR("DBRetina's filter command requires a groups_file or clusters_file if --extend is provided.")
+        
 
     # check if not any option is provided for filteration
     if distance_type == "NA" and cutoff == 0.0 and groups_file == "NA" and clusters_file == "NA":
@@ -142,8 +154,7 @@ Examples:
         # +1 because awk is 1-indexed
         awk_column = distance_to_col[distance_type] + 1
     elif distance_type != "NA":
-        ctx.obj.ERROR(
-            f"DBRetina's filter command doesn't support the distance_type {distance_type}.")
+        ctx.obj.ERROR(f"DBRetina's filter command doesn't support the distance_type {distance_type}.")
 
     # check if output_file already exist
     output_file += ".tsv"
@@ -174,7 +185,7 @@ Examples:
     if clusters_file != "NA":
         groups_file = _tmp_file
         with open(clusters_file) as f, open(_tmp_file, 'w') as W:
-            
+
             # skip comments
             while True:
                 pos = f.tell()
@@ -182,7 +193,7 @@ Examples:
                 if not line.startswith('#'):
                     f.seek(pos)
                     break
-            
+
             next(f)
             for line in f:
                 line = line.strip().split('\t')
@@ -196,6 +207,23 @@ Examples:
         ctx.obj.WARNING(
             f"Couldn't find the following cluster IDs: {unfound_ids}")
 
+    
+    extended_ids_list = ".DBRetina_extended_ids_list"
+    
+    with open(extended_ids_list, 'w') as f:
+        f.write("")
+    
+    if extend:
+        # awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( ($3 in id_map) || ($4 in id_map) ) {{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}"}} }}'"""
+        
+        awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) || (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} >= {cutoff}) {{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}"}}}}'"""
+        
+        result = execute_bash_command(awk_script)
+        bash_script = f"""sort -u {extended_ids_list} -o {extended_ids_list}.uniq"""
+        result = execute_bash_command(bash_script)
+        groups_file = extended_ids_list + '.uniq'
+
+   
     # filter by both cutoff and groups
     if cutoff != 0.0 and groups_file != "NA":
         awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"""
@@ -211,6 +239,7 @@ Examples:
         ctx.obj.INFO(f"Filtering by groups file {groups_file}\nPlease wait...")
         awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 |LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' >> {output_file}"""
         result = execute_bash_command(awk_script)
+
 
     # if _tmp_file exists, remove it
     if os.path.exists(_tmp_file):

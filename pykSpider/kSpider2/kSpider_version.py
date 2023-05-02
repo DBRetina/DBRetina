@@ -1,14 +1,11 @@
 import os
-import json
-import urllib.request
-import sys
 
 #TODO there are two files with DBRetina_version, remove one.
 
 # Only update this when releasing stable
 MAJOR = 2
 MINOR = 2
-PATCH = 3
+PATCH = 4
 
 PYPI_PACKAGE = "DBRetina"
 

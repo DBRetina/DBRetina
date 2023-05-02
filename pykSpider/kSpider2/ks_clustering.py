@@ -98,59 +98,27 @@ class Clusters:
             if len(edges_tuples):
                 self.graph.add_edges_from(edges_tuples)
 
-    def plot_histogram2(self, cluster_sizes):
-        plt.figure(figsize=(10, 6))
-        sns.set_style('whitegrid')
-        sns.histplot(cluster_sizes, kde=True, color='darkblue', bins=math.ceil(max(cluster_sizes)/10))
-        plt.title('Histogram of Cluster Sizes', fontsize=20)
-        plt.xlabel('Cluster Sizes', fontsize=15)
-        plt.ylabel('Count', fontsize=15)
-        plt.yscale('log')
-        plt.savefig(f"{self.output_prefix}_DBRetina_clusters.png", dpi=500)
-    
     def plot_histogram(self, cluster_sizes):
         # Set style and context to make a nicer plot
         sns.set_style("whitegrid")
         # sns.set_context("talk")
 
         plt.figure()  # Set the figure size
-        plot = sns.histplot(cluster_sizes, color='skyblue', edgecolor='black', stat='count', bins=50, discrete=True)  # Generate histogram with KDE
+        plot = sns.histplot(cluster_sizes, color='skyblue', edgecolor='black', stat='count', bins=10, discrete=False)  # Generate histogram with KDE
         # plot = sns.(cluster_sizes, color='skyblue', edgecolor='black', stat='count', bins=50, hue=False)  # Generate histogram with KDE
 
         plt.title('Histogram of Cluster Sizes')  # Set the title
         plt.xlabel('Cluster Sizes')  # Set the x-label
         plt.ylabel('Count (log scale)')  # Set the y-label
         plt.yscale('log')
-        plt.xticks(np.arange(min(cluster_sizes), max(cluster_sizes)+1, 1))
+        # plt.xticks(np.arange(min(cluster_sizes), max(cluster_sizes)+1, 1))
 
         
         # Add a legend
         # plot.legend(labels=['Cluster Sizes'])
         # plt.show()
-        plt.savefig(f"{self.output_prefix}_clusters.png", dpi=500)
+        plt.savefig(f"{self.output_prefix}_clusters_histogram.png", dpi=500)
 
-    def plot_histogram3(self, data):
-        """
-        This function creates a histogram using seaborn.
-
-        Parameters:
-        data (list): A list of numeric values.
-        """
-        
-        # Setting the style of seaborn to have better visuals
-        sns.set(style="whitegrid")
-
-        # Creating the histogram
-        plt.figure(figsize=(10,6))
-        bins = int((len(data)/2))  # square-root choice
-        sns.histplot(data, bins=bins, color='skyblue', kde=False)
-
-        # Setting labels and title
-        plt.xlabel('Values', fontsize=13)
-        plt.ylabel('Frequency', fontsize=13)
-        plt.title('Histogram', fontsize=16)
-        plt.show()
-        plt.savefig(f"{self.output_prefix}_clusters.png", dpi=500)
 
     def plot_bubbles(self, cluster_sizes):
          # Create a new figure
@@ -197,6 +165,7 @@ class Clusters:
         self.Logger.INFO(f"writing {retworkx_export}")
         # rx.node_link_json(self.graph, path = retworkx_export)
         cluster_id = 1
+        total_clustered_nodes = 0
         with open(retworkx_export, 'w') as CLUSTERS:
             for metadata_line in self.metadata:
                 CLUSTERS.write(metadata_line)
@@ -204,17 +173,18 @@ class Clusters:
             CLUSTERS.write(f"cluster_id\tcluster_size\tcluster_members\n")
             for component in self.connected_components:
                 # uncomment to exclude single genome clusters from exporting
-                if len(component) == 1 and list(component)[0] + 1 not in self.original_nodes:
+                if len(component) == 1: # and list(component)[0] + 1 not in self.original_nodes:
                     continue
-                named_component = [self.original_nodes[node + 1]
-                                   for node in component]
+                
+                named_component = [self.original_nodes[node + 1] for node in component]
                 # CLUSTERS.write(cluster_id + '\t' + len(component) + '\t' + '|'.join(named_component) + '\n')
-                CLUSTERS.write(
-                    f"{cluster_id}\t{len(component)}\t{'|'.join(named_component)}\n")
+                CLUSTERS.write(f"{cluster_id}\t{len(component)}\t{'|'.join(named_component)}\n")
                 cluster_sizes.append(len(component))
+                total_clustered_nodes += len(component)
                 cluster_id += 1
 
         self.Logger.INFO("plotting cluster sizes histogram and bubble plot")
+        self.Logger.INFO(f"Total number of clustered supergroups: {total_clustered_nodes}")
         self.plot_histogram(cluster_sizes)
         self.plot_bubbles(cluster_sizes)
         self.Logger.INFO(f"number of clusters: {cluster_id - 1}")
