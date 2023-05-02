@@ -70,13 +70,6 @@ def path_to_absolute_path(ctx, param, value):
     return value if value == "NA" else os.path.abspath(value)
 
 
-
-def get_extended_nodes(nodes, kmer_size):
-    
-    return extended_nodes
-
-
-
 @cli.command(name="filter", help_priority=3)
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
@@ -111,7 +104,7 @@ Examples:
     # Extend must be used only when clusters file or groups file is provided
     if extend and groups_file == "NA" and clusters_file == "NA":
         ctx.obj.ERROR("DBRetina's filter command requires a groups_file or clusters_file if --extend is provided.")
-        
+
 
     # check if not any option is provided for filteration
     if distance_type == "NA" and cutoff == 0.0 and groups_file == "NA" and clusters_file == "NA":
@@ -207,23 +200,21 @@ Examples:
         ctx.obj.WARNING(
             f"Couldn't find the following cluster IDs: {unfound_ids}")
 
-    
+
     extended_ids_list = ".DBRetina_extended_ids_list"
-    
+
     with open(extended_ids_list, 'w') as f:
         f.write("")
-    
-    if extend:
-        # awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( ($3 in id_map) || ($4 in id_map) ) {{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}"}} }}'"""
-        
-        awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) || (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} >= {cutoff}) {{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}"}}}}'"""
-        
-        result = execute_bash_command(awk_script)
-        bash_script = f"""sort -u {extended_ids_list} -o {extended_ids_list}.uniq"""
-        result = execute_bash_command(bash_script)
-        groups_file = extended_ids_list + '.uniq'
 
-   
+    if extend:    
+        awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) || (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} >= {cutoff}) {{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}"}}}}'"""
+
+        result = execute_bash_command(awk_script)
+        extended_supergroups_file = f"{output_file.replace('.tsv','')}_extended_supergroups.txt"
+        bash_script = f"""sort -u {extended_ids_list} -o {extended_supergroups_file}"""
+        result = execute_bash_command(bash_script)
+        groups_file = extended_supergroups_file
+
     # filter by both cutoff and groups
     if cutoff != 0.0 and groups_file != "NA":
         awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"""
@@ -244,5 +235,8 @@ Examples:
     # if _tmp_file exists, remove it
     if os.path.exists(_tmp_file):
         os.remove(_tmp_file)
+        
+    if os.path.exists(extended_ids_list):
+        os.remove(extended_ids_list)
 
     ctx.obj.SUCCESS("Done.")
