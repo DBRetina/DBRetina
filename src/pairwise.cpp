@@ -3,6 +3,7 @@
 #include <chrono>
 #include <boost/algorithm/string/join.hpp>
 #include <boost/range/adaptor/transformed.hpp>
+#include <boost/math/distributions/hypergeometric.hpp>
 #include <boost/functional/hash.hpp>
 #include <ctime>
 #include<omp.h>
@@ -46,6 +47,7 @@ public:
 
     void combinations(int n) {
         this->combs.clear();
+        this->combs.reserve((n * (n - 1)) / 2);
         this->comb(n, this->r, this->arr);
     }
 
@@ -63,7 +65,7 @@ private:
 
             }
             else {
-                this->combs.emplace_back(std::make_pair(arr[0] - 1, arr[1] - 1));
+                this->combs.emplace_back(arr[0] - 1, arr[1] - 1);
             }
         }
     }
@@ -75,16 +77,24 @@ private:
     flat_hash_map<string, flat_hash_map<string, uint64_t>> stats;
 
 public:
-
+    double min_odds_ratio = 1.0;
+    double max_odds_ratio = 1.0;
     Stats() {
         vector<string> distances = { "min_cont", "avg_cont", "max_cont", "ochiai", "jaccard" };
-
         for (string& distance : distances) {
+            stats[distance] = flat_hash_map<string, uint64_t>();
             for (int value = 0; value < 100; value += 5) {
                 string range = to_string(value) + "-" + to_string(value + 5);
                 this->stats[distance][range] = 0;
             }
         }
+    }
+
+    void update_odds_ratio_stats(double odds_ratio) {
+        auto& min = this->min_odds_ratio;
+        auto& max = this->max_odds_ratio;
+        if (odds_ratio < min) min = odds_ratio;
+        if (odds_ratio > max) max = odds_ratio;
     }
 
     void print_stats_in_json_format() {
@@ -126,6 +136,16 @@ public:
         }
         myfile << "}" << endl;
         myfile.close();
+        string new_file_name_without_extension = filename.substr(0, filename.find_last_of("."));
+        this->write_odds_ratio_in_file(new_file_name_without_extension + "_odds_ratio.txt");
+    }
+
+    void write_odds_ratio_in_file(string filename){
+        ofstream myfile;
+        myfile.open(filename);
+        myfile << this->min_odds_ratio << endl;
+        myfile << this->max_odds_ratio << endl;
+        myfile.close();
     }
 
     string map_value_to_range(double& value) {
@@ -135,16 +155,10 @@ public:
         return std::to_string(lower) + "-" + std::to_string(upper);
     }
 
-    
+
 
     void add_stat(string stat_name, double value) {
         string range = this->map_value_to_range(value);
-        if (this->stats.find(stat_name) == this->stats.end()) {
-            this->stats[stat_name] = flat_hash_map<string, uint64_t>();
-        }
-        if (this->stats[stat_name].find(range) == this->stats[stat_name].end()) {
-            this->stats[stat_name][range] = 0;
-        }
         this->stats[stat_name][range] += 1;
     }
 
@@ -157,7 +171,7 @@ public:
 };
 
 template <typename T>
-void ascending(T& dFirst, T& dSecond)
+inline void ascending(T& dFirst, T& dSecond)
 {
     if (dFirst > dSecond)
         std::swap(dFirst, dSecond);
@@ -172,8 +186,7 @@ inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string
     std::ifstream inputFile(filename);
 
     if (!inputFile.is_open()) {
-        std::cerr << "Error opening the file: " << filename << std::endl;
-        return;
+        throw std::runtime_error("Error opening the file: " + filename);
     }
 
     std::string line;
@@ -186,13 +199,36 @@ inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string
             map.operator[](stoi(column1)) = column2;
         }
         else {
-            std::cerr << "Invalid line format: " << line << std::endl;
             inputFile.close();
-            return;
+            throw std::runtime_error("Invalid line format: '" + line + "'");
         }
     }
 
     inputFile.close();
+}
+
+inline uint64_t get_population_size(string filename) {
+    return 44260; // TODO - remove this
+
+    std::ifstream inputFile(filename);
+
+    if (!inputFile.is_open()) {
+        std::cerr << "Error opening the file: " << filename << std::endl;
+        return 0;
+    }
+
+    std::string line;
+    uint64_t counter = 0;
+    while (std::getline(inputFile, line)) {
+        if (line.find("features:") != std::string::npos) {
+            std::string number = line.substr(line.find(":") + 1);
+            inputFile.close();
+            return stoi(number);
+        }
+    }
+    inputFile.close();
+    return 0;
+
 }
 
 
@@ -235,19 +271,80 @@ namespace kSpider {
     }
 
 
+    double calc_foldChange(int k, int s, int M, int N) {
+        return (double)k * N / (double)(s * M);
+    }
+
+    double calcExpectedSuccesses(int s, int M, int N) {
+        return (double)s * M / N;
+    }
+
+    double calcPValue(int k, int s, int M, int N, bool isOverEnrichment) {
+        boost::math::hypergeometric_distribution<> hg(M, s, N);
+        double pvalue;
+
+        if (isOverEnrichment) {
+            pvalue = 1 - boost::math::cdf(hg, k - 1);
+        }
+        else {
+            pvalue = boost::math::cdf(hg, k);
+        }
+
+        return pvalue;
+    }
+
+    std::tuple<double, double, double> enrichmentAnalysis(int k, int s, int M, int N, bool isOverEnrichment) {
+        double fold_change = calc_foldChange(k, s, M, N);
+        double expectedSuccesses = calcExpectedSuccesses(s, M, N);
+        double pvalue = calcPValue(k, s, M, N, isOverEnrichment);
+        return std::make_tuple(pvalue, expectedSuccesses, fold_change);
+    }
+
+
+
+    double odds_ratio(int k, int s, int M, int N) {
+        int a, b, c, d;
+        a = k;
+        b = s - k;
+        c = M - k;
+        d = N - (s + M) + k;
+
+        // Check for division by zero
+        if (b == 0 || c == 0) {
+            return -1;
+            throw std::invalid_argument("Odds_ratio Denominator cannot be zero");
+        }
+
+        return static_cast<double>(a * d) / (b * c);
+    }
+
+
     void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command) {
 
         vector<string> allowed_distances = { "min_cont", "avg_cont", "max_cont", "ochiai", "jaccard" };
         // cutoff_distance_type must be in allowed_distances
         if (std::find(allowed_distances.begin(), allowed_distances.end(), cutoff_distance_type) == allowed_distances.end()) {
-            cerr << "cutoff_distance_type must be in " << '{ "min_cont", "avg_cont", "max_cont", "ochiai", "jaccard" }' << endl;
-            exit(1);
+            throw std::invalid_argument("cutoff_distance_type must be in " + string("{min_cont, avg_cont, max_cont, ochiai, jaccard}"));
         }
 
         // Read colors
         int_vec_map color_to_ids; // = new phmap::flat_hash_map<uint64_t, phmap::flat_hash_set<uint32_t>>;
         string colors_map_file = index_prefix + "_color_to_sources.bin";
+        string extra_file = index_prefix + ".extra";
+        uint64_t population_size = get_population_size(extra_file);
+        cout << "population_size: " << population_size << endl;
         load_colors_to_sources(colors_map_file, &color_to_ids);
+
+        // dump color to ids in a file
+        ofstream myfile222;
+        myfile222.open(index_prefix + "_color_to_sources.txt");
+        for (auto& color_to_ids_pair : color_to_ids) {
+            uint64_t color = color_to_ids_pair.first;
+            vector<uint32_t> ids = color_to_ids_pair.second;
+            myfile222 << color << ":" << ids.size() << endl;
+        }
+        myfile222.close();
+
         flat_hash_map<int, std::string> namesMap;
         load_namesMap(index_prefix + ".namesMap", namesMap);
         assert(namesMap.size());
@@ -260,21 +357,34 @@ namespace kSpider {
         int_int_map colorsCount;
         load_colors_count(index_prefix + "_color_count.bin", colorsCount);
 
+        // DEBUG
+        // dump colors count to file 
+        /*
+        ofstream myfile3;
+        myfile3.open(index_prefix + "_color_count.txt");
+        for (auto& color_count_pair : colorsCount) {
+            uint64_t color = color_count_pair.first;
+            uint64_t count = color_count_pair.second;
+            myfile3 << color << ":" << count << endl;
+        }
+        myfile3.close();
+
 
         // TODO: should be csv, rename later.
-        // std::ifstream data(index_prefix + "_DBRetina_colorCount.tsv");
-        // if (!data.is_open()) std::exit(EXIT_FAILURE);
-        // std::string str;
-        // std::getline(data, str); // skip the first line
-        // while (std::getline(data, str))
-        // {
-        //     std::istringstream iss(str);
-        //     std::string token;
-        //     vector<uint32_t> tmp;
-        //     while (std::getline(iss, token, ','))
-        //         tmp.push_back(stoi(token));
-        //     colorsCount.insert(make_pair(tmp[0], tmp[1]));
-        // }
+        std::ifstream data(index_prefix + "_DBRetina_colorCount.tsv");
+        if (!data.is_open()) std::exit(EXIT_FAILURE);
+        std::string str;
+        std::getline(data, str); // skip the first line
+        while (std::getline(data, str))
+        {
+            std::istringstream iss(str);
+            std::string token;
+            vector<uint32_t> tmp;
+            while (std::getline(iss, token, ','))
+                tmp.push_back(stoi(token));
+            colorsCount.insert(make_pair(tmp[0], tmp[1]));
+        }
+        */
 
         cout << "parsing index colors: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
         begin_time = Time::now();
@@ -317,6 +427,16 @@ namespace kSpider {
         // convert map to vec for parallelization purposes.
         auto vec_color_to_ids = std::vector<std::pair<uint32_t, vector<uint32_t>>>(color_to_ids.begin(), color_to_ids.end());
 
+        cerr << "number of colors = " << vec_color_to_ids.size() << endl;
+
+        double average_color_size = 0.0;
+        for (auto const& item : vec_color_to_ids) {
+            average_color_size += item.second.size();
+        }
+        average_color_size /= vec_color_to_ids.size();
+
+        cerr << "average color size = " << (int)average_color_size << endl;
+
         int thread_num, num_threads, start, end, vec_i;
         int n = vec_color_to_ids.size();
 
@@ -347,20 +467,12 @@ namespace kSpider {
                         [ccount](PAIRS_COUNTER::value_type& v) { v.second += ccount; },           // called only when key was already present
                         ccount
                     );
-
-                    // ** BUG FIX ** was creating wrong shared_kmers
-                    // auto _p = make_pair(_seq1, _seq2);
-                    // uint32_t ccount = colorsCount[item.first];
-                    // edges.lazy_emplace_l(_p,
-                    //     [ccount](PAIRS_COUNTER::value_type& v) { v.second++; },           // called only when key was already present
-                    //     [_p, ccount](const PAIRS_COUNTER::constructor& ctor) {
-                    //         ctor(_p, ccount); }
-                    // ); // construct value_type in place when key not present 
                 }
             }
         }
 
         cout << "pairwise hashmap construction: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        cout << "Number of pairwise comparisons: " << edges.size() << endl;
         cout << "writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv" << endl;
 
         Stats distances_stats;
@@ -387,8 +499,15 @@ namespace kSpider {
             << "\tmax_containment"
             << "\tochiai"
             << "\tjaccard"
+            << "\todds_ratio"
             << '\n';
         uint64_t line_count = 0;
+
+        // string stream for writing to file
+        std::ostringstream oss;
+        uint64_t line_count_buffer = 0;
+        uint64_t line_count_buffer_max = 1000;
+
         for (const auto& edge : edges) {
 
             flat_hash_map<string, double> distance_metrics;
@@ -419,6 +538,26 @@ namespace kSpider {
             // Kulczynski distance needs abundance of each sample
             // double kulczynski = (double)shared_kmers / (source_1_kmers + source_2_kmers) * 2;
 
+            // p-value using hypergeometric CDF as in PAGER
+
+            /*
+            int k = 5;  // Number of successes
+            int s = 10;  // Sample size
+            int M = 20;  // Number of successes in the population
+            int N = 50;  // Population size
+            std::pair<double, double> result = hypergeometric_test(k, s, M, N);
+            std::cout << "pvalue: " << result.first << ", expected successes: " << result.second
+            */
+
+            distance_metrics["odds_ratio"] = odds_ratio(shared_kmers, source_1_kmers, source_2_kmers, population_size);
+
+            // --->
+            // auto [pvalue, expectedSuccesses, fold_change] = enrichmentAnalysis(shared_kmers, source_1_kmers, source_2_kmers, population_size, true);
+            // distance_metrics["pval"] = pvalue;
+            // distance_metrics["expected_successes"] = expectedSuccesses;
+            // distance_metrics["fold_change"] = fold_change;
+            // <---
+
             if (distance_metrics[cutoff_distance_type] < cutoff_threshold) continue;
 
             distances_stats.add_stat("min_cont", distance_metrics["min_cont"]);
@@ -426,21 +565,36 @@ namespace kSpider {
             distances_stats.add_stat("max_cont", distance_metrics["max_cont"]);
             distances_stats.add_stat("ochiai", distance_metrics["ochiai"]);
             distances_stats.add_stat("jaccard", distance_metrics["jaccard"]);
+            distances_stats.update_odds_ratio_stats(distance_metrics["odds_ratio"]);
 
 
-            myfile
-                << source_1
-                << '\t' << source_2
-                << '\t' << namesMap[source_1]
-                << '\t' << namesMap[source_2]
-                << '\t' << shared_kmers
-                << '\t' << formatDouble(distance_metrics["min_cont"])
-                << '\t' << formatDouble(distance_metrics["avg_cont"])
-                << '\t' << formatDouble(distance_metrics["max_cont"])
-                << '\t' << formatDouble(distance_metrics["ochiai"])
-                << '\t' << formatDouble(distance_metrics["jaccard"]);
-            myfile << '\n';
+            // check buffer
+            if (line_count_buffer < line_count_buffer_max) {
+                line_count_buffer++;
+                oss << source_1
+                    << '\t' << source_2
+                    << '\t' << namesMap[source_1]
+                    << '\t' << namesMap[source_2]
+                    << '\t' << shared_kmers
+                    << '\t' << formatDouble(distance_metrics["min_cont"])
+                    << '\t' << formatDouble(distance_metrics["avg_cont"])
+                    << '\t' << formatDouble(distance_metrics["max_cont"])
+                    << '\t' << formatDouble(distance_metrics["ochiai"])
+                    << '\t' << formatDouble(distance_metrics["jaccard"])
+                    << '\t' << formatDouble(distance_metrics["odds_ratio"])
+                    << '\n';
+            }
+            else {
+                myfile << oss.str();
+                oss.str(""); // clear buffer
+                line_count_buffer = 0;
+            }
         }
+        // write last chunk in the buffer
+        if (line_count_buffer > 0) {
+            myfile << oss.str();
+        }
+        myfile << oss.str();
         myfile.close();
         distances_stats.stats_to_json_file(index_prefix + "_DBRetina_pairwise_stats.json");
     }

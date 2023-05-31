@@ -142,6 +142,7 @@ Examples:
         "max_cont": 7,
         "ochiai": 8,
         "jaccard": 9,
+        "pval": 10,
     }
     if distance_type in distance_to_col:
         # +1 because awk is 1-indexed

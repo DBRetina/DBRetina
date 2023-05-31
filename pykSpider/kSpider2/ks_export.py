@@ -16,9 +16,14 @@ from scipy.spatial.distance import squareform, pdist
 simplefilter("ignore", ClusterWarning)
 import math
 import re
+import plotly.graph_objects as go
+import plotly.figure_factory as ff
+import numpy as np
+import pandas as pd
+from scipy.spatial.distance import pdist, squareform
+import random
+import string
 
-# def newick_str_escape(s):
-#     return s.replace('(', '-').replace(')', '-').replace(',', '-').replace(' ', '-')
 
 def newick_str_escape(name):
     # Remove special characters
@@ -130,7 +135,7 @@ def tree_to_newick(node, leaf_names):
 @cli.command(name="export", help_priority=5)
 @click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="filtered pairwise TSV file")
 @click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
-@click.option('--newick', "newick", is_flag=True, help="Convert the dissimilarity matrix to newick tree format", default=False)
+@click.option('--newick', "newick", is_flag=True, help="Convert the similarity matrix to newick tree format", default=False)
 @click.option('-l', '--labels', "labels_selection", callback = validate_labels, required=False, default="ids", show_default=True, type=click.STRING, help="select from ['ids', 'names']")
 @click.option('-o', "output_prefix", required=True, type=click.STRING, help="output prefix")
 @click.pass_context
@@ -176,46 +181,146 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
         df[df.columns[0]] = df[df.columns[0]].apply(lambda x: newick_str_escape(x))
         df[df.columns[1]] = df[df.columns[1]].apply(lambda x: newick_str_escape(x))
     
-    df[df.columns[2]] = df[df.columns[2]].apply(lambda x: math.log2(x) if x != 0 else 0)
+    # df[df.columns[2]] = df[df.columns[2]].apply(lambda x: math.log2(x) if x != 0 else 0)
     
     similarity_df = df.pivot(index=df.columns[0], columns=df.columns[1], values=df.columns[2])
 
     similarity_df = similarity_df.combine_first(similarity_df.T).fillna(0)
-    np.fill_diagonal(similarity_df.values, math.log2(100))
+    # np.fill_diagonal(similarity_df.values, math.log2(100))
+    np.fill_diagonal(similarity_df.values, 100)
     
 
-    # np.fill_diagonal(matrix_df.values, 0)
-    # dissimilarity_df = 100 - matrix_df
-    # dissimilarity_df = dissimilarity_df.combine_first(dissimilarity_df.T)
-    # dissimilarity_df.fillna(0, inplace=True)
-
-    
-    # Create a custom diverging colormap
-    # cmap = sns.diverging_palette(230, 20, as_cmap=True)
-    # cmap = sns.diverging_palette(250, 15, s=75, l=40, n=1, center="light", as_cmap=True)
-    # cmap = sns.diverging_palette(250, 15, s=75, l=40, n=6, center="light", as_cmap=True, sep=77)
-    # cmap = sns.dark_palette("xkcd:golden", 8)
-    # cmap = sns.diverging_palette(0, 255, sep=77, as_cmap=True)
-    # cmap = sns.light_palette("black", as_cmap=True)
-    # cmap = sns.color_palette("icefire", as_cmap=True)
-    # cmap = sns.color_palette("colorblind", as_cmap=True)
     cmap = sns.color_palette("Spectral", as_cmap=True)
     g = sns.clustermap(
         similarity_df, 
         cmap=cmap, 
         center=0, 
         linewidths=.5, 
-        figsize=(10, 10), 
+        figsize=(10, 10),
         row_cluster=True, 
         col_cluster=True, 
         vmin=0, 
-        vmax=math.log2(100),
+        # vmax=math.log2(100),
+        vmax=100,
+        dendrogram_ratio=(0.1, 0.2),
         # method = 'single',
         # metric='braycurtis',
         )
     plt.setp(g.ax_heatmap.get_xticklabels(), rotation=45, horizontalalignment='right')
     plt.setp(g.ax_heatmap.get_yticklabels(), rotation=0)
     g.cax.set_title('Similarity', loc='left', fontsize=12, fontweight='bold')
+    
+    
+    
+    ### PLOTLY
+    
+    import plotly.graph_objects as go
+    import plotly.io as pio
+    import dash_bio
+    
+    ##### DASH
+    
+    fig = dash_bio.Clustergram(
+        data=similarity_df,
+        column_labels=list(similarity_df.columns.values),
+        row_labels=list(similarity_df.index),
+        height=2800,
+        width=2700,
+        
+        # display_ratio=[0.1, 0.7]
+    )
+    
+    pio.write_html(fig, 'dash-heatmap.html')
+    
+        # Your precomputed data
+    z_data = similarity_df.values
+
+    fig = go.Figure(data=go.Heatmap(
+        z=z_data,
+        x=similarity_df.columns,
+        y=similarity_df.index,
+        colorscale='YlGnBu',  # Adjust to a more distinguishable color scale
+        hoverongaps = False))
+
+    fig.update_layout(
+        title='Similarity Heatmap',
+        autosize=True,
+        width=2000,  # Adjust to control block size
+        height=2000,  # Adjust to control block size
+        xaxis_nticks=len(similarity_df.columns),  # try to show all x labels
+        # yaxis_nticks=len(similarity_df.index)  # try to show all y labels
+    )
+    pio.write_html(fig, 'heatmap.html')
+    # fig.show()
+    
+    #############################
+    
+    # PLOTLY 2
+    from scipy.spatial import distance
+    from scipy.cluster import hierarchy
+    
+    # Preprocessing the data
+    # Check for any missing data
+    if similarity_df.isnull().any().any():
+        print('Missing data found. Filling with zeros.')
+        similarity_df.fillna(0, inplace=True)
+
+    # Preprocessing the data
+    labels = similarity_df.columns
+    data_array = similarity_df.values
+    # Convert the similarity matrix to a condensed distance matrix
+    np.fill_diagonal(similarity_df.values, 0)
+    condensed_dist_matrix = distance.squareform(similarity_df)
+
+    # Compute linkage
+    linkage = hierarchy.linkage(condensed_dist_matrix, 'single')
+
+    # Create a dendrogram figure
+    dendro = ff.create_dendrogram(linkage, labels=labels, orientation='bottom')
+    
+    print(dendro)
+    
+    for i in range(len(dendro['data'])):
+        dendro['data'][i]['yaxis'] = 'y2'
+
+    # Create a side dendrogram
+    dendro_side = ff.create_dendrogram(linkage, orientation='right')
+    for i in range(len(dendro_side['data'])):
+        dendro_side['data'][i]['xaxis'] = 'x2'
+
+    # Add the side dendrogram to the dendrogram figure
+    for data in dendro_side['data']:
+        dendro.add_trace(data)
+
+    # Create a heatmap
+    dendro_leaves = [int(i) for i in dendro_side['layout']['yaxis']['ticktext']]
+    heatmap_data = data_array[dendro_leaves, :]
+    heatmap_data = heatmap_data[:, dendro_leaves]
+    heatmap = go.Heatmap(x=dendro['layout']['xaxis']['tickvals'],
+                        y=dendro_side['layout']['yaxis']['tickvals'],
+                        z=heatmap_data, colorscale='Blues')
+    dendro.add_trace(heatmap)
+
+    # Configure layout
+    dendro.update_layout({'width':800, 'height':800, 'showlegend':False, 'hovermode': 'closest',})
+    dendro.update_layout(xaxis={'domain': [.15, 1], 'mirror': False, 'showgrid': False, 'showline': False, 'zeroline': False, 'ticks':""})
+    dendro.update_layout(xaxis2={'domain': [0, .15], 'mirror': False, 'showgrid': False, 'showline': False, 'zeroline': False, 'showticklabels': False, 'ticks':""})
+    dendro.update_layout(yaxis={'domain': [0, .85], 'mirror': False, 'showgrid': False, 'showline': False, 'zeroline': False, 'showticklabels': False, 'ticks': ""})
+    dendro.update_layout(yaxis2={'domain':[.825, .975], 'mirror': False, 'showgrid': False, 'showline': False, 'zeroline': False, 'showticklabels': False, 'ticks':""})
+
+    # Plot
+    # dendro.show()
+
+    # Plot
+    pio.write_html(dendro, 'dendro.html')
+    
+    
+    
+
+
+
+
+    ##################### PLOTLY END #####################
     
     
     # serialize distance matrix to binary format

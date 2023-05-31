@@ -75,14 +75,13 @@ void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) 
             if (group.empty() || gene.empty()) {
                 std::cerr << "Invalid line format: " << line << std::endl;
                 inputFile.close();
-                throw std::runtime_error("Empty strings detected in the input file. Please remove them and try again.");
+                throw std::runtime_error("Invalid line format in the input file: '" + line + "'");
             }
 
             // detect pipe character, exit
             if (detect_pipe_character_from_string(group) || detect_pipe_character_from_string(gene)) {
-                std::cerr << "Invalid line format: " << line << std::endl;
                 inputFile.close();
-                throw std::runtime_error("Pipe character detected in the input file. Please remove it and try again.");
+                throw std::runtime_error("Invalid line format in the input file: '" + line + "'");
             }
 
             // remove quotes
@@ -109,7 +108,7 @@ void load_tsv_to_map(string filename, str_vec_map* map, str_str_map* names_map) 
         }
         else {
             inputFile.close();
-            throw std::runtime_error("Invalid line format in the input file. Please check the file and try again.");
+            throw std::runtime_error("Invalid line format in the input file");
             return;
         }
     }
@@ -123,7 +122,6 @@ void load_tsv_to_map_no_names(string filename, str_vec_map* map) {
     std::ifstream inputFile(filename);
 
     if (!inputFile.is_open()) {
-        std::cerr << "Error opening the file: " << filename << std::endl;
         throw std::runtime_error("Error opening the file: " + filename);
     }
 
@@ -138,9 +136,8 @@ void load_tsv_to_map_no_names(string filename, str_vec_map* map) {
 
             // detect pipe character, exit
             if (detect_pipe_character_from_string(group) || detect_pipe_character_from_string(gene)) {
-                std::cerr << "Invalid line format: " << line << std::endl;
                 inputFile.close();
-                throw std::runtime_error("Pipe character detected in the input file. Please remove it and try again.");
+                throw std::runtime_error("Invalid line format in the input file: '" + line + "'");
             }
 
             // remove quotes
@@ -150,14 +147,15 @@ void load_tsv_to_map_no_names(string filename, str_vec_map* map) {
             // all to lower case
             transform(group.begin(), group.end(), group.begin(), ::tolower);
             transform(gene.begin(), gene.end(), gene.begin(), ::tolower);
-
-
+            if(group.empty() || gene.empty()) {
+                inputFile.close();
+                throw std::runtime_error("Invalid line format in the input file: '" + line + "'");
+            }
             map->operator[](group).emplace(gene);
         }
         else {
             inputFile.close();
-            throw std::runtime_error("Invalid line format in the input file. Please check the file and try again.");
-            return;
+            throw std::runtime_error("Invalid line format in the input file: '" + line + "'");
         }
     }
 
@@ -190,7 +188,7 @@ void inverted_load_tsv_to_map(string filename, str_vec_map* map, str_str_map* na
                 std::cerr << "Invalid line format: " << line << std::endl;
                 std::cerr << "Empty strings detected in the input file. Please remove them and try again.";
                 inputFile.close();
-                throw std::runtime_error("Empty strings detected in the input file. Please remove them and try again.");
+                throw std::runtime_error("Invalid line format in the input file: '" + line + "'");
             }
 
             // detect pipe character, exit
@@ -224,7 +222,7 @@ void inverted_load_tsv_to_map(string filename, str_vec_map* map, str_str_map* na
         else {
             std::cerr << "Invalid line format: " << line << std::endl;
             inputFile.close();
-            throw std::runtime_error("Invalid line format in the input file. Please check the file and try again.");
+            throw std::runtime_error("Invalid line format in the input file");
         }
     }
 
@@ -270,9 +268,8 @@ void inverted_load_tsv_to_map_no_names(string filename, str_vec_map* map) {
             map->operator[](gene).emplace(group);
         }
         else {
-            std::cerr << "Invalid line format: " << line << std::endl;
             inputFile.close();
-            throw std::runtime_error("Invalid line format in the input file. Please check the file and try again.");
+            throw std::runtime_error("Invalid line format in the input file");
         }
     }
 
@@ -310,7 +307,7 @@ void load_names_tsv_to_map(string filename, str_str_map* map) {
         else {
             std::cerr << "Invalid line format: " << line << std::endl;
             inputFile.close();
-            throw std::runtime_error("Invalid line format in the input file. Please check the file and try again.");
+            throw std::runtime_error("Invalid line format in the input file: '" + line + "'");
         }
     }
 

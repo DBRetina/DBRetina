@@ -141,7 +141,6 @@ classifiers = [
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
 ]
 
 from setuptools.command.build_py import build_py
@@ -174,6 +173,9 @@ setup(name='DBRetina',
           'tqdm',
           'seaborn',
           'matplotlib',
+          'fastcluster',
+          'leidenalg',
+          'igraph',
       ],
       include_package_data=True,
       entry_points='''
