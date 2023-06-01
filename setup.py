@@ -104,10 +104,10 @@ LIBRARIES = [
 
 SWIG_OPTS = [
     '-c++',
-    '-py3',
-    '-keyword',
+    # '-py3',
+    # '-keyword',
     '-outdir',
-    './pykSpider/internal'
+    './pykSpider/'
 ]
 
 

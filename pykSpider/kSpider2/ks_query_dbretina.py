@@ -172,7 +172,7 @@ Examples:
     all_ids = set()
     if clusters_file != "NA":
         query_file = _tmp_file
-        with (open(clusters_file) as f, open(query_file, 'w') as W):            
+        with open(clusters_file) as f, open(query_file, 'w') as W:            
             # skip comments
             while True:
                 pos = f.tell()

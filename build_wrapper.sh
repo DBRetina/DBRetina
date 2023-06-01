@@ -17,7 +17,7 @@ function cleanup() {
     rm -rf *cxx
     rm -rf *pyc
     rm -rf src/swig_interfaces/kSpider_internal_wrap.cpp
-    rm -rf pykSpider/internal/kSpider_internal.py
+    # rm -rf pykSpider/kSpider_internal.py
     rm -rf *so
     rm -rf pykSpider/DBRetina.egg-info/
     rm -rf build/bdist.linux-x86_64
@@ -28,7 +28,7 @@ cleanup
 
 # Build the project if not already built
 BUILD_DIR="build"
-[[ -d ${BUILD_DIR} ]] || cmake -Bbuild && cmake --build build -j4
+[[ -d ${BUILD_DIR} ]] || cmake -Bbuild && cmake --build build -j 16
 
 
 echo "BDIST WHEEL"
@@ -46,7 +46,6 @@ rm -rf __pycache__/
 rm -rf *cxx
 rm -rf *pyc
 rm -rf src/swig_interfaces/kSpider_internal_wrap.cpp
-rm -rf kSpider_internal.py
 rm -rf *so
 rm -rf pykSpider/DBRetina.egg-info/
 rm -rf build/bdist.linux-x86_64
