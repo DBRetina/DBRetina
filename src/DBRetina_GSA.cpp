@@ -48,7 +48,10 @@ void GeneSets::build_from_index(string index_prefix) {
     cerr << "[DEBUG] Loading colors map from: " << colors_map_file << endl;
     // We need this to find out how many pathways are associated with each gene
     load_colors_to_sources(colors_map_file, &color_to_ids);
+    cout << "Loaded colors: " << color_to_ids.size() << endl;
+    build_gene_to_PSI();
     build_all_pathways_PSI();
+
 }
 
 
@@ -133,12 +136,13 @@ void GeneSets::build_gene_to_PSI() {
     }
 }
 
-uint64_t GeneSets::get_pathway_PSI(string pathway) {
+double GeneSets::get_pathway_PSI(string pathway) {
     // check if that pathway does not exist
     if (pathway_to_gene_set.find(pathway) == pathway_to_gene_set.end())
         throw std::invalid_argument("Pathway does not exist");
 
     auto genes = pathway_to_gene_set[pathway];
+    cout << "Pathway: " << pathway << " genes: " << genes.size() << endl;
     double average_psi = 0.0;
     for (auto& gene : genes) {
         average_psi += gene_to_PSI[gene];
@@ -179,7 +183,7 @@ void GeneSets::build_pathway_to_average_PPI(string pathway) {
     pathway_to_average_PPI[pathway] = average_ppi / genes.size();
 }
 
-uint64_t GeneSets::get_cluster_average_ppi(uint32_t cluster_id) {
+double GeneSets::get_cluster_average_ppi(uint32_t cluster_id) {
     auto pathways = this->clusterToPathways[cluster_id];
     double average_ppi = 0.0;
     for (auto& pathway : pathways) {

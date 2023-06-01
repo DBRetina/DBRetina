@@ -30,11 +30,11 @@ private:
     flat_hash_set<uint64_t> get_universe_set(flat_hash_set<string> pathways);
     void build_all_pathways_PSI();
     void build_gene_to_PSI();
-    uint64_t get_pathway_PSI(string pathway);
+    double get_pathway_PSI(string pathway);
     void build_gene_to_no_clusters();
     void build_gene_to_PPI();
     void build_pathway_to_average_PPI(string pathway);
-    uint64_t get_cluster_average_ppi(uint32_t cluster_id);
+    double get_cluster_average_ppi(uint32_t cluster_id);
     void build_clusters_to_average_PPI();
 
 public:
