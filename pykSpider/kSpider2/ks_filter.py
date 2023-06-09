@@ -81,6 +81,7 @@ def path_to_absolute_path(ctx, param, value):
 @click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
 def main(ctx, pairwise_file, groups_file, distance_type, cutoff, output_file, clusters_file, cluster_ids, extend):
+    # sourcery skip: low-code-quality
     """Filter a pairwise file.
 
 
@@ -142,7 +143,7 @@ Examples:
         "max_cont": 7,
         "ochiai": 8,
         "jaccard": 9,
-        "pval": 10,
+        "odds_ratio": 10,
     }
     if distance_type in distance_to_col:
         # +1 because awk is 1-indexed

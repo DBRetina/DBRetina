@@ -36,9 +36,7 @@ class SpecialHelpOrder(click.Group):
 
 
 @click.group(cls=SpecialHelpOrder)
-@click.version_option(version=get_version(), prog_name="kSpider")
-@click.option('-q', '--quiet', default=False, is_flag=True)
+@click.version_option(version=get_version(), prog_name="DBRetina")
 @click.pass_context
-def cli(ctx, quiet):
-    ctx.obj = Logger(quiet)
-    pass
+def cli(ctx):
+    ctx.obj = Logger(active = True)

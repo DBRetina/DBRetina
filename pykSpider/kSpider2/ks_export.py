@@ -154,6 +154,7 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
         "max_cont": 7,
         "ochiai": 8,
         "jaccard": 9,
+        "odds_ratio": 10,
     }
 
     if distance_type not in distance_to_col:

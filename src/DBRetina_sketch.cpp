@@ -454,7 +454,7 @@ void sketch_dbretina(string asc_file, string names_file, string user_prefix) {
 
 
 
-void parse_dbretina_json(string json_file, str_hashed_vec_map* map) {
+void parse_dbretina_json(string json_file, str_hashed_set_map* map) {
     string_hasher hasher = string_hasher();
     string output_prefix = json_file.substr(0, json_file.find_last_of(".")).substr(json_file.find_last_of("/") + 1);
 
@@ -485,7 +485,7 @@ void parse_dbretina_json(string json_file, str_hashed_vec_map* map) {
         for (auto it = genes.begin(); it != genes.end(); it++) {
             string parent_name = it->first;
             auto gene = it->second.as_array();
-            map->operator[](parent_name) = parallel_flat_hash_set<uint64_t>(gene.size());
+            map->operator[](parent_name) = flat_hash_set<uint64_t>(gene.size());
             for (auto it2 = gene.begin(); it2 != gene.end(); it2++) {
                 map->operator[](parent_name).insert(to_uint64(it2->as_string()));
             }

@@ -18,17 +18,21 @@ class Logger:
         self.ACTIVE = active
 
     def SUCCESS(self, msg):
-        if not self.ACTIVE:
+        if self.ACTIVE:
             click.secho(f"[SUCCESS] {msg}", fg=Logger.GREEN, bold=True, file=sys.stderr)
 
     def INFO(self, msg):
-        if not self.ACTIVE:
+        if self.ACTIVE:
             click.secho(f"[INFO] {msg}", fg=Logger.YELLOW, bold=True, file=sys.stderr)
 
     def WARNING(self, msg):
-        if not self.ACTIVE:
+        if self.ACTIVE:
             click.secho(f"[WARNING] {msg}", fg=Logger.YELLOW, bold=True, file=sys.stderr)
 
     def ERROR(self, msg):        
         click.secho(f"[ERROR] {msg}", fg=Logger.RED, bold=True, file=sys.stderr)
         sys.exit(1)
+        
+    def suppress(self):
+        print("Suppressing logger")
+        self.ACTIVE = False

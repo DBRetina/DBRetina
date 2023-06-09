@@ -29,7 +29,7 @@ class Clusters:
         "max_cont": 7,
         "ochiai": 8,
         "jaccard": 9,
-        "pval": 10,
+        "odds": 10,
     }
 
     seq_to_kmers = dict()
@@ -332,13 +332,14 @@ New help messages
 
 @cli.command(name="cluster", help_priority=4)
 @click.option('-p', '--pairwise', 'pairwise_file', required=False, type=click.Path(exists=True), help="filtered pairwise TSV file")
-@click.option('-d', '--dist-type', "distance_type", required=True, show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard', 'pval]")
+@click.option('-d', '--dist-type', "distance_type", required=True, show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard', 'odds_ratio]")
 @click.option("--community", "community", is_flag=True, help="clusters as communities", default=False)
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="cluster the supergroups with (distance > cutoff)")
 @click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
 def main(ctx, pairwise_file, cutoff, distance_type, output_prefix, community):
     """Graph-based clustering of the pairwise TSV file."""
+    
 
     cutoff = float(cutoff)
 

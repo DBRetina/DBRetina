@@ -110,7 +110,7 @@ namespace kSpider {
         // START
         for (auto& group : groupName_to_kmerSet) {
             string group_name = group.first;
-            parallel_flat_hash_set<uint64_t>& kmerSet = group.second;
+            flat_hash_set<uint64_t>& kmerSet = group.second;
 
             //START
             for (auto it = kmerSet.begin(); it != kmerSet.end(); ++it) {
