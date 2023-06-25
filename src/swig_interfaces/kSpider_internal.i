@@ -11,7 +11,7 @@ using namespace std;
 %include std_string.i
 
 namespace kSpider{
-    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command);
+    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command, bool calculate_pvalue);
     // void index_kmers(int kSize, string fasta_file, string names_file, int chunk_size, string index_prefix);
     // void index_kmers_nonCanonical(int kSize, string fasta_file, string names_file, int chunk_size, string index_prefix);
     // void index_skipmers(int m, int n, int k, string fasta_file, string names_file, int chunk_size, string index_prefix);
@@ -112,9 +112,13 @@ public:
     void build_from_clusters_file(string clusters_file);
     unordered_map<string, double> get_pathways_ppi();
     unordered_map<string, double> get_pathways_psi();
+    unordered_map<string, double> get_pathways_pcsi();
     unordered_map<string, int> get_pathway_lengths();
+    void export_genes_to_ppi_psi_tsv(string filename);
     void calculate_heterogeneity_and_fragmentation_from_pairwise(string pairwise_file);
-    unordered_map<string, int> get_pathways_fragmentation();
+    unordered_map<string, int> get_pathway_to_modularity();
+    unordered_map<string, int> get_pathway_to_heterogeneity();
+    unordered_map<string, int> get_pathway_to_fragmentation();
     unordered_map<string, double> non_iterative_set_cover(int cluster_id, int GC);
     void keep_only_these_pathways(string non_redundant_pathways);
     ~GeneSets();

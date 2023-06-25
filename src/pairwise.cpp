@@ -4,6 +4,7 @@
 #include <boost/algorithm/string/join.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/math/distributions/hypergeometric.hpp>
+#include <boost/math/special_functions/binomial.hpp>
 #include <boost/functional/hash.hpp>
 #include <ctime>
 #include<omp.h>
@@ -80,13 +81,14 @@ public:
     double min_odds_ratio = 1.0;
     double max_odds_ratio = 1.0;
     Stats() {
-        vector<string> distances = { "min_cont", "avg_cont", "max_cont", "ochiai", "jaccard" };
+        vector<string> distances = { "containment", "ochiai", "jaccard" };
         for (string& distance : distances) {
             stats[distance] = flat_hash_map<string, uint64_t>();
             for (int value = 0; value < 100; value += 5) {
                 string range = to_string(value) + "-" + to_string(value + 5);
                 this->stats[distance][range] = 0;
             }
+            this->stats[distance]["100-100"] = 0;
         }
     }
 
@@ -140,7 +142,7 @@ public:
         this->write_odds_ratio_in_file(new_file_name_without_extension + "_odds_ratio.txt");
     }
 
-    void write_odds_ratio_in_file(string filename){
+    void write_odds_ratio_in_file(string filename) {
         ofstream myfile;
         myfile.open(filename);
         myfile << this->min_odds_ratio << endl;
@@ -176,6 +178,7 @@ inline void ascending(T& dFirst, T& dSecond)
     if (dFirst > dSecond)
         std::swap(dFirst, dSecond);
 }
+
 
 inline void map_insert(int_int_map& _MAP, uint32_t& key, uint32_t& value) {
     _MAP.insert(make_pair(key, value));
@@ -275,11 +278,24 @@ namespace kSpider {
         return (double)k * N / (double)(s * M);
     }
 
+    // TODO - check how to integrate it in our code
     double calcExpectedSuccesses(int s, int M, int N) {
+        // this function calculates the expected successes in the source
+        // which means the expected number of genes that are in the source and in the target
         return (double)s * M / N;
     }
 
     double calcPValue(int k, int s, int M, int N, bool isOverEnrichment) {
+        /*
+            Here we set the isOverEnriched null hypothesis as boolean set by user.
+            If the user set the isOverEnriched to True, then the null hypothesis is that the gene is over-enriched in the source.
+            The null hypothesis is a hypothesis that says there is no statistical significance between the two variables in the hypothesis.
+            So if it's true, then the alternative hypothesis is that the gene is under-enriched in the source.
+            That means with low p-value we can reject the null hypothesis and say that the gene is under-enriched in the source.
+            If the user set the isOverEnriched to False, then the null hypothesis is that the gene is under-enriched in the source.
+            The alternative hypothesis is that the gene is over-enriched in the source.
+            That means with low p-value we can reject the null hypothesis and say that the gene is over-enriched in the source.
+        */
         boost::math::hypergeometric_distribution<> hg(M, s, N);
         double pvalue;
 
@@ -293,16 +309,62 @@ namespace kSpider {
         return pvalue;
     }
 
+    // Consireding the isOverEnrichment = True 
+    // (Null hypothesis is that the gene is over-enriched in the source)
+    double fastHyperPValue(int k, int s, int M, int N) {
+        /*
+            The original null hypothesis is that the gene is over-enriched in the source.
+            Explanation of the Pvalue calculations between two gene sets with shared genes:
+                - The null hypothesis is that the gene is over-enriched in the source.
+                - The alternative hypothesis is that the gene is under-enriched in the source.
+                - The probability of getting k or more successes in s trials is 1 - the probability of getting k or less successes in s trials.
+                - The probability of getting k or less successes in s trials is the cumulative distribution function of the hypergeometric distribution.
+
+            So, if the pvalue is less than the significance level (alpha), we reject the null hypothesis and accept the alternative hypothesis.
+            If the pvalue is greater than the significance level (alpha), we accept the null hypothesis and reject the alternative hypothesis.
+            smaller pvalues here means that the gene is more over-enriched in the source which means that the gene is more important in the source.
+        */
+        boost::math::hypergeometric_distribution<> hg(M, s, N);
+        return 1 - boost::math::cdf(hg, k - 1);
+    }
+
+    // Disabled for now
+    /*
+    double fisher_exact(int k_shared_kmers, int source_1_kmers, int source_2_kmers, int population_size) {
+        int a = k_shared_kmers;
+        int b = source_1_kmers - k_shared_kmers;
+        int c = source_2_kmers - k_shared_kmers;
+        int d = population_size - source_1_kmers - c;
+
+        int minval = std::min(a + b, a + c);
+        int maxval = std::max(0, a - d);
+        double p = 0.0;
+
+        boost::math::hypergeometric_distribution<> hgd(a + c, a + b, a + b + c + d);
+
+        for (int i = maxval; i <= minval; ++i) {
+            p += boost::math::pdf(hgd, i);
+        }
+        return p;
+    }
+
     std::tuple<double, double, double> enrichmentAnalysis(int k, int s, int M, int N, bool isOverEnrichment) {
         double fold_change = calc_foldChange(k, s, M, N);
         double expectedSuccesses = calcExpectedSuccesses(s, M, N);
         double pvalue = calcPValue(k, s, M, N, isOverEnrichment);
         return std::make_tuple(pvalue, expectedSuccesses, fold_change);
     }
-
+*/
 
 
     double odds_ratio(int k, int s, int M, int N) {
+        /*
+            this function calculates the odds ratio of a gene being in the source
+            which is the ratio of the odds of the gene being in the source to the odds of the gene being in the population.
+            If we have two gene sets with odds ratio equals to X, that means that
+            the odds of a gene being in the first set is X times the odds of the gene being in the second set.
+        */
+
         int a, b, c, d;
         a = k;
         b = s - k;
@@ -312,19 +374,19 @@ namespace kSpider {
         // Check for division by zero
         if (b == 0 || c == 0) {
             return -1;
-            throw std::invalid_argument("Odds_ratio Denominator cannot be zero");
+            // throw std::invalid_argument("Odds_ratio Denominator cannot be zero");
         }
 
         return static_cast<double>(a * d) / (b * c);
     }
 
 
-    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command) {
+    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command, bool calculate_pvalue) {
 
-        vector<string> allowed_distances = { "min_cont", "avg_cont", "max_cont", "ochiai", "jaccard" };
+        vector<string> allowed_distances = { "containment", "ochiai", "jaccard" };
         // cutoff_distance_type must be in allowed_distances
         if (std::find(allowed_distances.begin(), allowed_distances.end(), cutoff_distance_type) == allowed_distances.end()) {
-            throw std::invalid_argument("cutoff_distance_type must be in " + string("{min_cont, avg_cont, max_cont, ochiai, jaccard}"));
+            throw std::invalid_argument("cutoff_distance_type must be in " + string("{containment, ochiai, jaccard}"));
         }
 
         // Read colors
@@ -335,15 +397,15 @@ namespace kSpider {
         cout << "population_size: " << population_size << endl;
         load_colors_to_sources(colors_map_file, &color_to_ids);
 
-        // dump color to ids in a file
-        ofstream myfile222;
-        myfile222.open(index_prefix + "_color_to_sources.txt");
-        for (auto& color_to_ids_pair : color_to_ids) {
-            uint64_t color = color_to_ids_pair.first;
-            vector<uint32_t> ids = color_to_ids_pair.second;
-            myfile222 << color << ":" << ids.size() << endl;
-        }
-        myfile222.close();
+        // [DEBUG CODE] dump color to ids in a file
+        // ofstream myfile222;
+        // myfile222.open(index_prefix + "_color_to_sources.txt");
+        // for (auto& color_to_ids_pair : color_to_ids) {
+        //     uint64_t color = color_to_ids_pair.first;
+        //     vector<uint32_t> ids = color_to_ids_pair.second;
+        //     myfile222 << color << ":" << ids.size() << endl;
+        // }
+        // myfile222.close();
 
         flat_hash_map<int, std::string> namesMap;
         load_namesMap(index_prefix + ".namesMap", namesMap);
@@ -464,7 +526,7 @@ namespace kSpider {
                     auto _p = make_pair(_seq1, _seq2);
                     uint32_t ccount = colorsCount[item.first];
                     edges.try_emplace_l(_p,
-                        [ccount](PAIRS_COUNTER::value_type& v) { v.second += ccount; },           // called only when key was already present
+                        [ccount](PAIRS_COUNTER::value_type& v) { v.second += ccount; }, // called only when key was already present
                         ccount
                     );
                 }
@@ -481,7 +543,7 @@ namespace kSpider {
             char buffer[20];
             std::snprintf(buffer, sizeof(buffer), "%.1f", val);
             return std::string(buffer);
-        };
+            };
 
         std::ofstream myfile;
         myfile.open(index_prefix + "_DBRetina_pairwise.tsv");
@@ -494,19 +556,17 @@ namespace kSpider {
             << "\tgroup_1_name"
             << "\tgroup_2_name"
             << "\tshared_features"
-            << "\tmin_containment"
-            << "\tavg_containment"
-            << "\tmax_containment"
+            << "\tcontainment"
             << "\tochiai"
             << "\tjaccard"
-            << "\todds_ratio"
-            << '\n';
+            << "\todds_ratio";
+        if (calculate_pvalue) { myfile << "\tpvalue"; }
+        // << "\texpected_successes"
+        // << "\tfold_change"
+
+        myfile << '\n';
         uint64_t line_count = 0;
 
-        // string stream for writing to file
-        std::ostringstream oss;
-        uint64_t line_count_buffer = 0;
-        uint64_t line_count_buffer_max = 1000;
 
         for (const auto& edge : edges) {
 
@@ -517,14 +577,10 @@ namespace kSpider {
             uint32_t source_2 = edge.first.second;
             uint32_t source_1_kmers = groupID_to_kmerCount[source_1];
             uint32_t source_2_kmers = groupID_to_kmerCount[source_2];
+            uint32_t minimum_source_kmers = min(source_1_kmers, source_2_kmers);
 
-            // containments
-            double cont_1_in_2 = (double)shared_kmers / source_2_kmers;
-            double cont_2_in_1 = (double)shared_kmers / source_1_kmers;
-
-            distance_metrics["min_cont"] = min(cont_1_in_2, cont_2_in_1) * 100;
-            distance_metrics["avg_cont"] = ((cont_1_in_2 + cont_2_in_1) / 2.0) * 100;
-            distance_metrics["max_cont"] = (max(cont_1_in_2, cont_2_in_1)) * 100;
+            // containment
+            distance_metrics["containment"] = ((double)shared_kmers / minimum_source_kmers) * 100;
 
 
             // Ochiai distance
@@ -538,63 +594,49 @@ namespace kSpider {
             // Kulczynski distance needs abundance of each sample
             // double kulczynski = (double)shared_kmers / (source_1_kmers + source_2_kmers) * 2;
 
-            // p-value using hypergeometric CDF as in PAGER
+            // p-value using hypergeometric CDF
+            int k_shared_kmers = shared_kmers;  // Number of successes
+            int s_source_1_kmers = source_1_kmers;  // Sample size
+            int M_source_2_kmers = source_2_kmers;  // Number of successes in the population
+            int N_population_size = population_size;  // Population size
 
-            /*
-            int k = 5;  // Number of successes
-            int s = 10;  // Sample size
-            int M = 20;  // Number of successes in the population
-            int N = 50;  // Population size
-            std::pair<double, double> result = hypergeometric_test(k, s, M, N);
-            std::cout << "pvalue: " << result.first << ", expected successes: " << result.second
-            */
 
-            distance_metrics["odds_ratio"] = odds_ratio(shared_kmers, source_1_kmers, source_2_kmers, population_size);
+            // Odds ratio
+            distance_metrics["odds_ratio"] = odds_ratio(k_shared_kmers, s_source_1_kmers, M_source_2_kmers, N_population_size);
 
-            // --->
+
             // auto [pvalue, expectedSuccesses, fold_change] = enrichmentAnalysis(shared_kmers, source_1_kmers, source_2_kmers, population_size, true);
-            // distance_metrics["pval"] = pvalue;
             // distance_metrics["expected_successes"] = expectedSuccesses;
             // distance_metrics["fold_change"] = fold_change;
-            // <---
 
             if (distance_metrics[cutoff_distance_type] < cutoff_threshold) continue;
 
-            distances_stats.add_stat("min_cont", distance_metrics["min_cont"]);
-            distances_stats.add_stat("avg_cont", distance_metrics["avg_cont"]);
-            distances_stats.add_stat("max_cont", distance_metrics["max_cont"]);
+
+            distances_stats.add_stat("containment", distance_metrics["containment"]);
             distances_stats.add_stat("ochiai", distance_metrics["ochiai"]);
             distances_stats.add_stat("jaccard", distance_metrics["jaccard"]);
             distances_stats.update_odds_ratio_stats(distance_metrics["odds_ratio"]);
 
 
-            // check buffer
-            if (line_count_buffer < line_count_buffer_max) {
-                line_count_buffer++;
-                oss << source_1
-                    << '\t' << source_2
-                    << '\t' << namesMap[source_1]
-                    << '\t' << namesMap[source_2]
-                    << '\t' << shared_kmers
-                    << '\t' << formatDouble(distance_metrics["min_cont"])
-                    << '\t' << formatDouble(distance_metrics["avg_cont"])
-                    << '\t' << formatDouble(distance_metrics["max_cont"])
-                    << '\t' << formatDouble(distance_metrics["ochiai"])
-                    << '\t' << formatDouble(distance_metrics["jaccard"])
-                    << '\t' << formatDouble(distance_metrics["odds_ratio"])
-                    << '\n';
+
+            myfile << source_1
+                << '\t' << source_2
+                << '\t' << namesMap[source_1]
+                << '\t' << namesMap[source_2]
+                << '\t' << shared_kmers
+                << '\t' << formatDouble(distance_metrics["containment"])
+                << '\t' << formatDouble(distance_metrics["ochiai"])
+                << '\t' << formatDouble(distance_metrics["jaccard"])
+                << '\t' << formatDouble(distance_metrics["odds_ratio"]);
+
+            if (calculate_pvalue) {
+                myfile << '\t' << fastHyperPValue(shared_kmers, source_1_kmers, source_2_kmers, population_size);
             }
-            else {
-                myfile << oss.str();
-                oss.str(""); // clear buffer
-                line_count_buffer = 0;
-            }
+
+            myfile << '\n';
         }
-        // write last chunk in the buffer
-        if (line_count_buffer > 0) {
-            myfile << oss.str();
-        }
-        myfile << oss.str();
+
+
         myfile.close();
         distances_stats.stats_to_json_file(index_prefix + "_DBRetina_pairwise_stats.json");
     }
