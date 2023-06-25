@@ -351,7 +351,7 @@ class DeduplicatePathways():
 
     def modularity_based_set_cover(self, GC = 100):
         
-        def _deduplicate_all_pathways_instead_of_communities(self, GC = 100):
+        def _deduplicate_all_pathways_instead_of_communities(GC = 100):
             selected_pathways = {}
             uncovered_genes = self.unique_set_of_genes()
             total_genes = len(uncovered_genes)
@@ -537,8 +537,6 @@ class GraphBasedDeduplication(DeduplicatePathways):
         genes_covered = 0
         iteration = 1        
 
-
-
         # get initial sorting of pathways
         sorted_pathways_df = self.df_pathways_metadata[
             self.df_pathways_metadata['dedup'] != 'exact_ochiai'].sort_values(
@@ -572,6 +570,11 @@ class GraphBasedDeduplication(DeduplicatePathways):
 
         # Create a graph with the edges
         G = nx.from_pandas_edgelist(df_edges, source='group_1_name', target='group_2_name', edge_attr='ochiai')
+        
+        # add nodes to the graph that does not have any edges
+        G.add_nodes_from(sorted_pathways_df.index.difference(G.nodes()))
+        
+        
         G_pos = nx.spring_layout(G)
 
 
@@ -592,12 +595,18 @@ class GraphBasedDeduplication(DeduplicatePathways):
 
         print(f"[DEBUG] graph_remaining_pathways_df: {graph_remaining_pathways_df.head()}")
 
-        plot_and_highligh_specific_node(G, first_pathway_name, f"iteration_{iteration}_first_pathway.png")
+        # plot_and_highligh_specific_node(G, first_pathway_name, f"iteration_{iteration}_first_pathway.png")
 
         # remove the first pathway from sorted_pathways_df and from the graph
-        sorted_pathways_df.to_csv(f"iteration_ZERO_{iteration}_sorted_pathways_df.tsv", sep="\t")
-        sorted_pathways_df = sorted_pathways_df.drop(first_pathway_name)
+        
+        # TODO REMOVE DEBUG
+        # sorted_pathways_df.to_csv(f"iteration_ZERO_{iteration}_sorted_pathways_df.tsv", sep="\t")
+        sorted_pathways_df.drop(first_pathway_name, inplace=True)
+        print(f"[REMOVED] {first_pathway_name} removed |  Graph nodes: {len(G.nodes())}")
+        
+        print(f"[DEBUG] Graph size: {len(G.nodes())}")
         G.remove_node(first_pathway_name)
+        print(f"[DEBUG] {first_pathway_name} removed |  Graph size: {len(G.nodes())}")
         # remove first_pathway_name edges
 
         # update uncovered_genes with pathways_to_genes[first_pathway_name]
@@ -612,27 +621,30 @@ class GraphBasedDeduplication(DeduplicatePathways):
         self.final_remaining_pathways.add(first_pathway_name)
         selected_pathways[first_pathway_name] = {'similarity_bin': len(intersected_genes)}
 
+        # if len(uncovered_genes) == 0:
+        #     return graph_remaining_pathways_df.index.tolist()
 
-        if len(uncovered_genes) == 0:
-            return graph_remaining_pathways_df.index.tolist()
-
-        while True:
+        while True and sorted_pathways_df.shape[0] > 0:
             iteration += 1
-            sorted_pathways_df.to_csv(f"iteration_{iteration}_sorted_pathways_df.tsv", sep="\t")
-            # sort pathways by lowest similarity_bin, lowest modularity, lowest average_pcsi, highest no_of_genes
+            # TODO REMOVE DEBUG
+            # sorted_pathways_df.to_csv(f"iteration_{iteration}_sorted_pathways_df.tsv", sep="\t")
+
+            # sort pathways by lowest similarity_bin, lowest modularity, highest average_pcsi, highest no_of_genes
+            print(f"Iteration {iteration} | number of sorted_pathways_df = {len(sorted_pathways_df)}")
             sorted_pathways_df = sorted_pathways_df.sort_values(
                 by=['similarity_bin', 'modularity', 'average_pcsi', 'no_of_genes'], ascending=[True, True, False, False]
                 )
 
             # get the first pathway
             first_pathway_name = sorted_pathways_df.iloc[0].name
+            print(f"[CURRENT PATHWAY] {first_pathway_name} |  Graph nodes: {len(G.nodes())} | Uncovered genes: {len(uncovered_genes)} | Genes covered: {genes_covered} | Iteration: {iteration} | Remaining pathways: {len(sorted_pathways_df)}")
+            # export graph nodes to TSV
             intersected_genes = self.pathways_to_genes[first_pathway_name].intersection(uncovered_genes)
             print(f"[DEBUG] Next pathway to remove: {first_pathway_name}")
 
-
-            for neighbor, weight in get_all_neighbor_weights_dict(first_pathway_name).items():
+            pathway_neighbors = get_all_neighbor_weights_dict(first_pathway_name)
+            for neighbor, weight in pathway_neighbors.items():
                 print(f"[DEBUG] neighbor: {neighbor}, weight: {weight}")
-                # Identifying the farthest neighbor from previously selected genesets
                 sorted_pathways_df.loc[neighbor, 'similarity'] *= (iteration - 1)
                 sorted_pathways_df.loc[neighbor, 'similarity'] += weight
                 sorted_pathways_df.loc[neighbor, 'similarity'] /= iteration
@@ -645,12 +657,13 @@ class GraphBasedDeduplication(DeduplicatePathways):
             self.final_remaining_pathways.add(first_pathway_name)
 
             # graph_remaining_pathways_df = graph_remaining_pathways_df.append(sorted_pathways_df.loc[first_pathway_name])
-            plot_and_highligh_specific_node(G, first_pathway_name, f"iteration_{iteration}_first_pathway.png")
+            # plot_and_highligh_specific_node(G, first_pathway_name, f"iteration_{iteration}_first_pathway.png")
 
             # remove the first pathway from sorted_pathways_df and from the graph
-            sorted_pathways_df = sorted_pathways_df.drop(first_pathway_name)
             G.remove_node(first_pathway_name)
-
+            sorted_pathways_df.drop(first_pathway_name, inplace=True)
+            print(f"[REMOVED] {first_pathway_name} removed |  Graph size: {len(G.nodes())}")
+            
             if len(intersected_genes) == 0:
                 print(f"!!! [DEBUG] iteration: {iteration}, first_pathway_name: {first_pathway_name}, intersected_genes: {intersected_genes}, uncovered_genes: {len(uncovered_genes)}")
                 iteration -= 1
@@ -662,7 +675,6 @@ class GraphBasedDeduplication(DeduplicatePathways):
             # update genes_covered
             genes_covered += len(intersected_genes)
             selected_pathways[first_pathway_name] = {'similarity_bin': len(intersected_genes)}
-
 
 
             print(f"\n[DEBUG] genes_coverage until now: {genes_covered} / {total_genes} ({genes_covered / total_genes * 100}%)")
@@ -705,6 +717,9 @@ class GraphBasedDeduplication(DeduplicatePathways):
 
         self.remove_exact_ochiai_matches()
         print("Exact Ochiai matches removed")
+
+        self.export_pathways_metadata(f"{output_prefix}_PRE-DEDUP_pathways_metadata.tsv")
+        print(f"PRE Pathways metadata exported at {output_prefix}_pathways_metadata.tsv")
 
         print("Deduplication in process ...")
         self.graph_based_setcover(self.GC)
