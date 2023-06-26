@@ -232,7 +232,7 @@ def interactive_dashboard(df_bipartite):
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('--group1', "group_1_file", callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="group1 single-column supergroups file")
 @click.option('--group2', "group_2_file", callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="group2 single-column supergroups file")
-@click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file prefix")
+@click.option('-o', '--output', "output", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
 def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     """
@@ -242,7 +242,9 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
 
     ###########################################################
     # 1. parse the two group files to dictionary for O(1) access
-    ###########################################################    
+    ########################################################### 
+    
+    LOGGER.info("Parsing the two group files...")
 
     group1_dict = {}
     group2_dict = {}
@@ -262,6 +264,8 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     ###########################################################
     # 2. parse the pairwise file and create the bipartite graph
     ###########################################################
+    
+    LOGGER.info("Parsing the pairwise file...")
 
     distance_to_col = {
         "containment": 5,
@@ -326,9 +330,10 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
 
             df_rows.append(df_row)
 
-
+    
+    LOGGER.info(f"Writing the bipartite TSV file to {output_file}_bipartite_full_relationships.tsv")
     df_bipartite = pd.DataFrame(df_rows)
-    df_bipartite.to_csv(output_file, sep='\t', index=False)
+    df_bipartite.to_csv(f"{output_file}_bipartite_full_relationships.tsv", sep='\t', index=False)
 
     ###########################################################
     # 3. create the bipartite graph
@@ -342,16 +347,19 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
 
     ###########################################################
     # draw the graph
+    LOGGER.info(f"Writing the scatter graph to {output_file}_bipartite.html")
     fig = px.scatter(df_bipartite, x="containment", y="ochiai", color="pvalue",
                     size='jaccard', hover_data=['group_1','group_2'])
     fig.write_html(f"{output_file}.html")
     ###########################################################
 
+    LOGGER.info(f"Writing the bipartite graph to {output_file}_bipartite.html")
     plot_bipartite(df_bipartite, f"{output_file}_bipartite.html")
     
     ###########################################################
     
     # Create a heatmap
+    LOGGER.info(f"Writing the heatmap to {output_file}_heatmap.html")
     pivot_table = df_bipartite.pivot(index='group_1', columns='group_2', values='pvalue')
     fig = px.imshow(pivot_table)
     
@@ -372,6 +380,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     
     ###########################################################
     
+    LOGGER.info(f"Writing the parcats graph to {output_file}_parcats.html")
     fig = go.Figure(data=
     go.Parcats(
         dimensions=[
@@ -415,10 +424,9 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
         
         return one_to_one, group1_to_many, group2_to_many, total_one_to_many
 
-    # Create an empty dataframe to store the results
-    # results = pd.DataFrame(columns=['pvalue_cutoff', '1-to-1', 'group1-to-many', 'group2-to-many', 'total_1-to-many'])
 
-    # Generate cutoffs at every percentile
+    LOGGER.info("Calculating the relationships for different pvalue cutoffs (Please Wait!)")
+    
     cutoffs = np.arange(df_bipartite['pvalue'].min(), df_bipartite['pvalue'].max(), 0.001)
     results_cutoffs = []
     for cutoff in cutoffs:
@@ -435,12 +443,14 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     
     results = pd.DataFrame(results_cutoffs)
 
+    LOGGER.info(f"Writing the results to {output_file}_pvalues_cutoffs.tsv")
     results.to_csv(f"{output_file}_pvalues_cutoffs.tsv", sep='\t', index=False)
 
     #################################################################
     # 4.1 Plotting the analysis results for cutoff vs. relationships
     
     #### 4.1.1 Correlation Heatmap of Relationships
+    LOGGER.info(f"Writing the correlation heatmap to {output_file}_pvalues_correlation_heatmap.png")
     plt.figure(figsize=(10, 8))
     sns.set(style="white")
     # Calculate correlation matrix
@@ -453,6 +463,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     plt.savefig(f"{output_file}_pvalues_correlation_heatmap.png")
     
     #### 4.1.2 Pairplot of Relationships    
+    LOGGER.info(f"Writing the pairplot to {output_file}_pvalues_pairplot.png")
     sns.set(style="ticks", color_codes=True)
     # Exclude 'pvalue_cutoff' from the pairplot
     pairplot_data = results.iloc[:, :] # all rows, all columns except the first column
@@ -462,8 +473,8 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     
     
     #### 4.1.3 Scatterplot of Relationships
+    LOGGER.info(f"Writing the scatterplot to {output_file}_pvalues_cutoffs_scatterplot.html")
     fig = sp.make_subplots(rows=4, cols=1)
-
     # Create scatter plots for each metric against pvalue_cutoff
     for i, metric in enumerate(results.columns[1:], start=1):
         fig.add_trace(
@@ -477,7 +488,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     
     
     #### 4.1.4 Parallel plot
-    
+    LOGGER.info(f"Writing the parallel plot to {output_file}_pvalues_cutoffs_parallelplot.html")
     # Create a parallel coordinates plot
     fig = px.parallel_coordinates(results, color="pvalue_cutoff", 
                                 labels={"1-to-1": "One-to-One", 
