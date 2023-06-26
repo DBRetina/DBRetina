@@ -17,14 +17,11 @@ import dash_html_components as html
 from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 import plotly.express as px
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+import plotly.subplots as sp
 
-def is_awk_available():
-    try:
-        subprocess.run(["awk"], stdin=subprocess.DEVNULL,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except FileNotFoundError:
-        return False
 
 def execute_bash_command(command):
     try:
@@ -42,7 +39,6 @@ def execute_bash_command(command):
     except Exception as e:
         print(f"An error occurred: {e}", file=sys.stderr)
         return False
-
 
 def get_command():
     _sys_argv = sys.argv
@@ -391,11 +387,115 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     
     ###########################################################
 
-    interactive_dashboard(df_bipartite)
-
+    # TODO: BETA
+    # interactive_dashboard(df_bipartite)
+    
+    
+    #################################################################
+    # 4. study the different statistics with different pvalue cutoffs
+    #################################################################
     
 
+    def calculate_relationships(df, cutoff):
+        # Filter the dataframe by the cutoff
+        df_filtered = df[df['pvalue'] <= cutoff]
         
+        # Count the number of unique group2 values for each group1 value
+        counts_1 = df_filtered.groupby('group_1')['group_2'].nunique()
+        # Count the number of unique group1 values for each group2 value
+        counts_2 = df_filtered.groupby('group_2')['group_1'].nunique()
+        
+        # Calculate the number of 1-to-1, group1-to-many, and group2-to-many relationships
+        one_to_one = sum(counts_1 == 1) + sum(counts_2 == 1)
+        group1_to_many = sum(counts_1 > 1)
+        group2_to_many = sum(counts_2 > 1)
+        
+        # Total 1-to-many is the sum of group1-to-many and group2-to-many
+        total_one_to_many = group1_to_many + group2_to_many
+        
+        return one_to_one, group1_to_many, group2_to_many, total_one_to_many
+
+    # Create an empty dataframe to store the results
+    # results = pd.DataFrame(columns=['pvalue_cutoff', '1-to-1', 'group1-to-many', 'group2-to-many', 'total_1-to-many'])
+
+    # Generate cutoffs at every percentile
+    cutoffs = np.arange(df_bipartite['pvalue'].min(), df_bipartite['pvalue'].max(), 0.001)
+    results_cutoffs = []
+    for cutoff in cutoffs:
+        one_to_one, group1_to_many, group2_to_many, total_one_to_many = calculate_relationships(df_bipartite, cutoff)
+        
+        # Append the results for this cutoff to the dataframe
+        results_cutoffs.append({
+            'pvalue_cutoff': cutoff,
+            '1-to-1': one_to_one,
+            'group1-to-many': group1_to_many,
+            'group2-to-many': group2_to_many,
+            'total_1-to-many': total_one_to_many
+        })
     
+    results = pd.DataFrame(results_cutoffs)
+
+    results.to_csv(f"{output_file}_pvalues_cutoffs.tsv", sep='\t', index=False)
+
+    #################################################################
+    # 4.1 Plotting the analysis results for cutoff vs. relationships
+    
+    #### 4.1.1 Correlation Heatmap of Relationships
+    plt.figure(figsize=(10, 8))
+    sns.set(style="white")
+    # Calculate correlation matrix
+    corr = results.iloc[:, 1:].corr()
+    # Generate a mask for the upper triangle
+    mask = np.triu(np.ones_like(corr, dtype=float))
+    # Draw the heatmap
+    sns.heatmap(corr, mask=mask, annot=True, fmt=".002f", linewidths=.5, cmap='coolwarm')
+    plt.title('Correlation Heatmap of Relationships')
+    plt.savefig(f"{output_file}_pvalues_correlation_heatmap.png")
+    
+    #### 4.1.2 Pairplot of Relationships    
+    sns.set(style="ticks", color_codes=True)
+    # Exclude 'pvalue_cutoff' from the pairplot
+    pairplot_data = results.iloc[:, :] # all rows, all columns except the first column
+    # Draw the pairplot
+    sns.pairplot(pairplot_data)
+    plt.savefig(f"{output_file}_pvalues_pairplot.png", dpi=400)
+    
+    
+    #### 4.1.3 Scatterplot of Relationships
+    fig = sp.make_subplots(rows=4, cols=1)
+
+    # Create scatter plots for each metric against pvalue_cutoff
+    for i, metric in enumerate(results.columns[1:], start=1):
+        fig.add_trace(
+            go.Scatter(x=results['pvalue_cutoff'], y=results[metric], mode='lines+markers', name=metric),
+            row=i, col=1
+        )
+
+    # Update layout
+    fig.update_layout(height=800, width=800, title_text="Metrics vs P-Value Cutoff")
+    fig.write_html(f"{output_file}_pvalues_cutoffs_scatterplot.html")
+    
+    
+    #### 4.1.4 Parallel plot
+    
+    # Create a parallel coordinates plot
+    fig = px.parallel_coordinates(results, color="pvalue_cutoff", 
+                                labels={"1-to-1": "One-to-One", 
+                                        "group1-to-many": "Group1-to-Many", 
+                                        "group2-to-many": "Group2-to-Many", 
+                                        "total_1-to-many": "Total One-to-Many"},
+                                color_continuous_scale=px.colors.diverging.Tealrose,
+                                color_continuous_midpoint=results['pvalue_cutoff'].median())
+
+    fig.update_layout(
+        title='Parallel Coordinates Plot for Different Relationships',
+        autosize=True,
+        # width=1000,
+        # height=600,
+    )
+
+    fig.write_html(f"{output_file}_pvalues_cutoffs_parallelplot.html")
+    
+    #################################################################
     
         
