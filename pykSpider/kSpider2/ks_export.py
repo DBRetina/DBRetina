@@ -25,6 +25,9 @@ import random
 import string
 import plotly.io as pio
 import dash_bio
+from pycirclize import Circos
+from io import StringIO
+from Bio import Phylo
 
 def newick_str_escape(name):
     # Remove special characters
@@ -239,7 +242,18 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
             newick_string = similarity_df_to_newick(similarity_df, linkage_method)
             with open(newick_out, 'w') as NW:
                     NW.write(newick_string)
-
+            
+            # TODO: add a flag to visualize the tree
+            # Beta: visualize the newick tree
+            tree = Phylo.read(StringIO(newick_string), "newick")
+            # Initialize circos sector with tree size
+            circos = Circos(sectors={"Tree": tree.count_terminals()})
+            sector = circos.sectors[0]
+            track = sector.add_track((30, 100))
+            track.tree(tree, leaf_label_size=6)
+            LOGGER.INFO(f"Writing dendrogram tree to {output_prefix}_dendrogram.png")
+            fig = circos.savefig(f"{output_prefix}_dendrogram.png", dpi=600)
+            
         except RecursionError as err:
             LOGGER.ERROR(f"Couldn't handle the tree depth | {err}")
 
