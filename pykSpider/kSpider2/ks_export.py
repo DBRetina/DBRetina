@@ -24,7 +24,6 @@ from scipy.spatial.distance import pdist, squareform
 import random
 import string
 
-
 def newick_str_escape(name):
     # Remove special characters
     name = re.sub(r'[:;(),\[\]\-\' ]', '_', name)
@@ -105,7 +104,7 @@ def tree_to_newick(node, leaf_names):
     return f"({left_child}:{node.dist:.2f},{right_child}:{node.dist:.2f})"
 
 
-def similarity_df_to_newick(similarity_df, method='average'):
+def similarity_df_to_newick(similarity_df, method):
     # Convert similarity matrix to dissimilarity matrix
     dissimilarity_df = 100 - similarity_df
 
@@ -114,7 +113,7 @@ def similarity_df_to_newick(similarity_df, method='average'):
 
     # Convert the dissimilarity matrix DataFrame to a condensed distance matrix for linkage
     # condensed_distance_matrix = squareform(dissimilarity_df)
-    condensed_distance_matrix = pdist(dissimilarity_df, 'euclidean')
+    condensed_distance_matrix = pdist(dissimilarity_df, metric = 'euclidean')
 
     # Perform hierarchical/agglomerative clustering
     Z = linkage(condensed_distance_matrix, method)
@@ -132,14 +131,23 @@ def tree_to_newick(node, leaf_names):
     return f"({left_child}:{node.dist:.2f},{right_child}:{node.dist:.2f})"
 
 
+def check_if_there_is_a_pvalue(pairwise_file):
+    with open(pairwise_file) as F:
+        for line in F:
+            if not line.startswith("#"):
+                return "pvalue" in line
+            else:
+                continue
+
 @cli.command(name="export", help_priority=5)
 @click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="filtered pairwise TSV file")
-@click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
+@click.option('-d', '--dist-type', "distance_type", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('--newick', "newick", is_flag=True, help="Convert the similarity matrix to newick tree format", default=False)
 @click.option('-l', '--labels', "labels_selection", callback = validate_labels, required=False, default="ids", show_default=True, type=click.STRING, help="select from ['ids', 'names']")
+@click.option('--linkage', "linkage_method", required=False, default="ward", show_default=True, type=click.STRING, help="select from ['single', 'complete', 'average', 'weighted', 'centroid', 'median', 'ward']")
 @click.option('-o', "output_prefix", required=True, type=click.STRING, help="output prefix")
 @click.pass_context
-def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_selection):
+def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_selection, linkage_method):
     """Export to dissimilarity matrix and newick format.
     
     Export a pairwise TSV file to a dissimilarity matrix and (optionally) a newick-format file.
@@ -149,16 +157,20 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
     LOGGER = ctx.obj
 
     distance_to_col = {
-        "min_cont": 5,
-        "avg_cont": 6,
-        "max_cont": 7,
-        "ochiai": 8,
-        "jaccard": 9,
-        "odds_ratio": 10,
+        "containment": 5,
+        "ochiai": 6,
+        "jaccard": 7,
+        "odds_ratio": 8,
+        "pvalue": 9,
     }
 
     if distance_type not in distance_to_col:
         LOGGER.ERROR("unknown distance!")
+        
+    
+    # check if pvalue
+    if distance_type == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+        LOGGER.ERROR("pvalue not found in pairwise file!")
 
     dist_col = distance_to_col[distance_type]    
 
@@ -179,6 +191,7 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
         df[df.columns[0]] = df[df.columns[0]].astype(str)
         df[df.columns[1]] = df[df.columns[1]].astype(str)
     else: # escape newick_str_escape
+        LOGGER.WARNING("Escaping newick characters in labels if any.")
         df[df.columns[0]] = df[df.columns[0]].apply(lambda x: newick_str_escape(x))
         df[df.columns[1]] = df[df.columns[1]].apply(lambda x: newick_str_escape(x))
     
@@ -227,7 +240,7 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
         row_labels=list(similarity_df.index),
         height=2800,
         width=2700,
-        
+        link_method=linkage_method,
         # display_ratio=[0.1, 0.7]
     )
     
@@ -251,69 +264,8 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
         xaxis_nticks=len(similarity_df.columns),  # try to show all x labels
         # yaxis_nticks=len(similarity_df.index)  # try to show all y labels
     )
-    pio.write_html(fig, 'heatmap.html')
-    # fig.show()
-    
-    #############################
-    
-    # PLOTLY 2
-    from scipy.spatial import distance
-    from scipy.cluster import hierarchy
-    
-    # Preprocessing the data
-    # Check for any missing data
-    if similarity_df.isnull().any().any():
-        print('Missing data found. Filling with zeros.')
-        similarity_df.fillna(0, inplace=True)
+    pio.write_html(fig, 'heatmap.html')    
 
-    # Preprocessing the data
-    labels = similarity_df.columns
-    data_array = similarity_df.values
-    # Convert the similarity matrix to a condensed distance matrix
-    np.fill_diagonal(similarity_df.values, 0)
-    condensed_dist_matrix = distance.squareform(similarity_df)
-
-    # Compute linkage
-    linkage = hierarchy.linkage(condensed_dist_matrix, 'single')
-
-    # Create a dendrogram figure
-    dendro = ff.create_dendrogram(linkage, labels=labels, orientation='bottom')
-    
-    print(dendro)
-    
-    for i in range(len(dendro['data'])):
-        dendro['data'][i]['yaxis'] = 'y2'
-
-    # Create a side dendrogram
-    dendro_side = ff.create_dendrogram(linkage, orientation='right')
-    for i in range(len(dendro_side['data'])):
-        dendro_side['data'][i]['xaxis'] = 'x2'
-
-    # Add the side dendrogram to the dendrogram figure
-    for data in dendro_side['data']:
-        dendro.add_trace(data)
-
-    # Create a heatmap
-    dendro_leaves = [int(i) for i in dendro_side['layout']['yaxis']['ticktext']]
-    heatmap_data = data_array[dendro_leaves, :]
-    heatmap_data = heatmap_data[:, dendro_leaves]
-    heatmap = go.Heatmap(x=dendro['layout']['xaxis']['tickvals'],
-                        y=dendro_side['layout']['yaxis']['tickvals'],
-                        z=heatmap_data, colorscale='Blues')
-    dendro.add_trace(heatmap)
-
-    # Configure layout
-    dendro.update_layout({'width':800, 'height':800, 'showlegend':False, 'hovermode': 'closest',})
-    dendro.update_layout(xaxis={'domain': [.15, 1], 'mirror': False, 'showgrid': False, 'showline': False, 'zeroline': False, 'ticks':""})
-    dendro.update_layout(xaxis2={'domain': [0, .15], 'mirror': False, 'showgrid': False, 'showline': False, 'zeroline': False, 'showticklabels': False, 'ticks':""})
-    dendro.update_layout(yaxis={'domain': [0, .85], 'mirror': False, 'showgrid': False, 'showline': False, 'zeroline': False, 'showticklabels': False, 'ticks': ""})
-    dendro.update_layout(yaxis2={'domain':[.825, .975], 'mirror': False, 'showgrid': False, 'showline': False, 'zeroline': False, 'showticklabels': False, 'ticks':""})
-
-    # Plot
-    # dendro.show()
-
-    # Plot
-    pio.write_html(dendro, 'dendro.html')
     
     
     
@@ -340,7 +292,7 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
     if newick:
         # Call the function with your similarity DataFrame and 'single' linkage method
         try:
-            newick_string = similarity_df_to_newick(similarity_df, 'average')
+            newick_string = similarity_df_to_newick(similarity_df, linkage_method)
             with open(newick_out, 'w') as NW:
                     NW.write(newick_string)
 

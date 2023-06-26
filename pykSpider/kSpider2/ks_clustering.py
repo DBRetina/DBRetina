@@ -11,6 +11,13 @@ import sys
 import igraph as ig
 import leidenalg as la
 
+def check_if_there_is_a_pvalue(pairwise_file):
+    with open(pairwise_file) as F:
+        for line in F:
+            if not line.startswith("#"):
+                return "pvalue" in line
+            else:
+                continue
 
 def get_command():
     _sys_argv = sys.argv
@@ -24,12 +31,11 @@ def get_command():
 class Clusters:
 
     distance_to_col = {
-        "min_cont": 5,
-        "avg_cont": 6,
-        "max_cont": 7,
-        "ochiai": 8,
-        "jaccard": 9,
-        "odds": 10,
+        "containment": 5,
+        "ochiai": 6,
+        "jaccard": 7,
+        "odds_ratio": 8,
+        "pvalue": 9,
     }
 
     seq_to_kmers = dict()
@@ -89,6 +95,10 @@ class Clusters:
         if dist_type not in self.distance_to_col:
             logger_obj.ERROR("unknown distance!")
         self.dist_col = self.distance_to_col[dist_type]
+        
+        # check if pvalue
+        if dist_type == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+            logger_obj.ERROR("pvalue not found in pairwise file!")
 
         self.graph = ig.Graph() if commuinty else rx.PyGraph()
         self.add_edges = self._add_igraph_edges if commuinty else self._add_rx_edges
