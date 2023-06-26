@@ -23,6 +23,8 @@ import pandas as pd
 from scipy.spatial.distance import pdist, squareform
 import random
 import string
+import plotly.io as pio
+import dash_bio
 
 def newick_str_escape(name):
     # Remove special characters
@@ -203,36 +205,9 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
     # np.fill_diagonal(similarity_df.values, math.log2(100))
     np.fill_diagonal(similarity_df.values, 100)
     
-
-    cmap = sns.color_palette("Spectral", as_cmap=True)
-    g = sns.clustermap(
-        similarity_df, 
-        cmap=cmap, 
-        center=0, 
-        linewidths=.5, 
-        figsize=(10, 10),
-        row_cluster=True, 
-        col_cluster=True, 
-        vmin=0, 
-        # vmax=math.log2(100),
-        vmax=100,
-        dendrogram_ratio=(0.1, 0.2),
-        # method = 'single',
-        # metric='braycurtis',
-        )
-    plt.setp(g.ax_heatmap.get_xticklabels(), rotation=45, horizontalalignment='right')
-    plt.setp(g.ax_heatmap.get_yticklabels(), rotation=0)
-    g.cax.set_title('Similarity', loc='left', fontsize=12, fontweight='bold')
     
     
-    
-    ### PLOTLY
-    
-    import plotly.graph_objects as go
-    import plotly.io as pio
-    import dash_bio
-    
-    ##### DASH
+    # Plotting the heatmap with plotly and dash
     
     fig = dash_bio.Clustergram(
         data=similarity_df,
@@ -244,34 +219,9 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
         # display_ratio=[0.1, 0.7]
     )
     
-    pio.write_html(fig, 'dash-heatmap.html')
-    
-        # Your precomputed data
-    z_data = similarity_df.values
-
-    fig = go.Figure(data=go.Heatmap(
-        z=z_data,
-        x=similarity_df.columns,
-        y=similarity_df.index,
-        colorscale='YlGnBu',  # Adjust to a more distinguishable color scale
-        hoverongaps = False))
-
-    fig.update_layout(
-        title='Similarity Heatmap',
-        autosize=True,
-        width=2000,  # Adjust to control block size
-        height=2000,  # Adjust to control block size
-        xaxis_nticks=len(similarity_df.columns),  # try to show all x labels
-        # yaxis_nticks=len(similarity_df.index)  # try to show all y labels
-    )
-    pio.write_html(fig, 'heatmap.html')    
-
-    
-    
-    
-
-
-
+    LOGGER.INFO(f"Writing heatmap to {output_prefix}_heatmap.html")
+    pio.write_html(fig, "{output_prefix}_heatmap.html")
+    fig.write_image(f"{output_prefix}_heatmap.png", width=2700, height=2800, scale=1)
 
     ##################### PLOTLY END #####################
     
@@ -281,13 +231,7 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
     similarity_df.to_pickle(f"{output_prefix}_distmat.pkl")
     LOGGER.INFO(f"Writing distance matrix to {output_prefix}_distmat.tsv")
     similarity_df.to_csv(f"{output_prefix}_distmat.tsv", sep='\t')
-    
-
     newick_out = f"{output_prefix}.newick"
-
-    LOGGER.INFO(f"Writing clustermap plot to {output_prefix}_clustermap.png")
-    plt.savefig(f"{output_prefix}_clustermap.png", dpi=600)
-    
 
     if newick:
         # Call the function with your similarity DataFrame and 'single' linkage method
