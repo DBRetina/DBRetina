@@ -11,6 +11,12 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import networkx as nx
+import dash
+import dash_core_components as dcc
+import dash_html_components as html
+from dash.dependencies import Input, Output
+import plotly.graph_objects as go
+import plotly.express as px
 
 def is_awk_available():
     try:
@@ -131,6 +137,99 @@ def plot_bipartite(df_bipartite, output_file):
                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
 
     fig.write_html(output_file)
+
+
+def interactive_dashboard(df_bipartite):
+    # create dash application
+    app = dash.Dash(__name__)
+
+    # get column names of the dataframe
+    col_options = [dict(label=x, value=x) for x in df_bipartite.columns]
+
+    # layout of the dashboard
+    app.layout = html.Div([
+        html.H1('Bipartite pairwise study', style={'textAlign': 'center', 'color': '#7FDBFF'}),
+
+
+        html.Div(id='main-div', children=[
+            html.Div([
+                html.Div([
+                    dcc.Dropdown(
+                        id='xaxis-column',
+                        options=col_options,
+                        value='containment'
+                    )], style={'width': '48%', 'display': 'inline-block'}),
+                
+                html.Div([
+                    dcc.Dropdown(
+                        id='yaxis-column',
+                        options=col_options,
+                        value='ochiai'
+                    )], style={'width': '48%', 'float': 'right', 'display': 'inline-block'})
+            ]),
+
+            dcc.Dropdown(id='plot_type', options=[
+                {'label': 'Scatter', 'value': 'scatter'},
+                {'label': 'Bar', 'value': 'bar'},
+                {'label': 'Box', 'value': 'box'},
+                {'label': 'Heatmap', 'value': 'heatmap'},
+                {'label': 'Parallel Categories', 'value': 'parcats'},
+                {'label': 'Bipartite Network', 'value': 'bipartite'}],
+                value='scatter'
+            ),
+
+            dcc.RangeSlider(
+                id='pvalue-slider',
+                min=df_bipartite['pvalue'].min(),
+                max=df_bipartite['pvalue'].max(),
+                value=[df_bipartite['pvalue'].min(), df_bipartite['pvalue'].max()],
+                marks={str(pvalue): str(pvalue) for pvalue in df_bipartite['pvalue'].unique()},
+                step=None
+            ),
+
+            # dcc.Graph(id='indicator-graphic')
+            dcc.Graph(id='indicator-graphic', style={'height': '70vh'}, responsive=True)
+
+        ])
+    ])
+
+
+    # callback to update graph when dropdown value is selected
+    @app.callback(
+        Output('indicator-graphic', 'figure'),
+        [Input('xaxis-column', 'value'),
+        Input('yaxis-column', 'value'),
+        Input('plot_type', 'value'),
+        Input('pvalue-slider', 'value')])
+    
+    def update_graph(xaxis_column_name, yaxis_column_name, plot_type, pvalue_range):
+        dff = df_bipartite[(df_bipartite['pvalue'] >= pvalue_range[0]) & (df_bipartite['pvalue'] <= pvalue_range[1])]
+
+        if plot_type == 'scatter':
+            fig = px.scatter(dff, x=xaxis_column_name, y=yaxis_column_name)
+        elif plot_type == 'bar':
+            fig = px.bar(dff, x=xaxis_column_name, y=yaxis_column_name)
+        elif plot_type == 'box':
+            fig = px.box(dff, x=xaxis_column_name, y=yaxis_column_name)
+        elif plot_type == 'heatmap':
+            pivot_table = dff.pivot(index='group_1', columns='group_2', values='pvalue')
+            fig = px.imshow(pivot_table)
+        elif plot_type == 'parcats':
+            fig = go.Figure(data=go.Parcats(
+                dimensions=[
+                    {'label': 'Group 1', 'values': dff['group_1']},
+                    {'label': 'Group 2', 'values': dff['group_2']},
+                    {'label': 'P-value', 'values': dff['pvalue']}]
+            ))
+        elif plot_type == 'bipartite':
+            # Here you need to include the code to create bipartite graph. 
+            # Creating a bipartite graph in Plotly can be complex, so you need to decide how to implement it according to your needs.
+            fig = go.Figure()
+
+        fig.update_layout(margin={'l': 40, 'b': 40, 't': 10, 'r': 0}, hovermode='closest')
+        return fig
+    
+    app.run_server(debug=True)
 
 
 @cli.command(name="bipartite", help_priority=8)
@@ -291,6 +390,10 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     fig.write_html(f"{output_file}_parcats.html")
     
     ###########################################################
+
+    interactive_dashboard(df_bipartite)
+
+    
 
         
     
