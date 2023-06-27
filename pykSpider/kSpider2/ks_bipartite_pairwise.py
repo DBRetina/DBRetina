@@ -60,7 +60,7 @@ def check_if_there_is_a_pvalue(pairwise_file):
                 continue
 
 
-def plot_bipartite(df_bipartite, output_file):
+def plot_bipartite(df_bipartite, output_prefix):
     B = nx.Graph()
     B.add_nodes_from(df_bipartite['group_1'], bipartite=0)
     B.add_nodes_from(df_bipartite['group_2'], bipartite=1)
@@ -132,7 +132,7 @@ def plot_bipartite(df_bipartite, output_file):
                         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
 
-    fig.write_html(output_file)
+    fig.write_html(output_prefix)
 
 
 def interactive_dashboard(df_bipartite):
@@ -232,9 +232,9 @@ def interactive_dashboard(df_bipartite):
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('--group1', "group_1_file", callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="group1 single-column supergroups file")
 @click.option('--group2', "group_2_file", callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="group2 single-column supergroups file")
-@click.option('-o', '--output', "output", required=True, type=click.STRING, help="output file prefix")
+@click.option('-o', '--output', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
-def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
+def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
     """
         Create a bipartite relationships between two groups file
     """
@@ -243,11 +243,12 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     ###########################################################
     # 1. parse the two group files to dictionary for O(1) access
     ########################################################### 
-    
-    LOGGER.info("Parsing the two group files...")
+
+    LOGGER.INFO("Parsing the two group files...")
 
     group1_dict = {}
     group2_dict = {}
+    unmatched_groups = []
 
     with open(group_1_file) as IN_GROUP:
         for line in IN_GROUP:
@@ -264,8 +265,8 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     ###########################################################
     # 2. parse the pairwise file and create the bipartite graph
     ###########################################################
-    
-    LOGGER.info("Parsing the pairwise file...")
+
+    LOGGER.INFO("Parsing the pairwise file...")
 
     distance_to_col = {
         "containment": 5,
@@ -330,10 +331,23 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
 
             df_rows.append(df_row)
 
-    
-    LOGGER.info(f"Writing the bipartite TSV file to {output_file}_bipartite_full_relationships.tsv")
+    LOGGER.INFO(f"Writing the bipartite TSV file to {output_prefix}_bipartite_full_relationships.tsv")
     df_bipartite = pd.DataFrame(df_rows)
-    df_bipartite.to_csv(f"{output_file}_bipartite_full_relationships.tsv", sep='\t', index=False)
+    df_bipartite.to_csv(f"{output_prefix}_bipartite_full_relationships.tsv", sep='\t', index=False)
+    
+    # report if there are unmatched groups
+    unique_matched_group1 = set(df_bipartite['group_1'].unique())
+    unique_matched_group2 = set(df_bipartite['group_2'].unique())
+    unfound_group1 = set(group1_dict.keys()).difference(unique_matched_group1)
+    unfound_group2 = set(group2_dict.keys()).difference(unique_matched_group2)
+    if unfound_group1 or unfound_group2:
+        LOGGER.WARNING(f"Missing gene set names detected, reporting to {output_prefix}_missing_groups.txt")
+        with open(f"{output_prefix}_missing_groups.txt", 'w') as OUT:
+            if unfound_group1:
+                OUT.write(f"Missing group1 names: {','.join(list(unfound_group1))}\n")
+            if unfound_group2:
+                OUT.write(f"Missing group2 names: {','.join(list(unfound_group2))}\n")
+                
 
     ###########################################################
     # 3. create the bipartite graph
@@ -347,22 +361,22 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
 
     ###########################################################
     # draw the graph
-    LOGGER.info(f"Writing the scatter graph to {output_file}_bipartite.html")
+    LOGGER.INFO(f"Writing the scatter graph to {output_prefix}_bipartite.html")
     fig = px.scatter(df_bipartite, x="containment", y="ochiai", color="pvalue",
                     size='jaccard', hover_data=['group_1','group_2'])
-    fig.write_html(f"{output_file}.html")
+    fig.write_html(f"{output_prefix}.html")
     ###########################################################
 
-    LOGGER.info(f"Writing the bipartite graph to {output_file}_bipartite.html")
-    plot_bipartite(df_bipartite, f"{output_file}_bipartite.html")
-    
+    LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.html")
+    plot_bipartite(df_bipartite, f"{output_prefix}_bipartite.html")
+
     ###########################################################
-    
+
     # Create a heatmap
-    LOGGER.info(f"Writing the heatmap to {output_file}_heatmap.html")
+    LOGGER.INFO(f"Writing the heatmap to {output_prefix}_heatmap.html")
     pivot_table = df_bipartite.pivot(index='group_1', columns='group_2', values='pvalue')
     fig = px.imshow(pivot_table)
-    
+
     # add labels
     fig.update_layout(
         title="Pivot table of p-values",
@@ -374,13 +388,13 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
             color="#7f7f7f"
         )
     )
-    
+
     # save to disk
-    fig.write_html(f"{output_file}_pivot_heatmap.html")
-    
+    fig.write_html(f"{output_prefix}_pivot_heatmap.html")
+
     ###########################################################
-    
-    LOGGER.info(f"Writing the parcats graph to {output_file}_parcats.html")
+
+    LOGGER.INFO(f"Writing the parcats graph to {output_prefix}_parcats.html")
     fig = go.Figure(data=
     go.Parcats(
         dimensions=[
@@ -392,46 +406,46 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
              'values': df_bipartite['pvalue']}]
         )
     )
-    fig.write_html(f"{output_file}_parcats.html")
-    
+    fig.write_html(f"{output_prefix}_parcats.html")
+
     ###########################################################
 
     # TODO: BETA
     # interactive_dashboard(df_bipartite)
-    
-    
+
+
     #################################################################
     # 4. study the different statistics with different pvalue cutoffs
     #################################################################
-    
+
 
     def calculate_relationships(df, cutoff):
         # Filter the dataframe by the cutoff
         df_filtered = df[df['pvalue'] <= cutoff]
-        
+
         # Count the number of unique group2 values for each group1 value
         counts_1 = df_filtered.groupby('group_1')['group_2'].nunique()
         # Count the number of unique group1 values for each group2 value
         counts_2 = df_filtered.groupby('group_2')['group_1'].nunique()
-        
+
         # Calculate the number of 1-to-1, group1-to-many, and group2-to-many relationships
         one_to_one = sum(counts_1 == 1) + sum(counts_2 == 1)
         group1_to_many = sum(counts_1 > 1)
         group2_to_many = sum(counts_2 > 1)
-        
+
         # Total 1-to-many is the sum of group1-to-many and group2-to-many
         total_one_to_many = group1_to_many + group2_to_many
-        
+
         return one_to_one, group1_to_many, group2_to_many, total_one_to_many
 
 
-    LOGGER.info("Calculating the relationships for different pvalue cutoffs (Please Wait!)")
-    
+    LOGGER.INFO("Calculating the relationships for different pvalue cutoffs (Please Wait!)")
+
     cutoffs = np.arange(df_bipartite['pvalue'].min(), df_bipartite['pvalue'].max(), 0.001)
     results_cutoffs = []
     for cutoff in cutoffs:
         one_to_one, group1_to_many, group2_to_many, total_one_to_many = calculate_relationships(df_bipartite, cutoff)
-        
+
         # Append the results for this cutoff to the dataframe
         results_cutoffs.append({
             'pvalue_cutoff': cutoff,
@@ -440,17 +454,17 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
             'group2-to-many': group2_to_many,
             'total_1-to-many': total_one_to_many
         })
-    
+
     results = pd.DataFrame(results_cutoffs)
 
-    LOGGER.info(f"Writing the results to {output_file}_pvalues_cutoffs.tsv")
-    results.to_csv(f"{output_file}_pvalues_cutoffs.tsv", sep='\t', index=False)
+    LOGGER.INFO(f"Writing the results to {output_prefix}_pvalues_cutoffs.tsv")
+    results.to_csv(f"{output_prefix}_pvalues_cutoffs.tsv", sep='\t', index=False)
 
     #################################################################
     # 4.1 Plotting the analysis results for cutoff vs. relationships
-    
+
     #### 4.1.1 Correlation Heatmap of Relationships
-    LOGGER.info(f"Writing the correlation heatmap to {output_file}_pvalues_correlation_heatmap.png")
+    LOGGER.INFO(f"Writing the correlation heatmap to {output_prefix}_pvalues_correlation_heatmap.png")
     plt.figure(figsize=(10, 8))
     sns.set(style="white")
     # Calculate correlation matrix
@@ -460,20 +474,20 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
     # Draw the heatmap
     sns.heatmap(corr, mask=mask, annot=True, fmt=".002f", linewidths=.5, cmap='coolwarm')
     plt.title('Correlation Heatmap of Relationships')
-    plt.savefig(f"{output_file}_pvalues_correlation_heatmap.png")
-    
+    plt.savefig(f"{output_prefix}_pvalues_correlation_heatmap.png")
+
     #### 4.1.2 Pairplot of Relationships    
-    LOGGER.info(f"Writing the pairplot to {output_file}_pvalues_pairplot.png")
+    LOGGER.INFO(f"Writing the pairplot to {output_prefix}_pvalues_pairplot.png")
     sns.set(style="ticks", color_codes=True)
     # Exclude 'pvalue_cutoff' from the pairplot
     pairplot_data = results.iloc[:, :] # all rows, all columns except the first column
     # Draw the pairplot
     sns.pairplot(pairplot_data)
-    plt.savefig(f"{output_file}_pvalues_pairplot.png", dpi=400)
-    
-    
+    plt.savefig(f"{output_prefix}_pvalues_pairplot.png", dpi=400)
+
+
     #### 4.1.3 Scatterplot of Relationships
-    LOGGER.info(f"Writing the scatterplot to {output_file}_pvalues_cutoffs_scatterplot.html")
+    LOGGER.INFO(f"Writing the scatterplot to {output_prefix}_pvalues_cutoffs_scatterplot.html")
     fig = sp.make_subplots(rows=4, cols=1)
     # Create scatter plots for each metric against pvalue_cutoff
     for i, metric in enumerate(results.columns[1:], start=1):
@@ -484,11 +498,11 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
 
     # Update layout
     fig.update_layout(height=800, width=800, title_text="Metrics vs P-Value Cutoff")
-    fig.write_html(f"{output_file}_pvalues_cutoffs_scatterplot.html")
-    
-    
+    fig.write_html(f"{output_prefix}_pvalues_cutoffs_scatterplot.html")
+
+
     #### 4.1.4 Parallel plot
-    LOGGER.info(f"Writing the parallel plot to {output_file}_pvalues_cutoffs_parallelplot.html")
+    LOGGER.INFO(f"Writing the parallel plot to {output_prefix}_pvalues_cutoffs_parallelplot.html")
     # Create a parallel coordinates plot
     fig = px.parallel_coordinates(results, color="pvalue_cutoff", 
                                 labels={"1-to-1": "One-to-One", 
@@ -505,8 +519,9 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_file):
         # height=600,
     )
 
-    fig.write_html(f"{output_file}_pvalues_cutoffs_parallelplot.html")
+    fig.write_html(f"{output_prefix}_pvalues_cutoffs_parallelplot.html")
     
     #################################################################
-    
-        
+
+    # Interactive Dashboard
+    # interactive_dashboard(df_bipartite)
