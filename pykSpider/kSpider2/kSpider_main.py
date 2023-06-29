@@ -9,6 +9,8 @@ from kSpider2.ks_export import main as export
 from kSpider2.ks_query_dbretina import main as dbretina_query
 from kSpider2.ks_filter import main as dbretina_filter
 from kSpider2.ks_dedup import main as dbretina_dedup
+from kSpider2.ks_bipartite_pairwise import main as bipartite_main
+from kSpider2.ks_interactome import main as interactome_main
 
 # cli.add_command(dbretina_sketch, name="sketch")
 cli.add_command(index_datasets, name="index")
@@ -18,6 +20,8 @@ cli.add_command(clustering, name="cluster")
 cli.add_command(export, name="export")
 cli.add_command(dbretina_query, name="query")
 cli.add_command(dbretina_dedup, name="dedup")
+cli.add_command(bipartite_main, name="bipartite")
+cli.add_command(interactome_main, name="interactome")
 
 
 if __name__ == '__main__':
