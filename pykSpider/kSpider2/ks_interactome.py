@@ -12,6 +12,7 @@ import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
 import seaborn as sns
+from tqdm import tqdm
 import pandas as pd
 
 class Interactome:
@@ -84,15 +85,15 @@ class Interactome:
         plt.xticks(rotation=90)
         plt.savefig(f"{self.output_prefix}_interactome_scatter.png", dpi=500)
     
-    def graph_export(self, output_prefix, format = 'graphml'):
+    def graph_export(self):
         self.G = nx.Graph()
         for node1, edges in self.graph.items():
             for node2, weight in edges.items():
                 self.G.add_edge(node1, node2, weight=weight)
 
-        nx.write_graphml(self.G, f"{output_prefix}_interactome.graphml")
-        nx.write_gexf(self.G, f"{output_prefix}_interactome.gexf")
-        nx.write_pajek(self.G, f"{output_prefix}_interactome.net")
+        nx.write_graphml(self.G, f"{self.output_prefix}_interactome.graphml")
+        nx.write_gexf(self.G, f"{self.output_prefix}_interactome.gexf")
+        nx.write_pajek(self.G, f"{self.output_prefix}_interactome.net")
 
 
 def get_command():
@@ -148,11 +149,17 @@ def main(ctx, index_prefix, pairwise_file, output_prefix):
     
     interactome = Interactome(output_prefix)
     
-    interactome.add_edge("gene1", "gene2")
-    interactome.add_edge("gene1", "gene3")
-    interactome.add_edge("gene2", "gene1")
+    for geneSet_pair in tqdm(geneSet_pairs):
+        geneSet1_features = supergroups_to_features[geneSet_pair[0]]
+        geneSet2_features = supergroups_to_features[geneSet_pair[1]]
+        
+        # create edges between all pairs of features
+        for feature1 in geneSet1_features:
+            for feature2 in geneSet2_features:
+                interactome.add_edge(feature1, feature2)
     
     interactome.export()
+    interactome.graph_export()
     interactome.plot_statistics()
         
     
