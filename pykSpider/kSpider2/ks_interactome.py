@@ -159,8 +159,5 @@ def main(ctx, index_prefix, pairwise_file, output_prefix):
                 interactome.add_edge(feature1, feature2)
     
     interactome.export()
-    interactome.graph_export()
-    interactome.plot_statistics()
-        
-    
-            
+    # interactome.graph_export()
+    # interactome.plot_statistics()
