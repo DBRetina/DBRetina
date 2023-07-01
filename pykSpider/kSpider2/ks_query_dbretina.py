@@ -89,7 +89,6 @@ def invert_json(json_file):
 @click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
 @click.option('--clusters-file', "clusters_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
 @click.option('--cluster-ids', "cluster_ids", callback=validate_numbers, required=False, default="", help="comma-separated list of cluster IDs")
-@click.option('--pairwise', "pairwise", is_flag=True, default=False, help="output pairwise distances between features")
 @click.option('-o', '--output', "output_prefix", required=True, default=None, help="output file prefix")
 @click.pass_context
 def main(ctx, groups_file, clusters_file, cluster_ids, index_prefix, output_prefix):
