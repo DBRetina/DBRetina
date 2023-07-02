@@ -104,9 +104,9 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
 
     # convert to dataframe
     df = pd.DataFrame.from_dict(gene_sets_nodes_data, orient='index')
+    df.index.name = 'gene_set'
     # add modularity
     df['modularity'] = abs(df['fragmentation'] + df['heterogeneity'])
-    
     # add unincluded gene sets with modularity, fragmentation and heterogeneity of 0
     unincluded_gene_sets = all_groups - set(df.index)
     
@@ -114,5 +114,4 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
         df.loc[gene_set] = [0, 0, 0]
     
     LOGGER.INFO(f"Writing the modularity file: {output_prefix}_modularity.tsv")
-    df.to_csv(f"{output_prefix}_modularity.tsv", sep='\t')
-    
+    df.to_csv(f"{output_prefix}_modularity.tsv", sep='\t', index=True, header=True)
