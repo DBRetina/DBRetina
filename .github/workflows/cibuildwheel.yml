@@ -21,7 +21,7 @@ jobs:
         run: echo ${GITHUB_REF##*/} > branch_name.tmp
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.3.1
+        uses: pypa/cibuildwheel@v2.13.1
 
         env:
           CIBW_ENVIRONMENT: "BRANCH_NAME=$(cat branch_name.tmp)"
