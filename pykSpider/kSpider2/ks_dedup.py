@@ -69,11 +69,8 @@ def path_to_absolute_path(ctx, param, value):
 @click.option('-o', '--output', "output_prefix", required=True, default=None, help="output file prefix")
 @click.pass_context
 def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
-    # sourcery skip: low-code-quality
     """
-
-    Deduplicate the pairwise distance file with ochiai algorithm
-
+        Deduplicate the pairwise distance file using ochiai similarity
     """
 
     LOGGER = ctx.obj

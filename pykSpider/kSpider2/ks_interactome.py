@@ -111,6 +111,9 @@ def get_command():
 @click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
 def main(ctx, index_prefix, pairwise_file, output_prefix):
+    """
+        Construct a genes interactome from pairwise TSV file
+    """
 
     ###################################
     # 1. Extract gene set pairs

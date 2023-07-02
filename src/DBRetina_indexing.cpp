@@ -294,6 +294,15 @@ namespace kSpider {
         phmap::BinaryOutputArchive ar_out(string(output_prefix + "_groupID_to_featureCount.bin").c_str());
         groupID_to_kmerCount.phmap_dump(ar_out);
 
+        // groupID_to_kmerCount to TSV
+        ofstream groupID_to_kmerCount_tsv(output_prefix + "_groupID_to_featureCount.tsv");
+        groupID_to_kmerCount_tsv << "groupName\tkmerCount" << endl;
+        for (auto& [groupID, kmerCount] : groupID_to_kmerCount) {
+            groupID_to_kmerCount_tsv << inv_groupNameMap[groupID] << "\t" << kmerCount << endl;
+        }
+        groupID_to_kmerCount_tsv.close();
+
+
 
         // Dump color->sources
         double average_color_size = 0;

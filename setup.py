@@ -6,10 +6,11 @@ import sys
 import os
 import subprocess
 import errno
+import pathlib
 from kSpider_version import get_version
 
-if sys.version_info[:2] < (3, 6):
-    raise RuntimeError("Python version >=3.6")
+if sys.version_info[:2] < (3, 8):
+    raise RuntimeError("Python version >=3.8")
 
 if os.path.exists('MANIFEST'):
     os.remove('MANIFEST')
@@ -20,8 +21,7 @@ except ImportError:
     from distutils.core import setup, Extension
 
 try:
-    with open('README.md') as f:
-        readme = f.read()
+    readme = pathlib.Path('README.md').read_text()
 except IOError:
     readme = ''
 
@@ -34,7 +34,7 @@ if os.path.exists("build/libkSpider.a"):
 
 def check_exist(dirs):
     all_exists = True
-    not_found_files = list()
+    not_found_files = []
     for directory in dirs:
         if not (os.path.isdir(directory)):
             print(f"[ERROR] | DIR: {directory} does not exist.", file=sys.stderr)
@@ -136,11 +136,10 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.6",
-    "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
 ]
 
 from setuptools.command.build_py import build_py
@@ -158,7 +157,7 @@ setup(name='DBRetina',
       py_modules=['kSpider_internal'],
       packages=find_packages('pykSpider'),
       package_dir={'': 'pykSpider'},
-      python_requires='>=3.6',
+      python_requires='>=3.8',
       cmdclass={'build_py': BuildPy},
       license='BSD 3-Clause',
       long_description_content_type='text/markdown',
