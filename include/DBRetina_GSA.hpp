@@ -19,6 +19,8 @@ private:
     kDataFrame* gene_to_color;
     int_vec_map color_to_ids;
     flat_hash_map<uint64_t, double> gene_to_PSI;
+    // TODO: rename later [pathway-cluster-specificity-index]
+    flat_hash_map<uint64_t, double> gene_to_PCSI;
     str_hashed_set_map pathway_to_gene_set;
     uint64_t n_total_pathways;
     double mean_pathway_length;
@@ -26,12 +28,18 @@ private:
     flat_hash_map<string, double> pathway_to_average_PSI;
     flat_hash_map<uint32_t, flat_hash_set<string>> clusterToPathways;
     flat_hash_map<uint64_t, double> gene_to_PPI;
+    flat_hash_map<uint64_t, string> hashed_gene_to_name;
     flat_hash_map<string, double> pathway_to_average_PPI;
+    flat_hash_map<string, double> pathway_to_average_PCSI;
     flat_hash_map<uint64_t, uint64_t> gene_to_no_clusters;
     flat_hash_map<uint32_t, double> cluster_to_average_PPI;
     flat_hash_map<uint32_t, uint32_t> _group_id_to_size;
     flat_hash_map<uint32_t, string> _group_id_to_name;
     unordered_map<string, int> pathway_to_fragmentation;
+    unordered_map<string, int> pathway_to_heterogeneity;
+    unordered_map<string, int> pathway_to_modularity;
+    flat_hash_map<uint64_t, uint64_t> gene_to_associated_pathways;
+
 
 
     flat_hash_set<uint64_t> get_universe_set(flat_hash_set<string>& pathways);
@@ -62,14 +70,17 @@ public:
     unordered_map<string, double> get_pathways_ppi();
     unordered_map<uint32_t, double> get_clusters_ppi();
     unordered_map<string, double> get_pathways_psi();
+    // TODO: NEW PCSI
+    unordered_map<string, double> get_pathways_pcsi();
+    void export_genes_to_ppi_psi_tsv(string filename);
     unordered_map<string, int> get_pathway_lengths();
     void calculate_heterogeneity_and_fragmentation_from_pairwise(string pairwise_file);
-    unordered_map<string, int> get_pathways_fragmentation();
+    unordered_map<string, int> get_pathway_to_modularity();
+    unordered_map<string, int> get_pathway_to_heterogeneity();
+    unordered_map<string, int> get_pathway_to_fragmentation();
     void keep_only_these_pathways(string non_redundant_pathways);
     
-    // unordered_map<string, vector<string>> deduplicate_fully_redundant_pathways(vector<string> pathways);
-    
-    // vector<string> proportional_set_cover();
+
     flat_hash_set<uint64_t> set_intersection(flat_hash_set<uint64_t>& pathway_genes, flat_hash_set<uint64_t>& universe);
     unordered_map<string, double> greedy_proportional_set_cover(int cluster_id, int GC = 100);
     unordered_map<string, double> proportionalSetCover(int cluster_id, int GC = 100);

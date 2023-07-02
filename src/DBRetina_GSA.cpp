@@ -3,6 +3,7 @@
 #include <kDataFrame.hpp>
 #include <colored_kDataFrame.hpp>
 #include <cstdlib>
+#include <filesystem>
 
 inline void set_to_vector(const phmap::flat_hash_set<uint32_t>& set, vector<uint32_t>& vec) {
     vec.clear();
@@ -12,7 +13,35 @@ inline void set_to_vector(const phmap::flat_hash_set<uint32_t>& set, vector<uint
     }
 }
 
+inline void create_hash_to_gene_name(const string& json_file, flat_hash_map<uint64_t, string>& hash_to_gene_name) {
+    string_hasher hasher = string_hasher();
+    string output_prefix = json_file.substr(0, json_file.find_last_of(".")).substr(json_file.find_last_of("/") + 1);
 
+    zstr::ifstream sig_stream(json_file);
+    json::value json = json::parse(sig_stream);
+    string filetype = string(json["metadata"]["filetype"].as_string());
+    auto genes = json["data"].as_object();
+
+    if (filetype == "private") {
+        for (auto it = genes.begin(); it != genes.end(); ++it) {
+            string parent_name = it->first;
+            auto gene = it->second.as_array();
+            for (auto it2 = gene.begin(); it2 != gene.end(); ++it2) {
+                string str_child = it2->as_string();
+                uint64_t hashed_child = hasher(str_child);
+                hash_to_gene_name[hashed_child] = str_child;
+            }
+        }
+
+    }
+    else if (filetype == "public") {
+        throw "No, it's not expected to use the hashed version!\n";
+    }
+    else {
+        cout << "Unknown filetype: " << filetype << endl;
+        throw "Unknown filetype";
+    }
+}
 
 
 
@@ -95,7 +124,7 @@ void GeneSets::build_from_index(string index_prefix) {
     cout << "Loaded colors: " << color_to_ids.size() << endl;
     build_gene_to_PSI();
     build_all_pathways_PSI();
-
+    create_hash_to_gene_name(index_prefix + "_raw.json", this->hashed_gene_to_name);
 }
 
 
@@ -173,9 +202,18 @@ void GeneSets::load_namesMap(string filename) {
 }
 
 
-unordered_map<string, int> GeneSets::get_pathways_fragmentation() {
-    return this->pathway_to_fragmentation;
+unordered_map<string, int> GeneSets::get_pathway_to_heterogeneity() {
+    return pathway_to_heterogeneity;
 }
+
+unordered_map<string, int> GeneSets::get_pathway_to_fragmentation() {
+    return pathway_to_fragmentation;
+}
+
+unordered_map<string, int> GeneSets::get_pathway_to_modularity() {
+    return pathway_to_modularity;
+}
+
 
 void GeneSets::keep_only_these_pathways(string non_redundant_pathways) {
 
@@ -204,6 +242,11 @@ void GeneSets::keep_only_these_pathways(string non_redundant_pathways) {
 
 
 void GeneSets::calculate_heterogeneity_and_fragmentation_from_pairwise(string pairwise_file) {
+
+    if (!std::filesystem::exists(pairwise_file)) {
+        throw std::runtime_error("File not found: " + pairwise_file);
+    }
+
     ifstream inFile(pairwise_file);
     string _group_to_size_file = this->index_prefix + "_groupID_to_featureCount.bin";
     this->load_group_sizes(_group_to_size_file);
@@ -250,19 +293,11 @@ void GeneSets::calculate_heterogeneity_and_fragmentation_from_pairwise(string pa
         string pathway_name = pair.second;
         int fragmentationScore = -outboundEdges[id].size();
         int heterogeneityScore = inboundEdges[id].size();
+        this->pathway_to_fragmentation.insert({ pathway_name, fragmentationScore });
+        this->pathway_to_heterogeneity.insert({ pathway_name, heterogeneityScore });
         int absolute_total = abs(fragmentationScore + heterogeneityScore);
-
-        // cerr << "[DEBUG] pathway: " << pathway_name
-        //     << " Fragmentation Score: " << fragmentationScore
-        //     << " Heterogeneity Score: " << heterogeneityScore << " Total: " << absolute_total << endl;
-
-
-        this->pathway_to_fragmentation[pathway_name] = absolute_total;
-
-        cout << "[DEBUG] pathway: " << pathway_name
-            << " Fragmentation Score: " << absolute_total;
+        this->pathway_to_modularity.insert({ pathway_name, absolute_total });
     }
-
 }
 
 
@@ -750,7 +785,12 @@ void GeneSets::build_gene_to_PSI() {
         uint64_t gene = it.getHashedKmer();
         uint64_t color = it.getCount();
         uint64_t pathwayCount = color_to_ids[color].size();
-        double psi = static_cast<double>(pathwayCount) / n_total_pathways;
+        gene_to_associated_pathways[gene] = pathwayCount;
+
+        // double psi = static_cast<double>(pathwayCount) / n_total_pathways;
+        double psi = log2((double)pathwayCount / pathway_to_gene_set.size()) / log2(1.0 / pathway_to_gene_set.size());
+        psi *= 100;
+
         gene_to_PSI[gene] = psi;
         it++;
     }
@@ -790,7 +830,14 @@ void GeneSets::build_gene_to_no_clusters() {
 void GeneSets::build_gene_to_PPI() {
     cerr << "[DEBUG] Building gene to PPI map" << endl;
     for (auto& [gene, no_clusters] : gene_to_no_clusters) {
-        double ppi = static_cast<double>(no_clusters) / this->clusterToPathways.size();
+        
+        // TODO: relocate later 
+        double pcsi = log2((double)no_clusters / this->clusterToPathways.size()) / log2(1.0 / this->clusterToPathways.size());
+        pcsi *= 100;
+        gene_to_PCSI[gene] = pcsi;
+
+        double ppi = static_cast<double>(no_clusters) / this->gene_to_associated_pathways[gene];
+        ppi *= 100;
         gene_to_PPI[gene] = ppi;
     }
 }
@@ -802,10 +849,14 @@ void GeneSets::build_pathway_to_average_PPI(string pathway) {
 
     auto& genes = pathway_to_gene_set[pathway];
     double average_ppi = 0.0;
+    // TODO relocate later
+    double average_pcsi = 0.0;
     for (auto& gene : genes) {
         average_ppi += gene_to_PPI[gene];
+        average_pcsi += gene_to_PCSI[gene];
     }
     pathway_to_average_PPI[pathway] = average_ppi / genes.size();
+    pathway_to_average_PCSI[pathway] = average_pcsi / genes.size();
 }
 
 double GeneSets::get_cluster_average_ppi(uint32_t cluster_id) {
@@ -850,6 +901,26 @@ unordered_map<string, double> GeneSets::get_pathways_psi() {
     }
     return after_convert;
 }
+
+unordered_map<string, double> GeneSets::get_pathways_pcsi(){
+    auto& before_convert = this->pathway_to_average_PCSI;
+    unordered_map<string, double> after_convert;
+    for (auto& [pathway, pcsi] : before_convert) {
+        after_convert[pathway] = pcsi;
+    }
+    return after_convert;
+}
+
+    void GeneSets::export_genes_to_ppi_psi_tsv(string filename){
+        // TODO: NEW: adding PCSI
+        ofstream myfile;
+        myfile.open(filename);
+        myfile << "gene\tppi\tpsi\tpcsi\n";
+        for (auto& [gene, ppi] : gene_to_PPI) {
+            myfile << this->hashed_gene_to_name[gene] << "\t" << ppi << "\t" << gene_to_PSI[gene] << "\t" << gene_to_PCSI[gene] << "\n";
+        }
+        myfile.close();
+    }
 
 // Destructor
 GeneSets::~GeneSets() {

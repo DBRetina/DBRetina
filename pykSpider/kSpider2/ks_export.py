@@ -145,7 +145,7 @@ def check_if_there_is_a_pvalue(pairwise_file):
                 continue
 
 @cli.command(name="export", help_priority=5)
-@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="filtered pairwise TSV file")
+@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
 @click.option('-d', '--dist-type', "distance_type", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('--newick', "newick", is_flag=True, help="Convert the similarity matrix to newick tree format", default=False)
 @click.option('-l', '--labels', "labels_selection", callback = validate_labels, required=False, default="ids", show_default=True, type=click.STRING, help="select from ['ids', 'names']")
