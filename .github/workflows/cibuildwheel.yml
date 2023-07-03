@@ -45,12 +45,16 @@ jobs:
             yum install -y zlib-devel bzip2-devel openssl-devel ncurses-devel sqlite-devel readline-devel tk-devel gdbm-devel db4-devel libpcap-devel xz-devel expat-devel
             cmake -BkSpider_BUILD_DIR
             cmake --build kSpider_BUILD_DIR -j4
+            python setup.py sdist
+
+        with:
+          package-dir: ${{ github.workspace }}/dist/*gz
 
       - uses: actions/upload-artifact@v2
         with:
-          path: ./wheelhouse/*
+          path: ./wheelhouse/*whl ./dist/*gz
 
-  upload_pypi_test:
+upload_pypi_test:
     needs: build_wheels
     if: "contains(github.event.head_commit.message, 'pypi_test')"
     runs-on: ubuntu-latest
