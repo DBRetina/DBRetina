@@ -1,7 +1,6 @@
 name: cibuildwheel
 
-# on: [push, pull_request]
-on: [push]
+on: [push, pull_request]
 
 jobs:
   build_wheels:
@@ -13,7 +12,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v2
         with:
           submodules: recursive
       
@@ -22,7 +21,7 @@ jobs:
         run: echo ${GITHUB_REF##*/} > branch_name.tmp
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.3.1
+        uses: pypa/cibuildwheel@v2.13.1
 
         env:
           CIBW_ENVIRONMENT: "BRANCH_NAME=$(cat branch_name.tmp)"
@@ -47,40 +46,18 @@ jobs:
             cmake -BkSpider_BUILD_DIR
             cmake --build kSpider_BUILD_DIR -j4
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v2
         with:
-          name: DBRetina_artifacts
           path: ./wheelhouse/*.whl
 
-  build_sdist:
-    needs: build_wheels
-    name: Build source distribution
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
-    - uses: actions/setup-python@v4
-      name: Install Python
-      with:
-        python-version: '3.11'
-    - name: Build sdist
-      run: |
-        python -m pip install --upgrade pip setuptools build wheel
-        python -m build -s -o dist/
-    - uses: actions/upload-artifact@v3
-      with:
-        path: dist/*.tar.gz
-
-
   upload_pypi_test:
-    needs: [build_wheels, build_sdist]
+    needs: build_wheels
     if: contains(github.event.head_commit.message, 'pypi_test')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v2
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v2
         id: fetch_artifacts
         with:
           path: "wheels/"
@@ -96,21 +73,22 @@ jobs:
           verbose: true
 
   upload_pypi_release:
-    needs: [build_wheels, build_sdist]
+    needs: build_wheels
     runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, 'pypi_release')
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/checkout@v2
+
+      - uses: actions/download-artifact@v2
         id: fetch_artifacts
         with:
-          name: DBRetina_artifacts
-          path: dist
+          path: "wheels/"
 
       - name: Publish package to PyPI
-        uses: pypa/gh-action-pypi-publish@master
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
           user: __token__
           password: ${{ secrets.PYPI_DBRETINA_API_KEY }}
-          # packages_dir: ${{steps.fetch_artifacts.outputs.download-path}}/artifact/
-          # skip_existing: true
+          packages_dir: ${{steps.fetch_artifacts.outputs.download-path}}/artifact/
+          skip_existing: true
           verbose: true
