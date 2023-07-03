@@ -46,7 +46,6 @@ jobs:
             yum install -y zlib-devel bzip2-devel openssl-devel ncurses-devel sqlite-devel readline-devel tk-devel gdbm-devel db4-devel libpcap-devel xz-devel expat-devel
             cmake -BkSpider_BUILD_DIR
             cmake --build kSpider_BUILD_DIR -j4
-            python setup.py sdist --dist-dir wheelhouse
 
       - uses: actions/upload-artifact@v3
         with:
@@ -75,7 +74,7 @@ jobs:
 
 
   upload_pypi_test:
-    needs: build_wheels
+    needs: [build_wheels, build_sdist]
     if: contains(github.event.head_commit.message, 'pypi_test')
     runs-on: ubuntu-latest
     steps:
@@ -115,20 +114,3 @@ jobs:
           # packages_dir: ${{steps.fetch_artifacts.outputs.download-path}}/artifact/
           # skip_existing: true
           verbose: true
-
-
-  # upload_pypi:
-  #   needs: [build_wheels, build_sdist]
-  #   runs-on: ubuntu-latest
-  #   if: contains(github.event.head_commit.message, 'pypi_release')
-
-  #   steps:
-  #   - uses: actions/download-artifact@v3
-  #     with:
-  #       name: artifact
-  #       path: dist
-
-  #   - uses: pypa/gh-action-pypi-publish@master
-  #     with:
-  #       user: __token__
-  #       password: ${{ secrets.VISPY_PYPI_TOKEN }}
