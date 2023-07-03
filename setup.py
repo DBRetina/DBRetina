@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
-from distutils.command.build import build
-from distutils.spawn import find_executable
+from shutil import which as find_executable
+from setuptools import setup, Extension, find_packages
+from setuptools.command.build_py import build_py
+
 import sys
 import os
-import subprocess
 import errno
 import pathlib
 from kSpider_version import get_version
@@ -15,10 +16,6 @@ if sys.version_info[:2] < (3, 8):
 if os.path.exists('MANIFEST'):
     os.remove('MANIFEST')
 
-try:
-    from setuptools import setup, Extension, find_packages
-except ImportError:
-    from distutils.core import setup, Extension
 
 try:
     readme = pathlib.Path('README.md').read_text()
@@ -111,13 +108,11 @@ SWIG_OPTS = [
 ]
 
 
-class CustomBuild(build):
-    sub_commands = [
-        ('build_ext', build.has_ext_modules),
-        ('build_py', build.has_pure_modules),
-        ('build_clib', build.has_c_libraries),
-        ('build_scripts', build.has_scripts),
-    ]
+class CustomBuild(build_py):
+    def run(self):
+        self.run_command('build_ext')
+        self.run_command('build_clib')
+        super().run()
 
 
 kSpider_module = Extension('_kSpider_internal',
