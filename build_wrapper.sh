@@ -32,7 +32,7 @@ BUILD_DIR="build"
 
 
 echo "BDIST WHEEL"
-$(which python) setup.py bdist_wheel
+$(which python) setup.py bdist_wheel # sdist
 
 cd dist/
 
