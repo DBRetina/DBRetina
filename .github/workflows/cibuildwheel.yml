@@ -21,7 +21,7 @@ jobs:
         run: echo ${GITHUB_REF##*/} > branch_name.tmp
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.13.1
+        uses: pypa/cibuildwheel@v2.3.1
 
         env:
           CIBW_ENVIRONMENT: "BRANCH_NAME=$(cat branch_name.tmp)"
@@ -45,7 +45,7 @@ jobs:
             yum install -y zlib-devel bzip2-devel openssl-devel ncurses-devel sqlite-devel readline-devel tk-devel gdbm-devel db4-devel libpcap-devel xz-devel expat-devel
             cmake -BkSpider_BUILD_DIR
             cmake --build kSpider_BUILD_DIR -j4
-          
+    
           CIBW_BEFORE_BUILD: |
             pipx run build --sdist
 
