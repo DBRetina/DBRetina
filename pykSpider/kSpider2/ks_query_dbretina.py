@@ -92,6 +92,7 @@ def invert_json(json_file):
 @click.option('-o', '--output', "output_prefix", required=True, default=None, help="output file prefix")
 @click.pass_context
 def main(ctx, groups_file, clusters_file, cluster_ids, index_prefix, output_prefix):
+    # sourcery skip: low-code-quality
     """Query DBRetina index.
 
 Detailed description:
@@ -110,6 +111,9 @@ Examples:
     
     """
     
+    # ---------------------------
+    # INVERTED INDEX
+    # ---------------------------
     
     # Inverting the index
     inverted_index_prefix = f"inverted_{index_prefix}"
@@ -143,6 +147,7 @@ Examples:
             json.dump(new_json_hashes_dict, f)
             
         # Create the inverted index
+        ctx.obj.INFO("Creating inverted index. Please wait...")
         kSpider_internal.dbretina_indexing(new_json_raw_file, inverted_index_prefix)
         # index_prefix = inverted_index_prefix
 
@@ -167,12 +172,13 @@ Examples:
     commands = get_command()
 
 
+    # create a temporary file with the groups in the cluster
     _tmp_file = ".DBRetina.tmp.group"
     query_file = ""
     all_ids = set()
     if clusters_file != "NA":
         query_file = _tmp_file
-        with (open(clusters_file) as f, open(query_file, 'w') as W):            
+        with open(clusters_file) as f, open(query_file, 'w') as W:            
             # skip comments
             while True:
                 pos = f.tell()

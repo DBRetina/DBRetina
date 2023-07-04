@@ -8,7 +8,16 @@ import seaborn as sns
 import numpy as np
 import math
 import sys
+import igraph as ig
+import leidenalg as la
 
+def check_if_there_is_a_pvalue(pairwise_file):
+    with open(pairwise_file) as F:
+        for line in F:
+            if not line.startswith("#"):
+                return "pvalue" in line
+            else:
+                continue
 
 def get_command():
     _sys_argv = sys.argv
@@ -19,21 +28,60 @@ def get_command():
             _sys_argv[i+1] = os.path.abspath(_sys_argv[i+1])
     return "DBRetina " + " ".join(_sys_argv[1:])
 
-
 class Clusters:
 
     distance_to_col = {
-        "min_cont": 5,
-        "avg_cont": 6,
-        "max_cont": 7,
-        "ochiai": 8,
-        "jaccard": 9,
+        "containment": 5,
+        "ochiai": 6,
+        "jaccard": 7,
+        "odds_ratio": 8,
+        "pvalue": 9,
     }
 
     seq_to_kmers = dict()
     names_map = dict()
+    
+    def add_edges(self, edges_tuples):
+        pass
+    
+    def add_nodes(self, nodes):
+        pass
 
-    def __init__(self, logger_obj, pairwise_file, cut_off_threshold, dist_type, output_prefix):
+    def _add_igraph_edges(self, edges_tuples):
+        weights = []
+        edges = []
+        for edge in edges_tuples:
+            edges.append((edge[0], edge[1]))
+            weights.append(edge[2])
+        
+        self.graph.add_edges(edges)        
+        self.graph.es["weight"] = weights
+    
+    def _add_rx_edges(self, edges_tuples):
+        self.graph.add_edges_from(edges_tuples)
+        
+    def _add_igraph_nodes(self, nodes):
+        
+        node_ids = []
+        node_sizes = []
+        
+        # replace part of the file name that shares the same prefix
+        featuresCount_file = self.pairwise_file.replace("pairwise.tsv", "featuresNo.tsv")
+        with open(featuresCount_file) as F:
+            next(F)
+            for line in F:
+                line = line.strip().split("\t")
+                node_ids.append(line[1])
+                node_sizes.append(math.log2(int(line[2])))
+                # node_sizes.append(int(line[2]))
+                
+        self.graph.add_vertices(node_ids)
+        self.graph.vs["size"] = node_sizes
+    
+    def _add_rx_nodes(self, nodes):
+        self.graph.add_nodes_from(nodes)
+
+    def __init__(self, logger_obj, pairwise_file, cut_off_threshold, dist_type, output_prefix, commuinty):
         self.output_prefix = output_prefix
         self.Logger = logger_obj
         self.edges_batch_number = 10_000_000
@@ -43,17 +91,26 @@ class Clusters:
         self.shared_kmers_threshold = 200
         self.original_nodes = {}
         self.metadata = []
+        self.community = commuinty
         self.Logger.INFO("Loading TSV pairwise file")
         if dist_type not in self.distance_to_col:
             logger_obj.ERROR("unknown distance!")
         self.dist_col = self.distance_to_col[dist_type]
+        
+        # check if pvalue
+        if dist_type == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+            logger_obj.ERROR("pvalue not found in pairwise file!")
 
-        self.graph = rx.PyGraph()
-
+        self.graph = ig.Graph() if commuinty else rx.PyGraph()
+        self.add_edges = self._add_igraph_edges if commuinty else self._add_rx_edges
+        self.add_nodes = self._add_igraph_nodes if commuinty else self._add_rx_nodes
+        
         total_nodes_no = int(
             next(open(pairwise_file, 'r')).strip().split(':')[-1])
         nodes_range = range(1, total_nodes_no + 1)
-        self.nodes_indeces = self.graph.add_nodes_from(list(nodes_range))
+        self.nodes_indeces = self.add_nodes(list(nodes_range))
+    
+    
 
     def construct_graph(self):
         batch_counter = 0
@@ -91,12 +148,56 @@ class Clusters:
 
                     edges_tuples.append((seq1, seq2, distance))
                 else:
-                    self.graph.add_edges_from(edges_tuples)
+                    self.add_edges(edges_tuples)
                     batch_counter = 0
                     edges_tuples.clear()
 
             if len(edges_tuples):
-                self.graph.add_edges_from(edges_tuples)
+                self.add_edges(edges_tuples)
+
+
+    def construct_igraph(self):
+        batch_counter = 0
+        edges_tuples = []
+
+        print("[i] constructing graph")
+        with open(self.pairwise_file, 'r') as pairwise_tsv:
+            # skip comments
+            while True:
+                pos = pairwise_tsv.tell()
+                line = pairwise_tsv.readline()
+                if not line.startswith('#'):
+                    pairwise_tsv.seek(pos)
+                    break
+                else:
+                    self.metadata.append(line)            
+            self.metadata.append(f"#command: {get_command()}\n")
+
+            next(pairwise_tsv)  # Skip header
+            for row in pairwise_tsv:
+                row = row.strip().split('\t')
+                distance = float(row[self.dist_col])
+                self.original_nodes[int(row[0])] = row[2]
+                self.original_nodes[int(row[1])] = row[3]
+
+                # don't make graph edge
+                if distance < self.cut_off_threshold:
+                    continue
+
+                if batch_counter < self.edges_batch_number:
+                    batch_counter += 1
+                    seq1 = int(row[0]) - 1
+                    seq2 = int(row[1]) - 1
+
+                    edges_tuples.append((seq1, seq2, distance))
+                else:
+                    self.add_edges(edges_tuples)
+                    batch_counter = 0
+                    edges_tuples.clear()
+
+            if len(edges_tuples):
+                self.add_edges(edges_tuples)        
+    
 
     def plot_histogram(self, cluster_sizes):
         # Set style and context to make a nicer plot
@@ -157,8 +258,41 @@ class Clusters:
     def cluster_graph(self):
 
         cluster_sizes = []
+        
+        if self.community:
+            self.connected_components = la.find_partition(self.graph, 
+                                                          la.CPMVertexPartition, 
+                                                          weights= self.graph.es['weight'],
+                                                          node_sizes = self.graph.vs['size'],
+                                                          seed = 42,
+                                                          )
 
-        self.connected_components = rx.connected_components(self.graph)
+            # self.connected_components = la.CPMVertexPartition(
+            #     self.graph, 
+            #     # resolution_parameter = 0.6,
+            #     )
+
+            # optimiser = la.Optimiser()
+            
+
+            # optimiser.optimise_partition(self.connected_components)
+            # refine_partition = la.ModularityVertexPartition(self.graph)
+            # optimiser.move_nodes_constrained(refine_partition, self.connected_components)
+            ig.plot(self.connected_components, 
+                f"{self.output_prefix}_communiteis.png", 
+                bbox=(1500, 1500), 
+                vertex_label_size=5, 
+                edge_arrow_size=0.5, 
+                edge_arrow_width=0.5, 
+                edge_width=0.5,
+                edge_label_size=5, 
+                edge_curved=False, 
+                layout = 'auto')
+
+            # la.find_partition(self.graph, la.ModularityVertexPartition)
+        else:
+            self.connected_components = rx.connected_components(self.graph)
+        
         single_components = 0
         retworkx_export = f"{self.output_prefix}_clusters.tsv"
         # and {self.output} ...")
@@ -173,8 +307,9 @@ class Clusters:
             CLUSTERS.write(f"cluster_id\tcluster_size\tcluster_members\n")
             for component in self.connected_components:
                 # uncomment to exclude single genome clusters from exporting
-                if len(component) == 1: # and list(component)[0] + 1 not in self.original_nodes:
-                    continue
+                if len(component) == 1 and list(component)[0] + 1 not in self.original_nodes:
+                    continue                
+                # if len(component) == 1: continue
                 
                 named_component = [self.original_nodes[node + 1] for node in component]
                 # CLUSTERS.write(cluster_id + '\t' + len(component) + '\t' + '|'.join(named_component) + '\n')
@@ -183,8 +318,14 @@ class Clusters:
                 total_clustered_nodes += len(component)
                 cluster_id += 1
 
+        if self.community:
+            ig.write(self.graph, f"{self.output_prefix}_clusters.gml", format="gml")
+            ig.write(self.graph, f"{self.output_prefix}_clusters.graphml", format="graphml")
+        
+
         self.Logger.INFO("plotting cluster sizes histogram and bubble plot")
         self.Logger.INFO(f"Total number of clustered supergroups: {total_clustered_nodes}")
+        self.Logger.INFO(f"Average cluser size: {total_clustered_nodes / len(self.connected_components)}")
         self.plot_histogram(cluster_sizes)
         self.plot_bubbles(cluster_sizes)
         self.Logger.INFO(f"number of clusters: {cluster_id - 1}")
@@ -202,17 +343,19 @@ New help messages
 
 @cli.command(name="cluster", help_priority=4)
 @click.option('-p', '--pairwise', 'pairwise_file', required=False, type=click.Path(exists=True), help="filtered pairwise TSV file")
-@click.option('-d', '--dist-type', "distance_type", required=True, show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
+@click.option('-d', '--dist-type', "distance_type", required=True, show_default=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option("--community", "community", is_flag=True, help="clusters as communities", default=False)
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="cluster the supergroups with (distance > cutoff)")
 @click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
-def main(ctx, pairwise_file, cutoff, distance_type, output_prefix):
+def main(ctx, pairwise_file, cutoff, distance_type, output_prefix, community):
     """Graph-based clustering of the pairwise TSV file."""
+    
 
     cutoff = float(cutoff)
 
     kCl = Clusters(logger_obj=ctx.obj, pairwise_file=pairwise_file,
-                   cut_off_threshold=cutoff, dist_type=distance_type, output_prefix=output_prefix)
+                   cut_off_threshold=cutoff, dist_type=distance_type, output_prefix=output_prefix, commuinty=community)
     ctx.obj.INFO("Building the main graph...")
     kCl.construct_graph()
     ctx.obj.INFO("Clustering...")

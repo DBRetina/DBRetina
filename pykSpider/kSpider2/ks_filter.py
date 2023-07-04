@@ -70,17 +70,26 @@ def path_to_absolute_path(ctx, param, value):
     return value if value == "NA" else os.path.abspath(value)
 
 
+def check_if_there_is_a_pvalue(pairwise_file):
+    with open(pairwise_file) as F:
+        for line in F:
+            if not line.startswith("#"):
+                return "pvalue" in line
+            else:
+                continue
+
 @cli.command(name="filter", help_priority=3)
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
 @click.option('--clusters-file', "clusters_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
 @click.option('--cluster-ids', "cluster_ids", callback=validate_numbers, required=False, default="", help="comma-separated list of cluster IDs")
-@click.option('-d', '--dist-type', "distance_type", required=False, default="NA", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
-@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="filter out distances < cutoff")
+@click.option('-d', '--dist-type', "distance_type", required=False, default="NA", show_default=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=-1, show_default=True, help="filter out distances < cutoff")
 @click.option('--extend', "extend", is_flag=True, default=False, show_default=True, help="include all supergroups that are linked to the given supergroups.")
 @click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
 def main(ctx, pairwise_file, groups_file, distance_type, cutoff, output_file, clusters_file, cluster_ids, extend):
+    # sourcery skip: low-code-quality
     """Filter a pairwise file.
 
 
@@ -107,7 +116,7 @@ Examples:
 
 
     # check if not any option is provided for filteration
-    if distance_type == "NA" and cutoff == 0.0 and groups_file == "NA" and clusters_file == "NA":
+    if distance_type == "NA" and cutoff == -1 and groups_file == "NA" and clusters_file == "NA":
         ctx.obj.ERROR(
             "DBRetina's filter command requires at least one option to filter the pairwise file.")
 
@@ -125,10 +134,10 @@ Examples:
             "DBRetina's filter command can't filter by groups_file and clusters_file at the same time.")
 
     # if distance_type is provided then cutoff must be provided
-    if distance_type != "NA" and cutoff == 0.0:
+    if distance_type != "NA" and cutoff == -1:
         ctx.obj.ERROR(
             "DBRetina's filter command requires a cutoff if distance_type is provided.")
-    elif distance_type == "NA" and cutoff != 0.0:
+    elif distance_type == "NA" and cutoff != -1:
         ctx.obj.ERROR(
             "DBRetina's filter command requires a distance_type if cutoff is provided.")
 
@@ -137,12 +146,17 @@ Examples:
             "DBRetina's filter command requires awk to be installed and available in the PATH.")
 
     distance_to_col = {
-        "min_cont": 5,
-        "avg_cont": 6,
-        "max_cont": 7,
-        "ochiai": 8,
-        "jaccard": 9,
+        "containment": 5,
+        "ochiai": 6,
+        "jaccard": 7,
+        "odds_ratio": 8,
+        "pvalue": 9,
     }
+    
+     # check if pvalue
+    if distance_type == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+        ctx.obj.ERROR("pvalue not found in pairwise file!")
+    
     if distance_type in distance_to_col:
         # +1 because awk is 1-indexed
         awk_column = distance_to_col[distance_type] + 1
@@ -216,11 +230,11 @@ Examples:
         groups_file = extended_supergroups_file
 
     # filter by both cutoff and groups
-    if cutoff != 0.0 and groups_file != "NA":
+    if cutoff != -1 and groups_file != "NA":
         awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"""
         result = execute_bash_command(awk_script)
 
-    elif cutoff != 0.0:
+    elif cutoff != -1:
         ctx.obj.INFO(
             f"Filtering the pairwise matrix on the {distance_type} column with a cutoff of {cutoff}.")
         command = f"grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"

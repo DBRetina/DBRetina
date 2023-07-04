@@ -16,9 +16,18 @@ from scipy.spatial.distance import squareform, pdist
 simplefilter("ignore", ClusterWarning)
 import math
 import re
-
-# def newick_str_escape(s):
-#     return s.replace('(', '-').replace(')', '-').replace(',', '-').replace(' ', '-')
+import plotly.graph_objects as go
+import plotly.figure_factory as ff
+import numpy as np
+import pandas as pd
+from scipy.spatial.distance import pdist, squareform
+import random
+import string
+import plotly.io as pio
+import dash_bio
+from pycirclize import Circos
+from io import StringIO
+from Bio import Phylo
 
 def newick_str_escape(name):
     # Remove special characters
@@ -100,7 +109,7 @@ def tree_to_newick(node, leaf_names):
     return f"({left_child}:{node.dist:.2f},{right_child}:{node.dist:.2f})"
 
 
-def similarity_df_to_newick(similarity_df, method='average'):
+def similarity_df_to_newick(similarity_df, method):
     # Convert similarity matrix to dissimilarity matrix
     dissimilarity_df = 100 - similarity_df
 
@@ -109,7 +118,7 @@ def similarity_df_to_newick(similarity_df, method='average'):
 
     # Convert the dissimilarity matrix DataFrame to a condensed distance matrix for linkage
     # condensed_distance_matrix = squareform(dissimilarity_df)
-    condensed_distance_matrix = pdist(dissimilarity_df, 'euclidean')
+    condensed_distance_matrix = pdist(dissimilarity_df, metric = 'euclidean')
 
     # Perform hierarchical/agglomerative clustering
     Z = linkage(condensed_distance_matrix, method)
@@ -127,14 +136,23 @@ def tree_to_newick(node, leaf_names):
     return f"({left_child}:{node.dist:.2f},{right_child}:{node.dist:.2f})"
 
 
+def check_if_there_is_a_pvalue(pairwise_file):
+    with open(pairwise_file) as F:
+        for line in F:
+            if not line.startswith("#"):
+                return "pvalue" in line
+            else:
+                continue
+
 @cli.command(name="export", help_priority=5)
-@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="filtered pairwise TSV file")
-@click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
-@click.option('--newick', "newick", is_flag=True, help="Convert the dissimilarity matrix to newick tree format", default=False)
+@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
+@click.option('-d', '--dist-type', "distance_type", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('--newick', "newick", is_flag=True, help="Convert the similarity matrix to newick tree format", default=False)
 @click.option('-l', '--labels', "labels_selection", callback = validate_labels, required=False, default="ids", show_default=True, type=click.STRING, help="select from ['ids', 'names']")
+@click.option('--linkage', "linkage_method", required=False, default="ward", show_default=True, type=click.STRING, help="select from ['single', 'complete', 'average', 'weighted', 'centroid', 'median', 'ward']")
 @click.option('-o', "output_prefix", required=True, type=click.STRING, help="output prefix")
 @click.pass_context
-def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_selection):
+def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_selection, linkage_method):
     """Export to dissimilarity matrix and newick format.
     
     Export a pairwise TSV file to a dissimilarity matrix and (optionally) a newick-format file.
@@ -144,15 +162,20 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
     LOGGER = ctx.obj
 
     distance_to_col = {
-        "min_cont": 5,
-        "avg_cont": 6,
-        "max_cont": 7,
-        "ochiai": 8,
-        "jaccard": 9,
+        "containment": 5,
+        "ochiai": 6,
+        "jaccard": 7,
+        "odds_ratio": 8,
+        "pvalue": 9,
     }
 
     if distance_type not in distance_to_col:
         LOGGER.ERROR("unknown distance!")
+        
+    
+    # check if pvalue
+    if distance_type == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+        LOGGER.ERROR("pvalue not found in pairwise file!")
 
     dist_col = distance_to_col[distance_type]    
 
@@ -173,49 +196,37 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
         df[df.columns[0]] = df[df.columns[0]].astype(str)
         df[df.columns[1]] = df[df.columns[1]].astype(str)
     else: # escape newick_str_escape
+        LOGGER.WARNING("Escaping newick characters in labels if any.")
         df[df.columns[0]] = df[df.columns[0]].apply(lambda x: newick_str_escape(x))
         df[df.columns[1]] = df[df.columns[1]].apply(lambda x: newick_str_escape(x))
     
-    df[df.columns[2]] = df[df.columns[2]].apply(lambda x: math.log2(x) if x != 0 else 0)
+    # df[df.columns[2]] = df[df.columns[2]].apply(lambda x: math.log2(x) if x != 0 else 0)
     
     similarity_df = df.pivot(index=df.columns[0], columns=df.columns[1], values=df.columns[2])
 
     similarity_df = similarity_df.combine_first(similarity_df.T).fillna(0)
-    np.fill_diagonal(similarity_df.values, math.log2(100))
+    # np.fill_diagonal(similarity_df.values, math.log2(100))
+    np.fill_diagonal(similarity_df.values, 100)
     
-
-    # np.fill_diagonal(matrix_df.values, 0)
-    # dissimilarity_df = 100 - matrix_df
-    # dissimilarity_df = dissimilarity_df.combine_first(dissimilarity_df.T)
-    # dissimilarity_df.fillna(0, inplace=True)
-
     
-    # Create a custom diverging colormap
-    # cmap = sns.diverging_palette(230, 20, as_cmap=True)
-    # cmap = sns.diverging_palette(250, 15, s=75, l=40, n=1, center="light", as_cmap=True)
-    # cmap = sns.diverging_palette(250, 15, s=75, l=40, n=6, center="light", as_cmap=True, sep=77)
-    # cmap = sns.dark_palette("xkcd:golden", 8)
-    # cmap = sns.diverging_palette(0, 255, sep=77, as_cmap=True)
-    # cmap = sns.light_palette("black", as_cmap=True)
-    # cmap = sns.color_palette("icefire", as_cmap=True)
-    # cmap = sns.color_palette("colorblind", as_cmap=True)
-    cmap = sns.color_palette("Spectral", as_cmap=True)
-    g = sns.clustermap(
-        similarity_df, 
-        cmap=cmap, 
-        center=0, 
-        linewidths=.5, 
-        figsize=(10, 10), 
-        row_cluster=True, 
-        col_cluster=True, 
-        vmin=0, 
-        vmax=math.log2(100),
-        # method = 'single',
-        # metric='braycurtis',
-        )
-    plt.setp(g.ax_heatmap.get_xticklabels(), rotation=45, horizontalalignment='right')
-    plt.setp(g.ax_heatmap.get_yticklabels(), rotation=0)
-    g.cax.set_title('Similarity', loc='left', fontsize=12, fontweight='bold')
+    
+    # Plotting the heatmap with plotly and dash
+    
+    fig = dash_bio.Clustergram(
+        data=similarity_df,
+        column_labels=list(similarity_df.columns.values),
+        row_labels=list(similarity_df.index),
+        height=2800,
+        width=2700,
+        link_method=linkage_method,
+        # display_ratio=[0.1, 0.7]
+    )
+    
+    LOGGER.INFO(f"Writing heatmap to {output_prefix}_heatmap.html")
+    pio.write_html(fig, "{output_prefix}_heatmap.html")
+    fig.write_image(f"{output_prefix}_heatmap.png", width=2700, height=2800, scale=1)
+
+    ##################### PLOTLY END #####################
     
     
     # serialize distance matrix to binary format
@@ -223,21 +234,26 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
     similarity_df.to_pickle(f"{output_prefix}_distmat.pkl")
     LOGGER.INFO(f"Writing distance matrix to {output_prefix}_distmat.tsv")
     similarity_df.to_csv(f"{output_prefix}_distmat.tsv", sep='\t')
-    
-
     newick_out = f"{output_prefix}.newick"
-
-    LOGGER.INFO(f"Writing clustermap plot to {output_prefix}_clustermap.png")
-    plt.savefig(f"{output_prefix}_clustermap.png", dpi=600)
-    
 
     if newick:
         # Call the function with your similarity DataFrame and 'single' linkage method
         try:
-            newick_string = similarity_df_to_newick(similarity_df, 'average')
+            newick_string = similarity_df_to_newick(similarity_df, linkage_method)
             with open(newick_out, 'w') as NW:
                     NW.write(newick_string)
-
+            
+            # TODO: add a flag to visualize the tree
+            # Beta: visualize the newick tree
+            tree = Phylo.read(StringIO(newick_string), "newick")
+            # Initialize circos sector with tree size
+            circos = Circos(sectors={"Tree": tree.count_terminals()})
+            sector = circos.sectors[0]
+            track = sector.add_track((30, 100))
+            track.tree(tree, leaf_label_size=6)
+            LOGGER.INFO(f"Writing dendrogram tree to {output_prefix}_dendrogram.png")
+            fig = circos.savefig(f"{output_prefix}_dendrogram.png", dpi=600)
+            
         except RecursionError as err:
             LOGGER.ERROR(f"Couldn't handle the tree depth | {err}")
 

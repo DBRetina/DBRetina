@@ -1,27 +1,24 @@
 #!/usr/bin/env python
 
-from distutils.command.build import build
-from distutils.spawn import find_executable
+from shutil import which as find_executable
+from setuptools import setup, Extension, find_packages
+from setuptools.command.build_py import build_py
+
 import sys
 import os
-import subprocess
 import errno
+import pathlib
 from kSpider_version import get_version
 
-if sys.version_info[:2] < (3, 6):
-    raise RuntimeError("Python version >=3.6")
+if sys.version_info[:2] < (3, 8):
+    raise RuntimeError("Python version >=3.8")
 
 if os.path.exists('MANIFEST'):
     os.remove('MANIFEST')
 
-try:
-    from setuptools import setup, Extension, find_packages
-except ImportError:
-    from distutils.core import setup, Extension
 
 try:
-    with open('README.md') as f:
-        readme = f.read()
+    readme = pathlib.Path('README.md').read_text()
 except IOError:
     readme = ''
 
@@ -34,7 +31,7 @@ if os.path.exists("build/libkSpider.a"):
 
 def check_exist(dirs):
     all_exists = True
-    not_found_files = list()
+    not_found_files = []
     for directory in dirs:
         if not (os.path.isdir(directory)):
             print(f"[ERROR] | DIR: {directory} does not exist.", file=sys.stderr)
@@ -104,20 +101,18 @@ LIBRARIES = [
 
 SWIG_OPTS = [
     '-c++',
-    '-py3',
-    '-keyword',
+    # '-py3',
+    # '-keyword',
     '-outdir',
-    './pykSpider/internal'
+    './pykSpider/'
 ]
 
 
-class CustomBuild(build):
-    sub_commands = [
-        ('build_ext', build.has_ext_modules),
-        ('build_py', build.has_pure_modules),
-        ('build_clib', build.has_c_libraries),
-        ('build_scripts', build.has_scripts),
-    ]
+class CustomBuild(build_py):
+    def run(self):
+        self.run_command('build_ext')
+        self.run_command('build_clib')
+        super().run()
 
 
 kSpider_module = Extension('_kSpider_internal',
@@ -136,8 +131,6 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.6",
-    "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -159,7 +152,7 @@ setup(name='DBRetina',
       py_modules=['kSpider_internal'],
       packages=find_packages('pykSpider'),
       package_dir={'': 'pykSpider'},
-      python_requires='>=3.6',
+      python_requires='>=3.8',
       cmdclass={'build_py': BuildPy},
       license='BSD 3-Clause',
       long_description_content_type='text/markdown',
@@ -174,6 +167,9 @@ setup(name='DBRetina',
           'tqdm',
           'seaborn',
           'matplotlib',
+          'fastcluster',
+          'leidenalg',
+          'igraph',
       ],
       include_package_data=True,
       entry_points='''

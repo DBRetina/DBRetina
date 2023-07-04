@@ -24,11 +24,9 @@ def plot_histogram(json_path, outout_file_path, use_log = False):
 
     # Colors for each metric
     colors = {
-        "min_cont": sns.color_palette("husl", 5)[0],
         "ochiai": sns.color_palette("husl", 5)[1],
-        "max_cont": sns.color_palette("husl", 5)[2],
+        "containment": sns.color_palette("husl", 5)[2],
         "jaccard": sns.color_palette("husl", 5)[3],
-        "avg_cont": sns.color_palette("husl", 5)[4],
     }
 
     # Number of metrics and distance ranges
@@ -91,19 +89,23 @@ def get_command():
 @cli.command(name="pairwise", help_priority=2)
 @click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
 @click.option('-t', '--threads', "user_threads", default=1, required=False, type=int, help="number of cores")
-@click.option('-d', '--dist-type', "distance_type", required=False, default="max_cont", show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']")
+@click.option('-d', '--dist-type', "distance_type", required=False, default="containment", show_default=True, type=click.STRING, help="select from ['containment', 'jaccard', 'ochiai', 'pvalue']")
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="filter out distances < cutoff")
+@click.option('--pvalue', 'calculate_pvalue', is_flag=True, required = False, default = False, help="calculate Hypergeometric p-value")
 @click.pass_context
-def main(ctx, index_prefix, user_threads, distance_type, cutoff):
+def main(ctx, index_prefix, user_threads, distance_type, cutoff, calculate_pvalue):
     """
     Calculate pairwise distances.
     """
     
     commands = inject_index_command(index_prefix) + '\n' + get_command()
     
+    if calculate_pvalue:
+        ctx.obj.INFO("Please wait for a while, calculating p-value may take a long time.")
+    
     ctx.obj.INFO(
         f"Constructing the pairwise matrix using {user_threads} cores.")
-    kSpider_internal.pairwise(index_prefix, user_threads, distance_type, cutoff, commands)
+    kSpider_internal.pairwise(index_prefix, user_threads, distance_type, cutoff, commands, calculate_pvalue)
     stats_json_path = f"{index_prefix}_DBRetina_pairwise_stats.json"
     linear_histo = f"{index_prefix}_DBRetina_distance_metrics_plot_linear.png"
     log_histo = f"{index_prefix}_DBRetina_distance_metrics_plot_log.png"

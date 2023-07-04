@@ -1,6 +1,7 @@
 name: cibuildwheel
 
-on: [push, pull_request]
+# on: [push, pull_request]
+on: [push]
 
 jobs:
   build_wheels:
@@ -21,12 +22,12 @@ jobs:
         run: echo ${GITHUB_REF##*/} > branch_name.tmp
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.3.1
+        uses: pypa/cibuildwheel@v2.13.1
 
         env:
           CIBW_ENVIRONMENT: "BRANCH_NAME=$(cat branch_name.tmp)"
           CIBW_BUILD_VERBOSITY: 3
-          CIBW_BUILD: cp36-manylinux_x86_64 cp37-manylinux_x86_64 cp38-manylinux_x86_64 cp39-manylinux_x86_64 cp310-manylinux_x86_64 cp311-manylinux_x86_64
+          CIBW_BUILD: cp38-manylinux_x86_64 cp39-manylinux_x86_64 cp310-manylinux_x86_64 cp311-manylinux_x86_64
           CIBW_SKIP: pp* *-manylinux_{aarch64,ppc64le,s390x}
           CIBW_ARCHS_LINUX: x86_64
           CIBW_MANYLINUX_X86_64_IMAGE: quay.io/pypa/manylinux2014_x86_64:latest
@@ -45,14 +46,15 @@ jobs:
             yum install -y zlib-devel bzip2-devel openssl-devel ncurses-devel sqlite-devel readline-devel tk-devel gdbm-devel db4-devel libpcap-devel xz-devel expat-devel
             cmake -BkSpider_BUILD_DIR
             cmake --build kSpider_BUILD_DIR -j4
+            python setup.py sdist --dist-dir wheelhouse
 
       - uses: actions/upload-artifact@v2
         with:
-          path: ./wheelhouse/*.whl
+          path: ./wheelhouse/*
 
   upload_pypi_test:
     needs: build_wheels
-    if: "contains(github.event.head_commit.message, 'pypi_test')"
+    if: contains(github.event.head_commit.message, 'pypi_test')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -75,7 +77,7 @@ jobs:
   upload_pypi_release:
     needs: build_wheels
     runs-on: ubuntu-latest
-    if: "contains(github.event.head_commit.message, 'pypi_release')"
+    if: contains(github.event.head_commit.message, 'pypi_release')
     steps:
       - uses: actions/checkout@v2
 
