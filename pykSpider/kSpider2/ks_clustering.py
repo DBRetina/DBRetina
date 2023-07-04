@@ -65,6 +65,7 @@ class Clusters:
         node_ids = []
         node_sizes = []
         
+        # replace part of the file name that shares the same prefix
         featuresCount_file = self.pairwise_file.replace("pairwise.tsv", "featuresNo.tsv")
         with open(featuresCount_file) as F:
             next(F)
@@ -342,7 +343,7 @@ New help messages
 
 @cli.command(name="cluster", help_priority=4)
 @click.option('-p', '--pairwise', 'pairwise_file', required=False, type=click.Path(exists=True), help="filtered pairwise TSV file")
-@click.option('-d', '--dist-type', "distance_type", required=True, show_default=True, type=click.STRING, help="select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard', 'odds_ratio]")
+@click.option('-d', '--dist-type', "distance_type", required=True, show_default=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option("--community", "community", is_flag=True, help="clusters as communities", default=False)
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="cluster the supergroups with (distance > cutoff)")
 @click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")

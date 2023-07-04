@@ -116,6 +116,9 @@ def validate_all_files_exist(ctx, param, value):
         if not os.path.exists(path):
             raise click.BadParameter(f"File '{path}' doesn't exist")
     return value
+
+# TODO: continue this for refactoring
+# class Sketch:
     
 
 @cli.command(name="index", help_priority=1)

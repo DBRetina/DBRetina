@@ -20,19 +20,26 @@ using str_str_map = parallel_flat_hash_map<string, string>;
 using hashed_MAP = parallel_flat_hash_map<string, flat_hash_set<uint64_t>>;
 
 
+// 
 struct string_hasher
 {
-    std::hash<string> hasher;
+    uint64_t FNV_prime = 1099511628211;
+    uint64_t offset_basis = 14695981039346656037U;
 
-    // initialize the hasher
-    string_hasher() : hasher() {}
+    string_hasher() {}
 
     // overload the () operator
-    size_t operator()(const string& str) const
+    uint64_t operator()(const string& s) const
     {
-        return hasher(str);
+        uint64_t h = offset_basis;
+        for (unsigned char byte : s) {
+            h = h ^ byte;
+            h = (h * FNV_prime) & 0xFFFFFFFFFFFFFFFF;  // Make sure it's a 64-bit number
+        }
+        return h;
     }
 };
+
 
 void load_tsv_to_map(string filename, str_vec_map* map);
 void load_tsv_to_map_no_names(string filename, str_vec_map* map);
