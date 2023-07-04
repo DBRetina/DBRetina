@@ -1,2 +1,0 @@
-# DBRetina tutorial
-
