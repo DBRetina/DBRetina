@@ -11,7 +11,7 @@ theme:
   features:
     - content.code.copy
 
-site_url: https://dbretina.github.io/
+site_url: https://dbretina.github.io/DBRetina/
 nav:
   - Home: index.md
   - Getting Started:
@@ -30,7 +30,9 @@ nav:
   #   - Example 2: example2.md
 
 plugins:
+  - search
   - mkdocs-jupyter
+  - git-authors
 
 markdown_extensions:
   - pymdownx.highlight:
