@@ -2,7 +2,9 @@ name: mkdocs
 on:
   push:
     branches:
+      - master
       - main
+      - gh-pages
 permissions:
   contents: write
 jobs:
@@ -17,5 +19,5 @@ jobs:
         with:
           key: ${{ github.ref }}
           path: .cache
-      - run: pip install mkdocs mkdocs-material
+      - run: pip install mkdocs mkdocs-material mkdocs-simple-blog mkdocs-jupyter
       - run: mkdocs gh-deploy --config-file docs/mkdocs.yml --force
