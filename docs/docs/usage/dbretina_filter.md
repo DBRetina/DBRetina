@@ -3,7 +3,7 @@
 The Filter command in DBRetina is designed to filter out the pairwise TSV file. The command requires the **full path** of the pairwise TSV file.
 
 ```
-
+❯ DBRetina filter --help
 Usage: DBRetina filter [OPTIONS]
 
   Filter a pairwise file.
@@ -17,13 +17,13 @@ Usage: DBRetina filter [OPTIONS]
   Examples:
 
       1- distance cutoff only              | dbretina filter -p pairwise.tsv
-      -d ochiai -c 0.5 -o filtered.tsv
+      -d ochiai -c 60 -o filtered.tsv
 
       2- distance cutoff and groups file   | dbretina filter -p pairwise.tsv
-      -d min_cont -c 0.5 -g groups.tsv -o filtered.tsv
+      -d min_cont -c 97 -g groups.tsv -o filtered.tsv
 
       3- distance cutoff and a cluster IDs | dbretina filter -p pairwise.tsv
-      -d max_cont -c 0.5 --clusters-file clusters.tsv --clusters-id 8 -o
+      -d max_cont -c 77 --clusters-file clusters.tsv --clusters-id 8 -o
       filtered.tsv
 
       4- groups file only                  | dbretina filter -p pairwise.tsv
@@ -41,6 +41,8 @@ Options:
                             'ochiai', 'jaccard']  [default: NA]
   -c, --cutoff FLOAT RANGE  filter out distances < cutoff  [default: 0.0;
                             0<=x<=100]
+  --extend                  include all supergroups that are linked to the
+                            given supergroups.
   -o, --output TEXT         output file prefix  [required]
   --help                    Show this message and exit.
 ```
@@ -75,6 +77,12 @@ The clusters file is a DBRetina clusters file that contains the cluster IDs to b
 
 The cluster IDs selected from the clusters file. This argument is only used if the clusters file is not provided.
 
+### 3.1.4 Extending the filteration
+
+<span style="color:orange;">** --extend                  include all supergroups that are linked to the given supergroups. **</span>
+
+This will include all supergroups that are linked to the supergroups in the groups file. This argument is only used if the groups are provided from either the groups file or the clusters file.
+
 ---
 
 ## 3.2 Output files format
@@ -83,6 +91,8 @@ The cluster IDs selected from the clusters file. This argument is only used if t
 
 Filtered version of the pairwise TSV file.
 
+<span style="color:orange;">** {output_prefix}_extended_supergroups.txt **</span>
 
+If the `--extend` argument is used, this file will contain the names of the extended supergroups.
 
 

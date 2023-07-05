@@ -52,13 +52,6 @@ Breast Cancer Cancer
 Lung Cancer   Cancer
 ```
 
-<br>
-
-<span style="color:orange;">** -n, --names PATH      names file [optional]**</span>
-
-Out output files of the index will carry the provided index. 
-XX add somthing about feature to groups then refer to the output file format section
-
 ---
 
 
