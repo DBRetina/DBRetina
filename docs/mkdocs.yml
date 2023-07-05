@@ -11,7 +11,7 @@ theme:
   features:
     - content.code.copy
 
-site_url: https://dbretina.github.io/docs/
+site_url: https://dbretina.github.io/
 nav:
   - Home: index.md
   - Getting Started:
