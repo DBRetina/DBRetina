@@ -1,4 +1,9 @@
 site_name: DBRetina Documentation
+site_url: https://dbretina.github.io/DBRetina/
+site_author: Mohamed Abuelanin
+repo_name: DBRetina/DBRetina
+repo_url: https://github.com/DBRetina/DBRetina/
+
 
 # theme:
 #   name: simple-blog
@@ -6,12 +11,39 @@ site_name: DBRetina Documentation
 theme:
   name: material
   palette:
-    scheme: slate
-    primary: indigo
+    - scheme: default
+      primary: indigo
+      toggle:
+          icon: material/brightness-7
+          name: Switch to dark mode
+
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+  font:
+    text: Roboto
+    code: Roboto Mono
+  
+      
   features:
     - content.code.copy
+    - content.code.annotate
+    - content.action.view
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - search.highlight
+    - content.tabs.link
 
-site_url: https://dbretina.github.io/DBRetina/
+extra_css:
+  - stylesheets/extra.css
+
 nav:
   - Home: index.md
   - Getting Started:
@@ -55,3 +87,5 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           # format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true 
