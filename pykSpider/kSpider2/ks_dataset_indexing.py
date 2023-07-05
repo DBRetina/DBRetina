@@ -42,11 +42,11 @@ def get_command():
             _sys_argv[i+1] = os.path.abspath(_sys_argv[i+1])
     return "DBRetina " + " ".join(_sys_argv[1:])
 
-def gmts_to_association(gmt_paths, tsv_path):
+def gmts_to_association(ctx, gmt_paths, tsv_path):
     with open(tsv_path, 'w', encoding="utf-8") as writer:
         writer.write(f"gene_set\tgene\n")
         for gmt_path in gmt_paths:
-            print(f"Processing {gmt_path}")
+            ctx.obj.INFO(f"Processing {gmt_path}")
             with open(gmt_path, 'r') as f:
                 for line in f:
                     split_line = line.strip().split('\t')
@@ -75,7 +75,6 @@ def multi_sketch(association_files, output_prefix):
     gene_set_to_genes = defaultdict(list)
     for asc in association_files:
         with open(asc) as asc_reader:
-            print(f"Processing {asc}")
             next(asc_reader)
             for line in asc_reader:
                 line = line.strip().lower().split('\t')
@@ -123,7 +122,7 @@ def validate_all_files_exist(ctx, param, value):
 
 @cli.command(name="index", help_priority=1)
 @click.option('-a', '--asc', "asc_file", multiple=True, required=False, callback = validate_all_files_exist , help="associations file col1: gene_set, col2: single gene. 1st line is header.")
-@click.option('-g', '--gmt', "gmt_file", multiple=True, required=False, callback = validate_all_files_exist, help="GMT file")
+@click.option('-g', '--gmt', "gmt_file", multiple=True, required=False, callback = validate_all_files_exist, help="GMT file(s)")
 # @click.option('-n', '--names', "names_file", required=False, type=click.Path(exists=True), help="names file")
 @click.option('-o', '--output', "output_prefix", required=True, help="output file prefix")
 @click.pass_context
@@ -146,11 +145,12 @@ def main(ctx, asc_file, output_prefix, gmt_file):
     #     names_file = "NA"
     names_file = "NA"
 
-
+    asc_from_gmt = False
     if gmt_file:
         asc_file = f"generated_{output_prefix}_gmt_to_asc.tsv"
-        gmts_to_association(list(gmt_file), asc_file)
+        gmts_to_association(ctx, list(gmt_file), asc_file)
         asc_file = [f"generated_{output_prefix}_gmt_to_asc.tsv"]
+        asc_from_gmt = True
 
 
     ctx.obj.INFO("Sketching in progress, please wait...")
@@ -158,8 +158,8 @@ def main(ctx, asc_file, output_prefix, gmt_file):
     # sketch(asc_file, output_prefix)
     multi_sketch(asc_file, output_prefix)
     
-    if "generated_" in asc_file and gmt_file:
-        os.remove(asc_file)
+    if asc_from_gmt:
+        os.remove(asc_file[0])
 
     json_file = f"{output_prefix}_hashes.json"
     ctx.obj.SUCCESS("File(s) has been sketched.")
