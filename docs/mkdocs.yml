@@ -1,0 +1,55 @@
+site_name: DBRetina Documentation
+
+# theme:
+#   name: simple-blog
+
+theme:
+  name: material
+  palette:
+    scheme: slate
+    primary: indigo
+  features:
+    - content.code.copy
+
+site_url: https://dbretina.github.io/docs/
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: installation.md
+    # - Quick Example: quick_example.md
+    - Usage:
+      - Index: usage/dbretina_index.md
+      - Pairwise: usage/dbretina_pairwise.md
+      - Filter: usage/dbretina_filter.md
+      - Cluster: usage/dbretina_cluster.md
+      - Query: usage/dbretina_query.md
+      - Export: usage/dbretina_export.md
+
+  - Examples:
+    - Example 1: DisGeNET_similarity_network-complete.ipynb
+  #   - Example 2: example2.md
+
+plugins:
+  - mkdocs-jupyter
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.critic
+  - pymdownx.caret
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          # format: !!python/name:pymdownx.superfences.fence_code_format
