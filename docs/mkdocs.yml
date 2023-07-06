@@ -65,6 +65,11 @@ plugins:
   - search
   - mkdocs-jupyter
   - git-authors
+  - glightbox:
+      zoomable: true
+      slide_effect: slide
+      draggable: true
+      caption_position: bottom
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -82,6 +87,8 @@ markdown_extensions:
   - pymdownx.keys
   - pymdownx.mark
   - pymdownx.tilde
+  - attr_list
+  - md_in_html
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

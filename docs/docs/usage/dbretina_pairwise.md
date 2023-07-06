@@ -11,7 +11,7 @@ Usage: DBRetina pairwise [OPTIONS]
 Options:
   -i, --index-prefix TEXT   Index file prefix  [required]
   -t, --threads INTEGER     number of cores
-  -d, --dist-type TEXT      select from ['containment', 'jaccard', 'ochiai']
+  -m, --metric TEXT         select from ['containment', 'jaccard', 'ochiai']
   -c, --cutoff FLOAT RANGE  filter out similarities < cutoff  [default: 0.0;
                             0<=x<=100]
   --pvalue                  calculate Hypergeometric p-value
@@ -28,13 +28,13 @@ This is the user-defined prefix that was used in the indexing step as an output 
 
 The number of processing cores to be used for parallel computation during the pairwise comparisons.
 
-<span class="cmd"> -d, --dist-type TEXT      select from ['containment', 'jaccard', 'ochiai'] </span>
+<span class="cmd"> -m, --metric TEXT         select from ['containment', 'jaccard', 'ochiai'] </span>
 
-Optional similarity type to filter out pairwise comparisons below a certain cutoff from exporting.
+Optional similarity metric to filter out pairwise comparisons below a certain cutoff from exporting.
 
 <span class="cmd"> -c, --cutoff FLOAT RANGE filter out similarities < cutoff  [default: 0.0; 0<=x<=100] </span>
 
-The `-c` command is used with the `-d` command to define the cutoff.
+The `-c` command is used with the `-m` command to define the cutoff.
 
 <span class="cmd"> --pvalue                  calculate Hypergeometric p-value </span>
 This flag calculates the Hypergeometric p-value for pairwise comparisons based on shared features between supergroups and the total number of features in the database.
@@ -95,18 +95,25 @@ A TSV file that provides information about shared features between each pair of 
 </table>
 
 
-<!-- 
-{index_prefix}_DBRetina_pairwise_stats_odds_ratio.txt
-{index_prefix}_DBRetina_pairwise_stats.json
-{index_prefix}_DBRetina_distance_metrics_plot_linear.png
-{index_prefix}_DBRetina_distance_metrics_plot_log.png 
--->
-
-
 <span class="cmd"> {index_prefix}_DBRetina_similarity_metrics_plot_log.png </span>
 
-clustered bar chart illustrates the frequency distribution of five similarity metrics - min_cont, avg_cont, max_cont, ochiai, and jaccard - across various similarity ranges. The y-axis is displayed on a logarithmic scale to accommodate the wide range of frequencies observed in the data.
+The clustered bar chart shows the logarithmic frequency distribution of three similarity metrics - containment, ochiai, and jaccard - over different similarity ranges.
 
 <span class="cmd"> {index_prefix}_DBRetina_similarity_metrics_plot_linear.png </span>
 
 Same as above, but the y-axis is displayed on a linear scale.
+
+
+=== "Example plot (Log)"
+
+    ![Image title](../assets/images/dbretina_pairwise/example_DBRetina_similarity_metrics_plot_log.png){ align=left }
+
+
+=== "Example plot (Linear)"
+
+    ![Image title](../assets/images/dbretina_pairwise/example_DBRetina_similarity_metrics_plot_linear.png){ align=left }
+
+
+??? info end "Advanced Output (For developers)"
+    `{index_prefix}_DBRetina_pairwise_stats.json`: used to generate the similarity metrics plot.
+    `{index_prefix}_DBRetina_pairwise_stats_odds_ratio.txt`: odds-ratio metadata for next step of commands.
