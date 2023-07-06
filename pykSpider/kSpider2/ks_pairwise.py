@@ -30,7 +30,7 @@ def plot_histogram(json_path, outout_file_path, use_log = False):
         "jaccard": sns.color_palette("husl", 5)[3],
     }
 
-    # Number of metrics and distance ranges
+    # Number of metrics and similarity ranges
     num_metrics = len(data)
     num_ranges = len(data[next(iter(data))])
     bar_width = 0.8 / num_metrics
@@ -50,9 +50,9 @@ def plot_histogram(json_path, outout_file_path, use_log = False):
     ax.legend()
 
     # Set axis labels and title
-    ax.set_xlabel("Distance Range")
+    ax.set_xlabel("Similarity Range")
     ax.set_ylabel("Frequency")
-    ax.set_title("Distance Metrics Frequency Distribution", fontsize=18)
+    ax.set_title("Similarity Metrics Frequency Distribution", fontsize=18)
 
     # Set y-axis to log scale and adjust limits
     if use_log:
@@ -90,13 +90,13 @@ def get_command():
 @cli.command(name="pairwise", epilog=dbretina_doc.doc_url("pairwise"), help_priority=2)
 @click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
 @click.option('-t', '--threads', "user_threads", default=1, required=False, type=int, help="number of cores")
-@click.option('-d', '--dist-type', "distance_type", required=False, default="containment", type=click.STRING, help="select from ['containment', 'jaccard', 'ochiai']")
-@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="filter out distances < cutoff")
+@click.option('-m', '--metric', "similarity_type", required=False, default="containment", type=click.STRING, help="select from ['containment', 'jaccard', 'ochiai']")
+@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="filter out similarities < cutoff")
 @click.option('--pvalue', 'calculate_pvalue', is_flag=True, required = False, default = False, help="calculate Hypergeometric p-value")
 @click.pass_context
-def main(ctx, index_prefix, user_threads, distance_type, cutoff, calculate_pvalue):
+def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pvalue):
     """
-    Calculate pairwise distances.
+    Calculate pairwise similarities.
     """
     
     commands = inject_index_command(index_prefix) + '\n' + get_command()
@@ -106,11 +106,11 @@ def main(ctx, index_prefix, user_threads, distance_type, cutoff, calculate_pvalu
     
     ctx.obj.INFO(
         f"Constructing the pairwise matrix using {user_threads} cores.")
-    kSpider_internal.pairwise(index_prefix, user_threads, distance_type, cutoff, commands, calculate_pvalue)
+    kSpider_internal.pairwise(index_prefix, user_threads, similarity_type, cutoff, commands, calculate_pvalue)
     stats_json_path = f"{index_prefix}_DBRetina_pairwise_stats.json"
-    linear_histo = f"{index_prefix}_DBRetina_distance_metrics_plot_linear.png"
-    log_histo = f"{index_prefix}_DBRetina_distance_metrics_plot_log.png"
-    ctx.obj.INFO(f"Plotting distance metrics distribution to {linear_histo} and {log_histo}")
+    linear_histo = f"{index_prefix}_DBRetina_similarity_metrics_plot_linear.png"
+    log_histo = f"{index_prefix}_DBRetina_similarity_metrics_plot_log.png"
+    ctx.obj.INFO(f"Plotting similarity metrics distribution to {linear_histo} and {log_histo}")
     
     plot_histogram(stats_json_path, linear_histo, use_log=False)
     plot_histogram(stats_json_path, log_histo, use_log=True)
