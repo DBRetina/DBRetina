@@ -21,7 +21,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import plotly.subplots as sp
-
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 def execute_bash_command(command):
     try:

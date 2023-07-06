@@ -35,8 +35,7 @@ namespace kSpider {
 
         // remove json extension
         json_prefix = json_prefix.substr(0, json_prefix.find_last_of("."));
-
-        cout << "json_prefix: " << json_prefix << endl;
+        
 
         flat_hash_map<string, string> namesMap;
         int selective_kSize = 31;
@@ -86,7 +85,8 @@ namespace kSpider {
             }
         }
 
-        cout << "namesmap construction done..." << endl;
+        // DEBUG
+        // cout << "namesmap construction done..." << endl;
 
 
         // ----------------------------------------------------------------
@@ -280,8 +280,7 @@ namespace kSpider {
 
         }
 
-        cerr << "Indexing done..." << endl;
-        cerr << "Total number of colors: " << legend->size() << endl;
+        cerr << "[dev] Total number of colors: " << legend->size() << endl;
 
         string output_prefix = user_index_prefix;
 
@@ -318,9 +317,9 @@ namespace kSpider {
         average_color_size /= legend->size();
         color_size_standard_deviation /= legend->size();
         color_size_standard_deviation = sqrt(color_size_standard_deviation / color_to_sources->size());
-        cerr << "Total selected colors: " << color_to_sources->size() << endl;
-        cerr << "Average color size: " << average_color_size << endl;
-        cerr << "Color size standard deviation: " << color_size_standard_deviation << endl;
+        cerr << "[dev] Total selected colors: " << color_to_sources->size() << endl;
+        cerr << "[dev] Average color size: " << average_color_size << endl;
+        cerr << "[dev] Color size standard deviation: " << color_size_standard_deviation << endl;
 
 
 

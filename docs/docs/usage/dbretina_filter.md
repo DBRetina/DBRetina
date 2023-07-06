@@ -51,17 +51,17 @@ Options:
 
 ### 3.1.1 Filtering by distance's cutoff
 
-<span style="color:orange;">** -c, --cutoff FLOAT RANGE  filter out distances < cutoff  [default: 0.0; 0<=x<=100] **</span>
+<span class="cmd"> -c, --cutoff FLOAT RANGE  filter out distances < cutoff  [default: 0.0; 0<=x<=100] </span>
 
 This will filter out all pairwise distances that are below the cutoff value.
 
-<span style="color:orange;">** -d, --dist-type TEXT      select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']  [default: NA] **</span>
+<span class="cmd"> -d, --dist-type TEXT      select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']  [default: NA] </span>
 
 The distance metric to apply the cutoff on. 
 
 ### 3.1.2 Filtering by supergroups
 
-<span style="color:orange;">** -g, --groups-file PATH    single-column supergroups file **</span>
+<span class="cmd"> -g, --groups-file PATH    single-column supergroups file </span>
 
 This will filter out all pairwise distances that are between supergroups that are not in the provided groups file. The groups file is a single-column file that contains the names of the supergroups to be included in the filtering.
 
@@ -69,17 +69,17 @@ This will filter out all pairwise distances that are between supergroups that ar
 
 This will filter out all pairwise distances that are between clusters that are not in the provided clusters file.
 
-<span style="color:orange;">** --clusters-file PATH      DBRetina clusters file **</span>
+<span class="cmd"> --clusters-file PATH      DBRetina clusters file </span>
 
 The clusters file is a DBRetina clusters file that contains the cluster IDs to be included in the filtering.
 
-<span style="color:orange;">** --cluster-ids TEXT        comma-separated list of cluster IDs **</span>
+<span class="cmd"> --cluster-ids TEXT        comma-separated list of cluster IDs </span>
 
 The cluster IDs selected from the clusters file. This argument is only used if the clusters file is not provided.
 
 ### 3.1.4 Extending the filteration
 
-<span style="color:orange;">** --extend                  include all supergroups that are linked to the given supergroups. **</span>
+<span class="cmd"> --extend                  include all supergroups that are linked to the given supergroups. </span>
 
 This will include all supergroups that are linked to the supergroups in the groups file. This argument is only used if the groups are provided from either the groups file or the clusters file.
 
@@ -87,11 +87,11 @@ This will include all supergroups that are linked to the supergroups in the grou
 
 ## 3.2 Output files format
 
-<span style="color:orange;">** {output_prefix}.tsv **</span>
+<span class="cmd"> {output_prefix}.tsv </span>
 
 Filtered version of the pairwise TSV file.
 
-<span style="color:orange;">** {output_prefix}_extended_supergroups.txt **</span>
+<span class="cmd"> {output_prefix}_extended_supergroups.txt </span>
 
 If the `--extend` argument is used, this file will contain the names of the extended supergroups.
 

@@ -7,6 +7,7 @@ import click
 from kSpider2.click_context import cli
 import subprocess
 import os
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 
 def is_awk_available():

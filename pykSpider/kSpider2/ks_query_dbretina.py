@@ -12,6 +12,7 @@ import os
 import sys
 import json
 import hashlib
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 def hash_string_to_unsigned_int64(input_string):
     hash_object = hashlib.sha256(input_string.encode())

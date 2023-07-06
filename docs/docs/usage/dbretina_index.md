@@ -9,7 +9,7 @@ Usage: DBRetina index [OPTIONS]
   Index the input data files.
 
 Options:
-  -a, --asc TEXT     associations file col1: gene_set, col2: single gene. 1st
+  -a, --asc TEXT     associations file col1: supergroup, col2: single feature. 1st
                      line is header.
   -g, --gmt TEXT     GMT file(s)
   -o, --output TEXT  output file prefix  [required]
@@ -27,7 +27,7 @@ Options:
 
     Pipe character `|` can't be used in the input data.
 
-<span class="cmd"> -a, --asc TEXT     associations file(s) col1: gene_set, col2: single gene. 1st line is header.</span>
+<span class="cmd"> -a, --asc TEXT     associations file(s) col1: supergroup, col2: single feature. 1st line is header.</span>
 
 The "Association File" is a two-column TSV (tab-separated values) file with an included header. The first column denotes groups, while the second column indicates the features associated with each respective group. Each row signifies a single feature and its corresponding group.
 
@@ -44,7 +44,7 @@ Lung Cancer   KRAS
 
 <span class="cmd">-g, --gmt TEXT     GMT file(s).</span>
 
-The "GMT File" is a tab-delimited headerless file that contains gene sets. Each row denotes a single gene set, while the first column indicates the name of the gene set. The second column contains a description of the gene set, while the remaining columns contain the genes that belong to the gene set. <a target=target="_blank" href="https://software.broadinstitute.org/cancer/software/gsea/wiki/index.php/Data_formats#GMT:_Gene_Matrix_Transposed_file_format_.28.2A.gmt.29">Click here to read more about GMT format.</a>
+The "GMT File" is a tab-delimited headerless file that contains feature sets. Each row denotes a single feature set, while the first column indicates the name of the feature set. The second column contains a description of the feature set, while the remaining columns contain the features that belong to the feature set. <a target=target="_blank" href="https://software.broadinstitute.org/cancer/software/gsea/wiki/index.php/Data_formats#GMT:_feature_Matrix_Transposed_file_format_.28.2A.gmt.29">Click here to read more about GMT format.</a>
 
 <br>
 

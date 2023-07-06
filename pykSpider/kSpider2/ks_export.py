@@ -14,20 +14,16 @@ import numpy as np
 from scipy.cluster.hierarchy import linkage, to_tree
 from scipy.spatial.distance import squareform, pdist
 simplefilter("ignore", ClusterWarning)
-import math
 import re
-import plotly.graph_objects as go
-import plotly.figure_factory as ff
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import pdist, squareform
-import random
-import string
 import plotly.io as pio
 import dash_bio
 from pycirclize import Circos
 from io import StringIO
 from Bio import Phylo
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 def newick_str_escape(name):
     # Remove special characters

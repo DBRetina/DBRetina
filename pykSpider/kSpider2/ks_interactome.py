@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 import pandas as pd
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 class Interactome:
     def __init__(self, output_prefix):

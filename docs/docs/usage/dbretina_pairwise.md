@@ -1,4 +1,4 @@
-# 2. Pairwise
+# Pairwise
 
 The Pairwise command in DBRetina is designed to perform pairwise comparisons between supergroups based on their shared features. This command takes the index prefix and the number of cores as input parameters.
 
@@ -6,42 +6,48 @@ The Pairwise command in DBRetina is designed to perform pairwise comparisons bet
 ```
 Usage: DBRetina pairwise [OPTIONS]
 
-  Calculate pairwise distances.
+  Calculate pairwise similarities.
 
 Options:
   -i, --index-prefix TEXT   Index file prefix  [required]
   -t, --threads INTEGER     number of cores
-  -d, --dist-type TEXT      select from ['min_cont', 'avg_cont', 'max_cont',
-                            'ochiai', 'jaccard']  [default: max_cont]
-  -c, --cutoff FLOAT RANGE  filter out distances < cutoff  [default: 0.0;
+  -d, --dist-type TEXT      select from ['containment', 'jaccard', 'ochiai']
+  -c, --cutoff FLOAT RANGE  filter out similarities < cutoff  [default: 0.0;
                             0<=x<=100]
+  --pvalue                  calculate Hypergeometric p-value
   --help                    Show this message and exit.
 ```
 
-## 2.1 Command arguments
+## Command arguments
 
-<span style="color:orange;">** -i, --index-prefix TEXT  Index file prefix  [required] **</span>
+<span class="cmd"> -i, --index-prefix TEXT   Index file prefix  [required] </span>
 
-This is the user-defined prefix that was used in the indexing step.
+This is the user-defined prefix that was used in the indexing step as an output prefix.
 
-<span style="color:orange;">** -t, --threads INTEGER    number of cores **</span>
+<span class="cmd"> -t, --threads INTEGER    number of cores </span>
 
 The number of processing cores to be used for parallel computation during the pairwise comparisons.
 
-<span style="color:orange;">** -d, --dist-type TEXT     select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']  [default: max_cont] **</span>
+<span class="cmd"> -d, --dist-type TEXT      select from ['containment', 'jaccard', 'ochiai'] </span>
 
-<span style="color:orange;">** -c, --cutoff FLOAT RANGE filter out distances < cutoff  [default: 0.0; 0<=x<=100] **</span>
+Optional similarity type to filter out pairwise comparisons below a certain cutoff from exporting.
 
-The `-d` and `-c` input parameters serve the purpose of selecting a particular distance metric and predefined cutoff. This cutoff will eliminate all pairwise comparisons that have a distance value lower than the cutoff.
+<span class="cmd"> -c, --cutoff FLOAT RANGE filter out similarities < cutoff  [default: 0.0; 0<=x<=100] </span>
+
+The `-c` command is used with the `-d` command to define the cutoff.
+
+<span class="cmd"> --pvalue                  calculate Hypergeometric p-value </span>
+This flag calculates the Hypergeometric p-value for pairwise comparisons based on shared features between supergroups and the total number of features in the database.
 
 ---
 
-## 2.2 Output files format
+## Output files
 
-<span style="color:orange;">** {perfix}_DBRetina_pairwise.tsv **</span>
+### Primary output files
+
+<span class="cmd"> {index_prefix}_DBRetina_pairwise.tsv </span>
 
 A TSV file that provides information about shared features between each pair of supergroups. The TSV columns are defined as follows:
-
 
 <table>
   <tbody>
@@ -66,35 +72,41 @@ A TSV file that provides information about shared features between each pair of 
       <td>number of features shared between the two supergroups</td>
     </tr>
     <tr>
-      <td><strong>min_containment</strong></td>
-      <td>minimum containment between the two supergroups</td>
-    </tr>
-    <tr>
-      <td><strong>avg_containment</strong></td>
-      <td>average containment between the two supergroups</td>
-    </tr>
-    <tr>
-      <td><strong>max_containment</strong></td>
-      <td>maximum containment between the two supergroups</td>
+      <td><strong>containment</strong></td>
+      <td>The containment metric is the ratio of shared kmers to the smallest set of kmers. This score is calculated as (shared_kmers / minimum_source_kmers) * 100.</td>
     </tr>
     <tr>
       <td><strong>ochiai</strong></td>
-      <td>Ochiai distance between the two supergroups</td>
+      <td>Ochiai similarity computed as 100 * (shared_kmers / sqrt(source_1_kmers * source_2_kmers))</td>
     </tr>
     <tr>
       <td><strong>jaccard</strong></td>
-      <td>Jaccard distance between the two supergroups</td>
+      <td>Jaccard similarity percentage. calculated as 100 * (shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers))</td>
+    </tr>
+    <tr>
+      <td><strong>odds_ratio</strong></td>
+      <td>The `odds_ratio` function calculates the odds ratio between two supergroups, quantifying the strength of association between them based on shared features. It returns a `double` representing the odds ratio, or `-1` if the calculation encounters a division by zero.</td>
+    </tr>
+    <tr>
+      <td><strong>pvalue</strong></td>
+      <td>This p-value quantifies the statistical significance of the overlap between the two supergroups, given their sizes and the universe of all features. Calculated from hypergeometric distribution.</td>
     </tr>
   </tbody>
 </table>
 
 
-# The output PNG file of histogram of pairwise distances
+<!-- 
+{index_prefix}_DBRetina_pairwise_stats_odds_ratio.txt
+{index_prefix}_DBRetina_pairwise_stats.json
+{index_prefix}_DBRetina_distance_metrics_plot_linear.png
+{index_prefix}_DBRetina_distance_metrics_plot_log.png 
+-->
 
-<span style="color:orange;">** {index_prefix}_DBRetina_distance_metrics_plot_log.png **</span>
 
-clustered bar chart illustrates the frequency distribution of five distance metrics - min_cont, avg_cont, max_cont, ochiai, and jaccard - across various distance ranges. The y-axis is displayed on a logarithmic scale to accommodate the wide range of frequencies observed in the data.
+<span class="cmd"> {index_prefix}_DBRetina_similarity_metrics_plot_log.png </span>
 
-<span style="color:orange;">** {index_prefix}_DBRetina_distance_metrics_plot_linear.png **</span>
+clustered bar chart illustrates the frequency distribution of five similarity metrics - min_cont, avg_cont, max_cont, ochiai, and jaccard - across various similarity ranges. The y-axis is displayed on a logarithmic scale to accommodate the wide range of frequencies observed in the data.
+
+<span class="cmd"> {index_prefix}_DBRetina_similarity_metrics_plot_linear.png </span>
 
 Same as above, but the y-axis is displayed on a linear scale.

@@ -38,5 +38,5 @@ class SpecialHelpOrder(click.Group):
 @click.group(cls=SpecialHelpOrder)
 @click.version_option(version=get_version(), prog_name="DBRetina")
 @click.pass_context
-def cli(ctx):
+def cli(ctx, max_content_width=200):
     ctx.obj = Logger(active = True)

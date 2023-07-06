@@ -2,7 +2,7 @@
 
 ## System requirements
 
-The current version of DBRetina is compatible exclusively with `x86_64` architecture systems running Linux and Python versions 3.6 to 3.10. In the future we will support conda installations and Docker.
+The current version of DBRetina is compatible exclusively with `x86_64` architecture systems running Linux and Python versions 3.8 to 3.11. In the future we will support conda installations and Docker.
 
 ## Installation
 

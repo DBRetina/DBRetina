@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import os
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 def plot_histogram(json_path, outout_file_path, use_log = False):
     # Load data from JSON file
@@ -86,10 +87,10 @@ def get_command():
             _sys_argv[i+1] = os.path.abspath(_sys_argv[i+1])
     return "#command: DBRetina " + " ".join(_sys_argv[1:])
 
-@cli.command(name="pairwise", help_priority=2)
+@cli.command(name="pairwise", epilog=dbretina_doc.doc_url("pairwise"), help_priority=2)
 @click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
 @click.option('-t', '--threads', "user_threads", default=1, required=False, type=int, help="number of cores")
-@click.option('-d', '--dist-type', "distance_type", required=False, default="containment", show_default=True, type=click.STRING, help="select from ['containment', 'jaccard', 'ochiai', 'pvalue']")
+@click.option('-d', '--dist-type', "distance_type", required=False, default="containment", type=click.STRING, help="select from ['containment', 'jaccard', 'ochiai']")
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="filter out distances < cutoff")
 @click.option('--pvalue', 'calculate_pvalue', is_flag=True, required = False, default = False, help="calculate Hypergeometric p-value")
 @click.pass_context

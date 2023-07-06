@@ -10,6 +10,7 @@ import sys
 import pandas as pd
 from collections import defaultdict
 import json
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 class StringHasher:
     FNV_prime = 1099511628211
@@ -120,8 +121,8 @@ def validate_all_files_exist(ctx, param, value):
 # class Sketch:
     
 
-@cli.command(name="index", help_priority=1)
-@click.option('-a', '--asc', "asc_file", multiple=True, required=False, callback = validate_all_files_exist , help="associations file col1: gene_set, col2: single gene. 1st line is header.")
+@cli.command(name="index", help_priority=1, epilog=dbretina_doc.doc_url("index"))
+@click.option('-a', '--asc', "asc_file", multiple=True, required=False, callback = validate_all_files_exist , help="associations file col1: supergroup, col2: single feature. 1st line is header.")
 @click.option('-g', '--gmt', "gmt_file", multiple=True, required=False, callback = validate_all_files_exist, help="GMT file(s)")
 # @click.option('-n', '--names', "names_file", required=False, type=click.Path(exists=True), help="names file")
 @click.option('-o', '--output', "output_prefix", required=True, help="output file prefix")
