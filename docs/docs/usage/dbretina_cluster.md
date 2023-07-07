@@ -33,6 +33,11 @@ The original pairwise TSV file generated from [`DBRetina pairwise`](dbretina_pai
 
 The similarity metric to apply the cutoff on.
 
+<span class="cmd"> --community               clusters as communities </span>
+
+<!-- TODO: Explain properly -->
+This flag will cluster the supergroups by a community detection algorithm. The default is to cluster the supergroups using the weakly connected components algorithm.
+
 ---
 
 ## 4.2 Output files format

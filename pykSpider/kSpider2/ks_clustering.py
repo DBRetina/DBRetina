@@ -82,11 +82,11 @@ class Clusters:
     def _add_rx_nodes(self, nodes):
         self.graph.add_nodes_from(nodes)
 
-    def __init__(self, logger_obj, pairwise_file, cut_off_threshold, dist_type, output_prefix, commuinty):
+    def __init__(self, logger_obj, pairwise_file, cut_off_threshold, metric, output_prefix, commuinty):
         self.output_prefix = output_prefix
         self.Logger = logger_obj
         self.edges_batch_number = 10_000_000
-        self.dist_type = dist_type
+        self.metric = metric
         self.cut_off_threshold = cut_off_threshold
         self.pairwise_file = pairwise_file
         self.shared_kmers_threshold = 200
@@ -94,12 +94,12 @@ class Clusters:
         self.metadata = []
         self.community = commuinty
         self.Logger.INFO("Loading TSV pairwise file")
-        if dist_type not in self.metric_to_col:
+        if metric not in self.metric_to_col:
             logger_obj.ERROR("unknown metric!")
-        self.dist_col = self.metric_to_col[dist_type]
+        self.metric_col = self.metric_to_col[metric]
         
         # check if pvalue
-        if dist_type == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+        if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
             logger_obj.ERROR("pvalue not found in pairwise file!")
 
         self.graph = ig.Graph() if commuinty else rx.PyGraph()
@@ -134,7 +134,7 @@ class Clusters:
             next(pairwise_tsv)  # Skip header
             for row in pairwise_tsv:
                 row = row.strip().split('\t')
-                similarity = float(row[self.dist_col])
+                similarity = float(row[self.metric_col])
                 self.original_nodes[int(row[0])] = row[2]
                 self.original_nodes[int(row[1])] = row[3]
 
@@ -177,7 +177,7 @@ class Clusters:
             next(pairwise_tsv)  # Skip header
             for row in pairwise_tsv:
                 row = row.strip().split('\t')
-                similarity = float(row[self.dist_col])
+                similarity = float(row[self.metric_col])
                 self.original_nodes[int(row[0])] = row[2]
                 self.original_nodes[int(row[1])] = row[3]
 
@@ -384,7 +384,7 @@ def main(ctx, pairwise_file, cutoff, metric, output_prefix, community):
     
     cutoff = float(cutoff)
     kCl = Clusters(logger_obj=ctx.obj, pairwise_file=pairwise_file,
-                   cut_off_threshold=cutoff, dist_type=metric, output_prefix=output_prefix, commuinty=community)
+                   cut_off_threshold=cutoff, metric=metric, output_prefix=output_prefix, commuinty=community)
     ctx.obj.INFO("Building the main graph...")
     kCl.construct_graph()
     ctx.obj.INFO("Clustering...")
