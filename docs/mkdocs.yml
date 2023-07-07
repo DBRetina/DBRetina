@@ -10,6 +10,7 @@ repo_url: https://github.com/DBRetina/DBRetina/
 
 theme:
   name: material
+  custom_dir: docs/overrides
   palette:
     - scheme: default
       primary: indigo
@@ -44,6 +45,12 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+# add later for versioning
+# https://squidfunk.github.io/mkdocs-material/setup/setting-up-versioning/
+# extra: 
+#   version:
+#     provider: mike
+
 nav:
   - Home: index.md
   - Getting Started:
@@ -65,6 +72,11 @@ plugins:
   - search
   - mkdocs-jupyter
   - git-authors
+  - git-revision-date-localized:
+      enable_creation_date: true
+  - git-committers:
+      repository: DBRetina/DBRetina
+      branch: main
   - glightbox:
       zoomable: true
       slide_effect: slide
@@ -79,6 +91,8 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+  - footnotes
+  - abbr
   - admonition
   - pymdownx.details
   - pymdownx.superfences

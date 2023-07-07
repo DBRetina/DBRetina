@@ -25,8 +25,12 @@ class ManageDocUrls:
     
     def get_url(self, command):
         command = command.lower()
-        return self.site_root_url + self.command_to_url[command]
+        return f"{self.site_root_url}{self.command_to_url[command]}".strip()
 
+# TODO: make a relative path
 def doc_url(command):
     yml = ManageDocUrls("/home/mabuelanin/dib-dev/dbretina/DBRetina/docs/mkdocs.yml")
-    return f"Read more at {yml.get_url(command)}"
+    output =  f"Read more at {yml.get_url(command)}"
+    output = f"\033[1m{output}\033[0m"
+
+    return output

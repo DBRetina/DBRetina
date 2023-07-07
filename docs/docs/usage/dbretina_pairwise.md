@@ -34,7 +34,7 @@ Optional similarity metric to filter out pairwise comparisons below a certain cu
 
 <span class="cmd"> -c, --cutoff FLOAT RANGE filter out similarities < cutoff  [default: 0.0; 0<=x<=100] </span>
 
-The `-c` command is used with the `-m` command to define the cutoff.
+The `-c` argument is used with the `-m` argument to define the cutoff.
 
 <span class="cmd"> --pvalue                  calculate Hypergeometric p-value </span>
 This flag calculates the Hypergeometric p-value for pairwise comparisons based on shared features between supergroups and the total number of features in the database.
