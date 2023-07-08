@@ -1,4 +1,4 @@
-# 4. Cluster
+# Clustering the pairwise similarities
 
 Graph-based clustering of the pairwise TSV file based on the connected components algorithm. The clustering is based on the similarity metric and the cutoff value. The output is a DBRetina clusters file.
 

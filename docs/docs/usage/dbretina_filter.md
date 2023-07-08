@@ -1,4 +1,4 @@
-# 3. Filter
+# Filtering pairwise similarities
 
 The Filter command in DBRetina is designed to filter out the pairwise TSV file. The command requires the **full path** of the pairwise TSV file.
 

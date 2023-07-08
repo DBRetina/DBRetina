@@ -372,7 +372,7 @@ class Clusters:
         self.Logger.INFO(f"number of clusters: {cluster_id - 1}")
 
 
-@cli.command(name="cluster", help_priority=4)
+@cli.command(name="cluster", epilog = dbretina_doc.doc_url("cluster"), help_priority=4)
 @click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
 @click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option("--community", "community", is_flag=True, help="clusters as communities", default=False)
