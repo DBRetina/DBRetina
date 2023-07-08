@@ -3,7 +3,7 @@ site_url: https://dbretina.github.io/DBRetina/
 site_author: Mohamed Abuelanin
 repo_name: DBRetina/DBRetina
 repo_url: https://github.com/DBRetina/DBRetina/
-
+edit_uri: tree/main/docs/docs/
 
 # theme:
 #   name: simple-blog
