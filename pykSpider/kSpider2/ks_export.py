@@ -14,20 +14,16 @@ import numpy as np
 from scipy.cluster.hierarchy import linkage, to_tree
 from scipy.spatial.distance import squareform, pdist
 simplefilter("ignore", ClusterWarning)
-import math
 import re
-import plotly.graph_objects as go
-import plotly.figure_factory as ff
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import pdist, squareform
-import random
-import string
 import plotly.io as pio
 import dash_bio
 from pycirclize import Circos
 from io import StringIO
 from Bio import Phylo
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 def newick_str_escape(name):
     # Remove special characters
@@ -110,13 +106,13 @@ def tree_to_newick(node, leaf_names):
 
 
 def similarity_df_to_newick(similarity_df, method):
-    # Convert similarity matrix to dissimilarity matrix
+    # Convert similarity matrix to distance matrix
     dissimilarity_df = 100 - similarity_df
 
     # Ensure the diagonal is zero
     np.fill_diagonal(dissimilarity_df.values, 0)
 
-    # Convert the dissimilarity matrix DataFrame to a condensed distance matrix for linkage
+    # Convert the distance matrix DataFrame to a condensed distance matrix for linkage
     # condensed_distance_matrix = squareform(dissimilarity_df)
     condensed_distance_matrix = pdist(dissimilarity_df, metric = 'euclidean')
 
@@ -144,24 +140,49 @@ def check_if_there_is_a_pvalue(pairwise_file):
             else:
                 continue
 
-@cli.command(name="export", help_priority=5)
-@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
-@click.option('-d', '--dist-type', "distance_type", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
-@click.option('--newick', "newick", is_flag=True, help="Convert the similarity matrix to newick tree format", default=False)
-@click.option('-l', '--labels', "labels_selection", callback = validate_labels, required=False, default="ids", show_default=True, type=click.STRING, help="select from ['ids', 'names']")
-@click.option('--linkage', "linkage_method", required=False, default="ward", show_default=True, type=click.STRING, help="select from ['single', 'complete', 'average', 'weighted', 'centroid', 'median', 'ward']")
-@click.option('-o', "output_prefix", required=True, type=click.STRING, help="output prefix")
-@click.pass_context
-def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_selection, linkage_method):
-    """Export to dissimilarity matrix and newick format.
+def export_heatmap(df, filename):
+    plt.figure(figsize=(10,8)) # Adjust size as needed
     
-    Export a pairwise TSV file to a dissimilarity matrix and (optionally) a newick-format file.
+    # Create a heatmap with seaborn
+    cmap = sns.diverging_palette(220, 10, as_cmap=True) 
+    heatmap = sns.heatmap(df, cmap=cmap) 
+
+    # Adding padding to prevent cutting of the heatmap
+    b, t = plt.ylim()
+    b += 0.5
+    t -= 0.5
+    plt.ylim(b, t)
+
+    # Customize the heatmap
+    heatmap.set_title('Similarity Heatmap', fontdict={'fontsize':18}, pad=16)
+    # plt.xlabel('Column Name', fontsize=14) 
+    # plt.ylabel('Column Name', fontsize=14) 
+    # legend title
+    # heatmap.legend(title="Similarity", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.yticks(rotation=0)
+
+    # Save the heatmap to a file
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.close()  # Close the figure after saving it to a file
+
+@cli.command(name="export", epilog = dbretina_doc.doc_url("export"), help_priority=5)
+@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
+@click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('--newick', "newick", is_flag=True, help="Convert the distance matrix to newick tree format", default=False)
+@click.option('-l', '--labels', "labels_selection", callback = validate_labels, required=False, default="names", show_default=True, type=click.STRING, help="select from ['ids', 'names']")
+@click.option('--linkage', "linkage_method", required=False, default="ward", show_default=True, type=click.STRING, help="select from ['single', 'complete', 'average', 'weighted', 'centroid', 'median', 'ward']")
+@click.option('-o', "--output", "output_prefix", required=True, type=click.STRING, help="output prefix")
+@click.pass_context
+def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, linkage_method):
+    """Export to distance matrix and tree formats.
+    
+    Export a pairwise TSV file into a distance matrix, newick-format file and circular dendrogram.
     
     """
  
     LOGGER = ctx.obj
 
-    distance_to_col = {
+    metric_to_col = {
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
@@ -169,15 +190,15 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
         "pvalue": 9,
     }
 
-    if distance_type not in distance_to_col:
-        LOGGER.ERROR("unknown distance!")
+    if metric not in metric_to_col:
+        LOGGER.ERROR("unknown metric!")
         
     
     # check if pvalue
-    if distance_type == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+    if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
         LOGGER.ERROR("pvalue not found in pairwise file!")
 
-    dist_col = distance_to_col[distance_type]    
+    dist_col = metric_to_col[metric]    
 
     # Check for existing pairwise file
     for _file in [pairwise_file]:
@@ -208,23 +229,14 @@ def main(ctx, pairwise_file, newick, distance_type, output_prefix, labels_select
     # np.fill_diagonal(similarity_df.values, math.log2(100))
     np.fill_diagonal(similarity_df.values, 100)
     
+    # convert to distance matrix
+    distance_matrix_df = 100 - similarity_df
     
-    
-    # Plotting the heatmap with plotly and dash
-    
-    fig = dash_bio.Clustergram(
-        data=similarity_df,
-        column_labels=list(similarity_df.columns.values),
-        row_labels=list(similarity_df.index),
-        height=2800,
-        width=2700,
-        link_method=linkage_method,
-        # display_ratio=[0.1, 0.7]
-    )
+    export_heatmap(similarity_df, f"{output_prefix}_heatmap.png")
     
     LOGGER.INFO(f"Writing heatmap to {output_prefix}_heatmap.html")
-    pio.write_html(fig, "{output_prefix}_heatmap.html")
-    fig.write_image(f"{output_prefix}_heatmap.png", width=2700, height=2800, scale=1)
+    # pio.write_html(fig, f"{output_prefix}_heatmap.html")
+    # fig.write_image(f"{output_prefix}_heatmap.png", width=2700, height=2800, scale=1)
 
     ##################### PLOTLY END #####################
     

@@ -10,6 +10,7 @@ import math
 import sys
 import igraph as ig
 import leidenalg as la
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 def check_if_there_is_a_pvalue(pairwise_file):
     with open(pairwise_file) as F:
@@ -30,7 +31,7 @@ def get_command():
 
 class Clusters:
 
-    distance_to_col = {
+    metric_to_col = {
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
@@ -81,11 +82,11 @@ class Clusters:
     def _add_rx_nodes(self, nodes):
         self.graph.add_nodes_from(nodes)
 
-    def __init__(self, logger_obj, pairwise_file, cut_off_threshold, dist_type, output_prefix, commuinty):
+    def __init__(self, logger_obj, pairwise_file, cut_off_threshold, metric, output_prefix, commuinty):
         self.output_prefix = output_prefix
         self.Logger = logger_obj
         self.edges_batch_number = 10_000_000
-        self.dist_type = dist_type
+        self.metric = metric
         self.cut_off_threshold = cut_off_threshold
         self.pairwise_file = pairwise_file
         self.shared_kmers_threshold = 200
@@ -93,12 +94,12 @@ class Clusters:
         self.metadata = []
         self.community = commuinty
         self.Logger.INFO("Loading TSV pairwise file")
-        if dist_type not in self.distance_to_col:
-            logger_obj.ERROR("unknown distance!")
-        self.dist_col = self.distance_to_col[dist_type]
+        if metric not in self.metric_to_col:
+            logger_obj.ERROR("unknown metric!")
+        self.metric_col = self.metric_to_col[metric]
         
         # check if pvalue
-        if dist_type == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+        if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
             logger_obj.ERROR("pvalue not found in pairwise file!")
 
         self.graph = ig.Graph() if commuinty else rx.PyGraph()
@@ -133,12 +134,12 @@ class Clusters:
             next(pairwise_tsv)  # Skip header
             for row in pairwise_tsv:
                 row = row.strip().split('\t')
-                distance = float(row[self.dist_col])
+                similarity = float(row[self.metric_col])
                 self.original_nodes[int(row[0])] = row[2]
                 self.original_nodes[int(row[1])] = row[3]
 
                 # don't make graph edge
-                if distance < self.cut_off_threshold:
+                if similarity < self.cut_off_threshold:
                     continue
 
                 if batch_counter < self.edges_batch_number:
@@ -146,7 +147,7 @@ class Clusters:
                     seq1 = int(row[0]) - 1
                     seq2 = int(row[1]) - 1
 
-                    edges_tuples.append((seq1, seq2, distance))
+                    edges_tuples.append((seq1, seq2, similarity))
                 else:
                     self.add_edges(edges_tuples)
                     batch_counter = 0
@@ -176,12 +177,12 @@ class Clusters:
             next(pairwise_tsv)  # Skip header
             for row in pairwise_tsv:
                 row = row.strip().split('\t')
-                distance = float(row[self.dist_col])
+                similarity = float(row[self.metric_col])
                 self.original_nodes[int(row[0])] = row[2]
                 self.original_nodes[int(row[1])] = row[3]
 
                 # don't make graph edge
-                if distance < self.cut_off_threshold:
+                if similarity < self.cut_off_threshold:
                     continue
 
                 if batch_counter < self.edges_batch_number:
@@ -189,7 +190,7 @@ class Clusters:
                     seq1 = int(row[0]) - 1
                     seq2 = int(row[1]) - 1
 
-                    edges_tuples.append((seq1, seq2, distance))
+                    edges_tuples.append((seq1, seq2, similarity))
                 else:
                     self.add_edges(edges_tuples)
                     batch_counter = 0
@@ -198,15 +199,54 @@ class Clusters:
             if len(edges_tuples):
                 self.add_edges(edges_tuples)        
     
+    def plot_histogram(self, cluster_sizes, filename):
+        # Create a figure and a set of subplots
+        fig, ax = plt.subplots()
 
-    def plot_histogram(self, cluster_sizes):
+        # Set the style of Seaborn
+        sns.set(style="whitegrid")
+
+        # Find the range of the data
+        data_range = [np.min(cluster_sizes), np.max(cluster_sizes)]
+
+        # Create the bins - one for each possible value in the range of data
+        bins = np.arange(data_range[0], data_range[1] + 2) - 0.5
+
+        # Plot histogram with Seaborn
+        sns.histplot(cluster_sizes, bins=bins, color='navy', kde=False, ax=ax)
+
+        # Add labels and title
+        ax.set(xlabel='Cluster Size', ylabel='Frequency (Log Scale)', 
+            title='Histogram of Cluster Sizes')
+
+        # Use a logarithmic scale on y-axis to handle outliers
+        ax.set_yscale('log')
+
+        # Let matplotlib handle the x-axis ticks automatically
+        plt.xticks(rotation=90)
+
+        # Remove top and right borders
+        sns.despine()
+
+        # Save the plot as a png file
+        fig.savefig(filename)
+        plt.close()
+    
+
+    def _plot_histogram(self, cluster_sizes):
         # Set style and context to make a nicer plot
         sns.set_style("whitegrid")
         # sns.set_context("talk")
 
         plt.figure()  # Set the figure size
-        plot = sns.histplot(cluster_sizes, color='skyblue', edgecolor='black', stat='count', bins=10, discrete=False)  # Generate histogram with KDE
-        # plot = sns.(cluster_sizes, color='skyblue', edgecolor='black', stat='count', bins=50, hue=False)  # Generate histogram with KDE
+        plot = sns.histplot(
+            cluster_sizes, 
+            color='skyblue', 
+            edgecolor='black', 
+            stat='count', 
+            # bins=10, 
+            # discrete=False
+            )
 
         plt.title('Histogram of Cluster Sizes')  # Set the title
         plt.xlabel('Cluster Sizes')  # Set the x-label
@@ -278,16 +318,17 @@ class Clusters:
             # optimiser.optimise_partition(self.connected_components)
             # refine_partition = la.ModularityVertexPartition(self.graph)
             # optimiser.move_nodes_constrained(refine_partition, self.connected_components)
-            ig.plot(self.connected_components, 
-                f"{self.output_prefix}_communiteis.png", 
-                bbox=(1500, 1500), 
-                vertex_label_size=5, 
-                edge_arrow_size=0.5, 
-                edge_arrow_width=0.5, 
-                edge_width=0.5,
-                edge_label_size=5, 
-                edge_curved=False, 
-                layout = 'auto')
+            # TODO either plot both igraph and rustworkx or disable both
+            # ig.plot(self.connected_components, 
+            #     f"{self.output_prefix}_graph_plot.png", 
+            #     bbox=(1500, 1500), 
+            #     vertex_label_size=5, 
+            #     edge_arrow_size=0.5, 
+            #     edge_arrow_width=0.5, 
+            #     edge_width=0.5,
+            #     edge_label_size=5,
+            #     edge_curved=False,
+            #     layout = 'auto')
 
             # la.find_partition(self.graph, la.ModularityVertexPartition)
         else:
@@ -317,45 +358,33 @@ class Clusters:
                 cluster_sizes.append(len(component))
                 total_clustered_nodes += len(component)
                 cluster_id += 1
-
-        if self.community:
-            ig.write(self.graph, f"{self.output_prefix}_clusters.gml", format="gml")
-            ig.write(self.graph, f"{self.output_prefix}_clusters.graphml", format="graphml")
+        # TODO: activate only if also generated from connected components mode.
+        # if self.community:
+        #     ig.write(self.graph, f"{self.output_prefix}_clusters.gml", format="gml")
+        #     ig.write(self.graph, f"{self.output_prefix}_clusters.graphml", format="graphml")
         
 
         self.Logger.INFO("plotting cluster sizes histogram and bubble plot")
+        self.plot_histogram(cluster_sizes, f"{self.output_prefix}_clusters_histogram.png")
         self.Logger.INFO(f"Total number of clustered supergroups: {total_clustered_nodes}")
         self.Logger.INFO(f"Average cluser size: {total_clustered_nodes / len(self.connected_components)}")
-        self.plot_histogram(cluster_sizes)
         self.plot_bubbles(cluster_sizes)
         self.Logger.INFO(f"number of clusters: {cluster_id - 1}")
 
 
-"""
-TODO:
-New help messages
-
-1. containment cutoff (sim_cutoff): cluster sequences with (containment > cutoff) where containment = shared kmers % to the total kmers in the smallest node.
-2. connectivity cutoff (con_cutoff): cluster sequences with (connectivity > cutoff) where connectivity = shared kmers % to the total kmers in the largest node.
-3. min count cutoff (min_count): the min kmers count of a node to connect two clusters, otherwise the node will be reported twice in both clusters.
-""" 
-
-
-@cli.command(name="cluster", help_priority=4)
-@click.option('-p', '--pairwise', 'pairwise_file', required=False, type=click.Path(exists=True), help="filtered pairwise TSV file")
-@click.option('-d', '--dist-type', "distance_type", required=True, show_default=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@cli.command(name="cluster", epilog = dbretina_doc.doc_url("cluster"), help_priority=4)
+@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
+@click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option("--community", "community", is_flag=True, help="clusters as communities", default=False)
-@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="cluster the supergroups with (distance > cutoff)")
+@click.option('-c', '--cutoff', required=True, type=click.FloatRange(0, 100, clamp=False), default=0.0, help="cluster the supergroups with (similarity > cutoff)")
 @click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
-def main(ctx, pairwise_file, cutoff, distance_type, output_prefix, community):
+def main(ctx, pairwise_file, cutoff, metric, output_prefix, community):
     """Graph-based clustering of the pairwise TSV file."""
     
-
     cutoff = float(cutoff)
-
     kCl = Clusters(logger_obj=ctx.obj, pairwise_file=pairwise_file,
-                   cut_off_threshold=cutoff, dist_type=distance_type, output_prefix=output_prefix, commuinty=community)
+                   cut_off_threshold=cutoff, metric=metric, output_prefix=output_prefix, commuinty=community)
     ctx.obj.INFO("Building the main graph...")
     kCl.construct_graph()
     ctx.obj.INFO("Clustering...")

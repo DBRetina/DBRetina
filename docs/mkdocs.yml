@@ -1,17 +1,56 @@
 site_name: DBRetina Documentation
+site_url: https://dbretina.github.io/DBRetina/
+site_author: Mohamed Abuelanin
+repo_name: DBRetina/DBRetina
+repo_url: https://github.com/DBRetina/DBRetina/
+
 
 # theme:
 #   name: simple-blog
 
 theme:
   name: material
+  custom_dir: docs/overrides
   palette:
-    scheme: slate
-    primary: indigo
+    - scheme: default
+      primary: indigo
+      toggle:
+          icon: material/brightness-7
+          name: Switch to dark mode
+
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+  font:
+    text: Roboto
+    code: Roboto Mono
+  
+      
   features:
     - content.code.copy
+    - content.code.annotate
+    - content.action.view
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - search.highlight
+    - content.tabs.link
 
-site_url: https://dbretina.github.io/DBRetina/
+extra_css:
+  - stylesheets/extra.css
+
+# add later for versioning
+# https://squidfunk.github.io/mkdocs-material/setup/setting-up-versioning/
+# extra: 
+#   version:
+#     provider: mike
+
 nav:
   - Home: index.md
   - Getting Started:
@@ -24,6 +63,9 @@ nav:
       - Cluster: usage/dbretina_cluster.md
       - Query: usage/dbretina_query.md
       - Export: usage/dbretina_export.md
+      - Bipartite: usage/dbretina_bipartite.md
+      - Interactome: usage/dbretina_interactome.md
+      - Dedup: usage/dbretina_dedup.md
 
   - Examples:
     - Example 1: DisGeNET_similarity_network-complete.ipynb
@@ -33,6 +75,16 @@ plugins:
   - search
   - mkdocs-jupyter
   - git-authors
+  - git-revision-date-localized:
+      enable_creation_date: true
+  - git-committers:
+      repository: DBRetina/DBRetina
+      branch: main
+  - glightbox:
+      zoomable: true
+      slide_effect: slide
+      draggable: true
+      caption_position: bottom
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -42,6 +94,8 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+  - footnotes
+  - abbr
   - admonition
   - pymdownx.details
   - pymdownx.superfences
@@ -50,8 +104,12 @@ markdown_extensions:
   - pymdownx.keys
   - pymdownx.mark
   - pymdownx.tilde
+  - attr_list
+  - md_in_html
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
           class: mermaid
           # format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true 

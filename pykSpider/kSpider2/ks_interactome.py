@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 import pandas as pd
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 class Interactome:
     def __init__(self, output_prefix):
@@ -34,7 +35,7 @@ class Interactome:
             self.graph[node1][node2] = 1
             self.graph[node2][node1] = 1
 
-    def export(self):
+    def export(self, ctx):
         rows = ["feature_1\tfeature_2\tshared_groups"]
         for node1, edges in self.graph.items():
             rows.extend(
@@ -42,7 +43,10 @@ class Interactome:
                 for node2, weight in edges.items()
                 if node1 < node2
             )
-        with open(f"{self.output_prefix}_interactome.tsv", 'w') as file:
+            
+        output_file_name = f"{self.output_prefix}_interactome.tsv"
+        ctx.obj.INFO(f"Exporting interactome to {output_file_name}")
+        with open(output_file_name, 'w') as file:
             file.write("\n".join(rows))
     
         
@@ -85,15 +89,19 @@ class Interactome:
         plt.xticks(rotation=90)
         plt.savefig(f"{self.output_prefix}_interactome_scatter.png", dpi=500)
     
-    def graph_export(self):
-        self.G = nx.Graph()
-        for node1, edges in self.graph.items():
-            for node2, weight in edges.items():
-                self.G.add_edge(node1, node2, weight=weight)
+    def graph_export(self, graphml, gexf, ctx):
+        if graphml or gexf:
+            self.G = nx.Graph()
+            for node1, edges in self.graph.items():
+                for node2, weight in edges.items():
+                    self.G.add_edge(node1, node2, weight=weight)
 
-        nx.write_graphml(self.G, f"{self.output_prefix}_interactome.graphml")
-        nx.write_gexf(self.G, f"{self.output_prefix}_interactome.gexf")
-        nx.write_pajek(self.G, f"{self.output_prefix}_interactome.net")
+        if graphml:
+            ctx.obj.INFO("Exporting interactome as graphml file")
+            nx.write_graphml(self.G, f"{self.output_prefix}_interactome.graphml")
+        if gexf:
+            ctx.obj.INFO("Exporting interactome as gexf file")
+            nx.write_gexf(self.G, f"{self.output_prefix}_interactome.gexf")
 
 
 def get_command():
@@ -104,20 +112,29 @@ def get_command():
     return "#command: DBRetina " + " ".join(_sys_argv[1:])
 
 
-@cli.command(name="interactome", help_priority=9)
-# @click.option('-t', '--threads', "user_threads", default=1, required=False, type=int, help="number of cores")
+@cli.command(name="interactome", epilog = dbretina_doc.doc_url("interactome"), help_priority=9)
+# @click.option('-t', '--threads', "user_threads", default=1, required=False, type=int, help="number of cores") # TODO later in C++ version
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="index file prefix")
 @click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
+@click.option('--graphml', 'graphml', is_flag=True, default = False, help="export interactome as graphml file")
+@click.option('--gexf', 'gexf', is_flag=True, default = False, help="export interactome as gexf file")
 @click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
-def main(ctx, index_prefix, pairwise_file, output_prefix):
-    """
-        Construct a genes interactome from pairwise TSV file
+def main(ctx, index_prefix, pairwise_file, output_prefix, graphml, gexf):
+    """Construct a features-interactome.
+ 
+
+    Detailed description:
+
+
+    For a groups pairwise file, construct an interactome between the features of each group and all other features in the pairwise file.
     """
 
     ###################################
     # 1. Extract gene set pairs
     ###################################
+    
+    ctx.obj.INFO(f"Extracting gene set pairs from {pairwise_file}")
 
     geneSet_pairs = set()
     metadata = []
@@ -141,6 +158,7 @@ def main(ctx, index_prefix, pairwise_file, output_prefix):
     ##############################################
     # 2. Map gene set to genes (group to features)
     ##############################################
+    ctx.obj.INFO(f"Mapping gene sets to features")
 
     raw_json_file = f"{index_prefix}_raw.json"
     with open(raw_json_file, "r") as f:
@@ -150,6 +168,7 @@ def main(ctx, index_prefix, pairwise_file, output_prefix):
     #3. Build the interactome
     ##############################################
     
+    ctx.obj.INFO("Building the interactome. Please wait...")
     interactome = Interactome(output_prefix)
     
     for geneSet_pair in tqdm(geneSet_pairs):
@@ -160,7 +179,8 @@ def main(ctx, index_prefix, pairwise_file, output_prefix):
         for feature1 in geneSet1_features:
             for feature2 in geneSet2_features:
                 interactome.add_edge(feature1, feature2)
-    
-    interactome.export()
-    # interactome.graph_export()
+                
+    interactome.export(ctx)
+    interactome.graph_export(graphml, gexf, ctx)
+    ctx.obj.SUCCESS("Interactome has been constructed successfully.")
     # interactome.plot_statistics()

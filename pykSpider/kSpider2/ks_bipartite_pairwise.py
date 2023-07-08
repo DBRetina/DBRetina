@@ -17,11 +17,13 @@ import dash_html_components as html
 from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 import plotly.express as px
+import kSpider2.dbretina_doc_url as dbretina_doc
+from sklearn.preprocessing import MinMaxScaler
+from plotly.graph_objects import Figure, Parcats
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import plotly.subplots as sp
-
 
 def execute_bash_command(command):
     try:
@@ -51,21 +53,47 @@ def get_command():
 def path_to_absolute_path(ctx, param, value):
     return value if value == "NA" else os.path.abspath(value)
 
-def check_if_there_is_a_pvalue(pairwise_file):
-    with open(pairwise_file) as F:
-        for line in F:
-            if not line.startswith("#"):
-                return "pvalue" in line
-            else:
-                continue
+# TODO: Remove later
+def working2_plot_bipartite(df_bipartite, output_prefix):
+    from sklearn.preprocessing import LabelEncoder
+    le = LabelEncoder()
+    df_bipartite['group_1'] = le.fit_transform(df_bipartite['group_1'])
+    fig = px.parallel_categories(df_bipartite[['group_1', 'group_2']], color="group_1", color_continuous_scale=px.colors.sequential.Inferno)
+    fig.write_html(output_prefix + ".html")
 
 
-def plot_bipartite(df_bipartite, output_prefix):
+def plot_bipartite(df_bipartite, color_metric, output_prefix):
+    # Min-Max normalization for the color metric to get values in range [0,1]
+    scaler = MinMaxScaler()
+    df_bipartite['color'] = scaler.fit_transform(df_bipartite[[color_metric]])
+    
+    # Create a new column holding the original color metric data as categorical values
+    df_bipartite[color_metric+'_cat'] = df_bipartite[color_metric].apply(lambda x: f"{color_metric}: {x:.3f}")
+
+    fig = Figure(data=[Parcats(
+        dimensions=[{'label': 'Group 1', 'values': df_bipartite['group_1']},
+                    {'label': 'Group 2', 'values': df_bipartite['group_2']},
+                    {'label': color_metric, 'values': df_bipartite[color_metric+'_cat'], 'visible': False}],
+        line={'color': df_bipartite['color'],
+              'colorscale': 'Jet', 'cmin': 0, 'cmax': 1,
+              'colorbar': {'title': color_metric, 'thickness': 10, 'orientation': 'h'}
+              },
+        labelfont={'size': 18, 'family': 'Times'},
+        tickfont={'size': 16, 'family': 'Times'},
+        arrangement='freeform'
+    )])
+    
+    fig.update_layout(coloraxis_colorbar=dict(orientation="v"))
+    fig.write_html(f"{output_prefix}.html")
+    fig.write_image(f"{output_prefix}.png")
+
+
+# TODO: Remove later
+def working_plot_bipartite(df_bipartite, output_prefix):
     B = nx.Graph()
     B.add_nodes_from(df_bipartite['group_1'], bipartite=0)
     B.add_nodes_from(df_bipartite['group_2'], bipartite=1)
-    edges = [(row['group_1'], row['group_2'], row['pvalue']) for _, row in df_bipartite.iterrows()]
-    B.add_weighted_edges_from(edges)
+    B.add_edges_from([(row['group_1'], row['group_2']) for _, row in df_bipartite.iterrows()])
 
     # separate by group
     l, r = nx.bipartite.sets(B)
@@ -75,32 +103,18 @@ def plot_bipartite(df_bipartite, output_prefix):
     pos |= ((node, (1, index)) for index, node in enumerate(l))
     pos.update((node, (2, index)) for index, node in enumerate(r))
 
-    # add edges as disconnected lines in a single trace
-    edge_trace = go.Scatter(
-        x=[],
-        y=[],
-        line=dict(width=0.5, color='#888'),
-        hoverinfo='none',
-        mode='lines')
-
-    for edge in B.edges(data=True):
-        x0, y0 = pos[edge[0]]
-        x1, y1 = pos[edge[1]]
-        edge_trace['x'] += (x0, x1, None)
-        edge_trace['y'] += (y0, y1, None)
-
-    # add nodes as scatter trace
+    # Create node trace
     node_trace = go.Scatter(
-        x=[],
-        y=[],
-        text=[],
+        x=[pos[i][0] for i in B.nodes()],
+        y=[pos[i][1] for i in B.nodes()],
         mode='markers',
+        text=[f'Name: {str(n)}<br># of connections: {len(list(B.neighbors(n)))}' for n in B.nodes()],
         hoverinfo='text',
         marker=dict(
             showscale=True,
-            colorscale='YlGnBu',
+            colorscale='Viridis',
             reversescale=True,
-            color=[],
+            color=[len(list(B.neighbors(n))) for n in B.nodes()],
             size=10,
             colorbar=dict(
                 thickness=15,
@@ -110,21 +124,26 @@ def plot_bipartite(df_bipartite, output_prefix):
             ),
             line=dict(width=2)))
 
-    for node in B.nodes():
-        x, y = pos[node]
-        node_trace['x'] += (x, )
-        node_trace['y'] += (y, )
+    # Create edge trace
+    edge_trace = go.Scatter(
+        x=[],
+        y=[],
+        line=dict(width=0.5),
+        hoverinfo='none',
+        mode='lines')
 
-    # color node points by the number of connections
-    for adjacencies in B.adjacency():
-        node_trace['marker']['color'] += (len(adjacencies[1]), )
-        node_info = f'Name: {str(adjacencies[0])}<br># of connections: {len(adjacencies[1])}'
-        node_trace['text'] += (node_info, )
+    for edge in B.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_trace['x'] += (x0, x1, None)
+        edge_trace['y'] += (y0, y1, None)
+        # edge color based on the number of connections
+        edge_trace['line']['color'] = "blue"
 
-    # create plotly figure and add traces
+    # Create figure
     fig = go.Figure(data=[edge_trace, node_trace],
                     layout=go.Layout(
-                        title='<br>Network graph',
+                        title='Network graph',
                         titlefont=dict(size=16),
                         showlegend=False,
                         hovermode='closest',
@@ -132,9 +151,12 @@ def plot_bipartite(df_bipartite, output_prefix):
                         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
 
-    fig.write_html(output_prefix)
+    fig.write_html(output_prefix + ".html")
+    # export high quality image
+    fig.write_image(output_prefix + ".png", width=1920, height=1080)
 
 
+# TODO: Experminetal
 def interactive_dashboard(df_bipartite):
     # create dash application
     app = dash.Dash(__name__)
@@ -227,18 +249,31 @@ def interactive_dashboard(df_bipartite):
     
     app.run_server(debug=True)
 
+def check_if_there_is_a_pvalue(pairwise_file):
+    with open(pairwise_file) as F:
+        for line in F:
+            if not line.startswith("#"):
+                return "pvalue" in line
+            else:
+                continue
 
-@cli.command(name="bipartite", help_priority=8)
+
+@cli.command(name="bipartite", epilog = dbretina_doc.doc_url("bipartite"), help_priority=8)
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('--group1', "group_1_file", callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="group1 single-column supergroups file")
 @click.option('--group2', "group_2_file", callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="group2 single-column supergroups file")
+@click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('-o', '--output', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
-def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
+def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
     """
-        Create a bipartite relationships between two groups file
+        Create a bipartite connections between two group files.
     """
     LOGGER = ctx.obj
+    
+    # check if pvalue
+    if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+        LOGGER.ERROR("pvalue not found in pairwise file!")
 
     ###########################################################
     # 1. parse the two group files to dictionary for O(1) access
@@ -268,7 +303,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
 
     LOGGER.INFO("Parsing the pairwise file...")
 
-    distance_to_col = {
+    metric_to_col = {
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
@@ -315,25 +350,25 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
                 df_row = {
                     "group_1": group1,
                     "group_2": group2,
-                    "containment": float(row[distance_to_col["containment"]]),
-                    "ochiai": float(row[distance_to_col["ochiai"]]),
-                    "jaccard": float(row[distance_to_col["jaccard"]]),
-                    "pvalue": float(row[distance_to_col["pvalue"]]),
+                    "containment": float(row[metric_to_col["containment"]]),
+                    "ochiai": float(row[metric_to_col["ochiai"]]),
+                    "jaccard": float(row[metric_to_col["jaccard"]]),
+                    "pvalue": float(row[metric_to_col["pvalue"]]),
                 }
             else:
                 df_row = {
                     "group_1": group1,
                     "group_2": group2,
-                    "containment": float(row[distance_to_col["containment"]]),
-                    "ochiai": float(row[distance_to_col["ochiai"]]),
-                    "jaccard": float(row[distance_to_col["jaccard"]]),
+                    "containment": float(row[metric_to_col["containment"]]),
+                    "ochiai": float(row[metric_to_col["ochiai"]]),
+                    "jaccard": float(row[metric_to_col["jaccard"]]),
                 }
 
             df_rows.append(df_row)
 
-    LOGGER.INFO(f"Writing the bipartite TSV file to {output_prefix}_bipartite_full_relationships.tsv")
+    LOGGER.INFO(f"Writing the bipartite TSV file to {output_prefix}_bipartite_pairwise.tsv")
     df_bipartite = pd.DataFrame(df_rows)
-    df_bipartite.to_csv(f"{output_prefix}_bipartite_full_relationships.tsv", sep='\t', index=False)
+    df_bipartite.to_csv(f"{output_prefix}_bipartite_pairwise.tsv", sep='\t', index=False)
     
     # report if there are unmatched groups
     unique_matched_group1 = set(df_bipartite['group_1'].unique())
@@ -361,18 +396,24 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
 
     ###########################################################
     # draw the graph
-    LOGGER.INFO(f"Writing the scatter graph to {output_prefix}_bipartite.html")
-    fig = px.scatter(df_bipartite, x="containment", y="ochiai", color="pvalue",
-                    size='jaccard', hover_data=['group_1','group_2'])
-    fig.write_html(f"{output_prefix}.html")
+    ## TODO: Nice scatter plot, but let's do it later 
+    """ # << ---- ### DISABLED FOR NOW ### ---- 
+    LOGGER.INFO(f"Writing the scatter graph to {output_prefix}_scatter.html")
+    fig = px.scatter(df_bipartite, x="containment", y="ochiai", color="pvalue", size='jaccard', hover_data=['group_1','group_2'])
+    fig.write_html(f"{output_prefix}_scatter.html")
+    """
+    
     ###########################################################
 
     LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.html")
-    plot_bipartite(df_bipartite, f"{output_prefix}_bipartite.html")
+    LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.png")
+    plot_bipartite(df_bipartite, 'containment', f"{output_prefix}_bipartite")
 
     ###########################################################
 
     # Create a heatmap
+    ######### HEATMAP | DSABLED FOR NOW #######################
+    """ <<< ----- DISABLED FOR NOW -----
     LOGGER.INFO(f"Writing the heatmap to {output_prefix}_heatmap.html")
     pivot_table = df_bipartite.pivot(index='group_1', columns='group_2', values='pvalue')
     fig = px.imshow(pivot_table)
@@ -388,38 +429,52 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
             color="#7f7f7f"
         )
     )
-
     # save to disk
     fig.write_html(f"{output_prefix}_pivot_heatmap.html")
+    --------------------------------- >>> """    
 
+    # TODO: DISABLED for now. No need to plot 3 categories 
+    """
     ###########################################################
-
+    ########### PARALLEL CATEGORIES PLOT ######################
+    ########################################################### 
     LOGGER.INFO(f"Writing the parcats graph to {output_prefix}_parcats.html")
+    df_bipartite['color_group'] = pd.Categorical(df_bipartite['group_1']).codes
+    scaler = MinMaxScaler()
+    df_bipartite['color'] = scaler.fit_transform(df_bipartite[[metric]])
     fig = go.Figure(data=
-    go.Parcats(
-        dimensions=[
-            {'label': 'Group 1',
-             'values': df_bipartite['group_1']},
-            {'label': 'Group 2',
-             'values': df_bipartite['group_2']},
-            {'label': 'P-value',
-             'values': df_bipartite['pvalue']}]
+        go.Parcats(
+            dimensions=[
+                {'label': 'Group 1', 'values': df_bipartite['group_1']},
+                {'label': 'Group 2', 'values': df_bipartite['group_2']},
+                {'label': 'P-value', 'values': df_bipartite['pvalue']}],
+            line={
+                'color': df_bipartite['color_group'], 
+                'colorscale': 'Jet',
+                'colorbar': {'title': metric, 'thickness': 10, 'orientation': 'h'}
+                },
+            hoveron='color', 
+            hoverinfo='count+probability',
+            )
         )
-    )
+
     fig.write_html(f"{output_prefix}_parcats.html")
+    fig.write_image(f"{output_prefix}_parcats.png", width=1920, height=1080, scale=2)
+    """
 
     ###########################################################
 
-    # TODO: BETA
+    # TODO: [DEV] BETA
     # interactive_dashboard(df_bipartite)
 
-
+    
+    ## TODO: RESEARCH CODE STUDY PVALUE-CUTOFF #1
     #################################################################
     # 4. study the different statistics with different pvalue cutoffs
     #################################################################
 
-
-    def calculate_relationships(df, cutoff):
+    """ << --------- RESEARCH CODE ---------
+    def calculate_connections(df, cutoff):
         # Filter the dataframe by the cutoff
         df_filtered = df[df['pvalue'] <= cutoff]
 
@@ -428,7 +483,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
         # Count the number of unique group1 values for each group2 value
         counts_2 = df_filtered.groupby('group_2')['group_1'].nunique()
 
-        # Calculate the number of 1-to-1, group1-to-many, and group2-to-many relationships
+        # Calculate the number of 1-to-1, group1-to-many, and group2-to-many connections
         one_to_one = sum(counts_1 == 1) + sum(counts_2 == 1)
         group1_to_many = sum(counts_1 > 1)
         group2_to_many = sum(counts_2 > 1)
@@ -439,12 +494,12 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
         return one_to_one, group1_to_many, group2_to_many, total_one_to_many
 
 
-    LOGGER.INFO("Calculating the relationships for different pvalue cutoffs (Please Wait!)")
+    LOGGER.INFO("Calculating the connections for different pvalue cutoffs (Please Wait!)")
 
     cutoffs = np.arange(df_bipartite['pvalue'].min(), df_bipartite['pvalue'].max(), 0.001)
     results_cutoffs = []
     for cutoff in cutoffs:
-        one_to_one, group1_to_many, group2_to_many, total_one_to_many = calculate_relationships(df_bipartite, cutoff)
+        one_to_one, group1_to_many, group2_to_many, total_one_to_many = calculate_connections(df_bipartite, cutoff)
 
         # Append the results for this cutoff to the dataframe
         results_cutoffs.append({
@@ -461,9 +516,9 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
     results.to_csv(f"{output_prefix}_pvalues_cutoffs.tsv", sep='\t', index=False)
 
     #################################################################
-    # 4.1 Plotting the analysis results for cutoff vs. relationships
+    # 4.1 Plotting the analysis results for cutoff vs. connections
 
-    #### 4.1.1 Correlation Heatmap of Relationships
+    #### 4.1.1 Correlation Heatmap of connections
     LOGGER.INFO(f"Writing the correlation heatmap to {output_prefix}_pvalues_correlation_heatmap.png")
     plt.figure(figsize=(10, 8))
     sns.set(style="white")
@@ -473,10 +528,10 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
     mask = np.triu(np.ones_like(corr, dtype=float))
     # Draw the heatmap
     sns.heatmap(corr, mask=mask, annot=True, fmt=".002f", linewidths=.5, cmap='coolwarm')
-    plt.title('Correlation Heatmap of Relationships')
+    plt.title('Correlation Heatmap of connections')
     plt.savefig(f"{output_prefix}_pvalues_correlation_heatmap.png")
 
-    #### 4.1.2 Pairplot of Relationships    
+    #### 4.1.2 Pairplot of connections    
     LOGGER.INFO(f"Writing the pairplot to {output_prefix}_pvalues_pairplot.png")
     sns.set(style="ticks", color_codes=True)
     # Exclude 'pvalue_cutoff' from the pairplot
@@ -486,7 +541,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
     plt.savefig(f"{output_prefix}_pvalues_pairplot.png", dpi=400)
 
 
-    #### 4.1.3 Scatterplot of Relationships
+    #### 4.1.3 Scatterplot of connections
     LOGGER.INFO(f"Writing the scatterplot to {output_prefix}_pvalues_cutoffs_scatterplot.html")
     fig = sp.make_subplots(rows=4, cols=1)
     # Create scatter plots for each metric against pvalue_cutoff
@@ -513,7 +568,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
                                 color_continuous_midpoint=results['pvalue_cutoff'].median())
 
     fig.update_layout(
-        title='Parallel Coordinates Plot for Different Relationships',
+        title='Parallel Coordinates Plot for Different connections',
         autosize=True,
         # width=1000,
         # height=600,
@@ -525,3 +580,5 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, output_prefix):
 
     # Interactive Dashboard
     # interactive_dashboard(df_bipartite)
+    
+    >> --------- RESEARCH CODE --------- """

@@ -11,6 +11,7 @@ import seaborn as sns
 import os
 from collections import defaultdict
 import csv
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 class Graph:
     
@@ -62,7 +63,7 @@ def path_to_absolute_path(ctx, param, value):
     return value if value == "NA" else os.path.abspath(value)
 
 
-@cli.command(name="dedup", help_priority=7)
+@cli.command(name="dedup", epilog = dbretina_doc.doc_url("dedup"), help_priority=7)
 @click.option('-i', '--index-prefix', 'index_prefix', required=True, type=click.STRING, help="Index file prefix")
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('-c', '--cutoff', 'cutoff', required=True, type=click.FloatRange(0, 100, clamp=False), help="ochiai similarity cutoff")
@@ -93,7 +94,7 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
     # 2. Pairwise file parsing
     #################################
 
-    distance_to_col = {
+    metric_to_col = {
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
@@ -101,7 +102,7 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
         "pvalue": 9,
     }
 
-    DISTANCE_COL = distance_to_col["ochiai"]
+    DISTANCE_COL = metric_to_col["ochiai"]
 
     ochiai_graph = Graph()
 
@@ -147,6 +148,8 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
     LOGGER.INFO(f"Number of gene sets after deduplication: {len(all_groups)}")
     LOGGER.INFO(f"Number of removed gene sets due to deduplication: {original_groups_count - len(all_groups)}")
 
-    LOGGER.INFO(f"writing deduplicated gene sets to {output_prefix}_deduplicated_groups_file.txt")
-    with open(f"{output_prefix}_deduplicated_groups_file.txt", 'w') as f:
+    final_output = f"{output_prefix}_deduplicated_groups.txt"
+
+    LOGGER.INFO(f"writing deduplicated gene sets to {final_output}")
+    with open(final_output, 'w') as f:
         f.write('\n'.join(all_groups))

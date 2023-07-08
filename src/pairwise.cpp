@@ -359,10 +359,38 @@ namespace kSpider {
 
     double odds_ratio(int k, int s, int M, int N) {
         /*
-            this function calculates the odds ratio of a gene being in the source
-            which is the ratio of the odds of the gene being in the source to the odds of the gene being in the population.
-            If we have two gene sets with odds ratio equals to X, that means that
-            the odds of a gene being in the first set is X times the odds of the gene being in the second set.
+
+       Description:
+        The odds_ratio function calculates the odds ratio between two gene sets. 
+        This measure of association compares the odds of shared genes between two sets. 
+        The result provides an idea of whether the overlap between the two gene sets- 
+        is due to chance or there is a significant association between them.
+
+        Parameters:
+            - `int k`: Represents the number of shared genes between the two sets.
+            - `int s`: Total number of genes in the first gene set.
+            - `int M`: Total number of genes in the second gene set.
+            - `int N`: Total number of genes in the universe.
+
+        The values `a`, `b`, `c`, and `d` correspond to the entries in a 2x2 contingency table as shown below:
+
+        |------------------|-----------------|------------------|
+        |                  | Second gene set | Not in second set|
+        |------------------|-----------------|------------------|
+        | In first set     | a = k           | b = s-k          |
+        |------------------|-----------------|------------------|
+        | Not in first set | c = M-k         | d = N-(s+M)+k    |
+        |------------------|-----------------|------------------|
+
+        The function calculates the odds ratio as `(a * d) / (b * c)`.
+
+        Exceptions:
+        The function returns `-1` when `b` or `c` is `0` to prevent division by zero.
+        All comparisons with -1 will be removed in any postprocessing step.
+
+        Returns:
+        The function returns a `double` that is the calculated odds ratio. 
+        If the denominator is zero, it returns `-1`.
         */
 
         int a, b, c, d;
@@ -413,7 +441,7 @@ namespace kSpider {
 
         auto begin_time = Time::now();
 
-        cout << "mapping colors to groups: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        cout << "[dev] mapping colors to groups: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
         begin_time = Time::now();
         int_int_map colorsCount;
@@ -448,7 +476,7 @@ namespace kSpider {
         }
         */
 
-        cout << "parsing index colors: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        cout << "[dev] parsing index colors: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
         begin_time = Time::now();
 
         // for (const auto& record : color_to_ids) {
@@ -474,7 +502,7 @@ namespace kSpider {
             fstream_kmerCount << ++counter << '\t' << item.first << '\t' << item.second << '\n';
         }
         fstream_kmerCount.close();
-        cout << "features counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        cout << "[dev] features counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
         // Loading done
 
@@ -489,7 +517,7 @@ namespace kSpider {
         // convert map to vec for parallelization purposes.
         auto vec_color_to_ids = std::vector<std::pair<uint32_t, vector<uint32_t>>>(color_to_ids.begin(), color_to_ids.end());
 
-        cerr << "number of colors = " << vec_color_to_ids.size() << endl;
+        cerr << "[dev] number of colors = " << vec_color_to_ids.size() << endl;
 
         double average_color_size = 0.0;
         for (auto const& item : vec_color_to_ids) {
@@ -497,7 +525,7 @@ namespace kSpider {
         }
         average_color_size /= vec_color_to_ids.size();
 
-        cerr << "average color size = " << (int)average_color_size << endl;
+        cerr << "[dev] average color size = " << (int)average_color_size << endl;
 
         int thread_num, num_threads, start, end, vec_i;
         int n = vec_color_to_ids.size();
@@ -533,9 +561,9 @@ namespace kSpider {
             }
         }
 
-        cout << "pairwise hashmap construction: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
-        cout << "Number of pairwise comparisons: " << edges.size() << endl;
-        cout << "writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv" << endl;
+        cout << "[dev] pairwise hashmap construction: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        cout << "[dev] Number of pairwise comparisons: " << edges.size() << endl;
+        cout << "[dev] writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv | Please wait..." << endl;
 
         Stats distances_stats;
 
