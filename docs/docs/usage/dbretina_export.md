@@ -1,45 +1,50 @@
-# 4. Export
+# Export
 
 The Export command converts the pairwise TSV file to a dissimilarity matrix and (optionally) a newick-format file.
 
 ```
 Usage: DBRetina export [OPTIONS]
 
-  Export to dissimilarity matrix and newick format.
+  Export to distance matrix and tree formats.
 
-  Export a pairwise TSV file to a dissimilarity matrix and (optionally) a
-  newick-format file.
+  Export a pairwise TSV file into a distance matrix, newick-format file and
+  circular dendrogram.
 
 Options:
-  -p, --pairwise PATH   filtered pairwise TSV file  [required]
-  -d, --dist-type TEXT  select from ['min_cont', 'avg_cont', 'max_cont',
-                        'ochiai', 'jaccard']  [default: max_cont]
-  --newick              Convert the dissimilarity matrix to newick tree format
-  -l, --labels TEXT     select from ['ids', 'names']  [default: ids]
-  -o TEXT               output prefix  [required]
-  --help                Show this message and exit.
+  -p, --pairwise PATH  pairwise TSV file  [required]
+  -m, --metric TEXT    select from ['containment', 'ochiai', 'jaccard',
+                       'pvalue']  [required]
+  --newick             Convert the distance matrix to newick tree format
+  -l, --labels TEXT    select from ['ids', 'names']  [default: names]
+  --linkage TEXT       select from ['single', 'complete', 'average',
+                       'weighted', 'centroid', 'median', 'ward']  [default:
+                       ward]
+  -o, --output TEXT    output prefix  [required]
+  --help               Show this message and exit.
 ```
 
-## 4.1 Command arguments
+## Command arguments
 
 
-<span class="cmd"> -p, --pairwise PATH       the pairwise TSV file  [required] </span>
+<span class="cmd"> -p, --pairwise PATH  pairwise TSV file  [required] </span>
 
 The original or a filtered pairwise TSV file.
 
-<span class="cmd"> -d, --dist-type TEXT      select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']  [default: max_cont] </span>
+<span class="cmd"> -m, --metric TEXT    select from ['containment', 'ochiai', 'jaccard', 'pvalue']  [required] </span>
 
-The distance metric to be utilized in the similarity matrix.
+The similarity metric to be utilized in the dissimilarity matrix.
 
-<span class="cmd"> --newick              Convert the similarity matrix to newick tree format </span>
+<span class="cmd"> --newick              Convert the dissimilarity matrix to newick tree format </span>
 
-This will convert the similarity matrix to a newick tree format.
+This will convert the dissimilarity matrix to a newick tree format.
 
-<span class="cmd"> -l, --labels TEXT         select from ['ids', 'names']  [default: ids] </span>
+<span class="cmd"> -l, --labels TEXT    select from ['ids', 'names']  [default: names] </span>
 
-The labels to be used in all outputs (plots, newick, distance matrix) matrix. The default is the IDs which are the IDs found in the {index_prefix}.namesMap file.
+The labels to be used in all outputs (plots, newick, dissimilarity matrix). Default is names. The option option is the IDs which are the IDs found in the [`{index_prefix}.namesMap`](dbretina_index.md){:target="_blank"} file.
 
-<span class="cmd"> -o TEXT               custom output file name prefix </span>
+<span class="cmd"> --linkage TEXT       select from ['single', 'complete', 'average', 'weighted', 'centroid', 'median', 'ward']  [default: ward] </span>
+
+<span class="cmd"> -o, --output TEXT    output prefix  [required] </span>
 
 The output files prefix.
 
@@ -47,7 +52,7 @@ The output files prefix.
 ---
 
 
-## 4.2 Output files format
+## Output files format
 
 <span class="cmd"> {output_prefix}_distmat.tsv </span>
 
@@ -61,6 +66,10 @@ A labels pickle similarity matrix file in Python pickle format.
 
 A newick tree file that can be used in tree visualization tools.
 
-<span class="cmd"> {output_prefix}_clustermap.png </span>
+<span class="cmd"> {output_prefix}_dendrogram.png </span>
 
-A clustermap plot of the similarity matrix.
+A circular dendrogram plot of the tree.
+
+<span class="cmd"> {output_prefix}_heatmap.png </span>
+
+A heatmap plot of the similarity matrix.

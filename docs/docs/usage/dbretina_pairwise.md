@@ -10,7 +10,7 @@ Usage: DBRetina pairwise [OPTIONS]
 
 Options:
   -i, --index-prefix TEXT   Index file prefix  [required]
-  -t, --threads INTEGER     number of cores
+  -t, --threads INTEGER     number of cores  [default: 1]
   -m, --metric TEXT         select from ['containment', 'jaccard', 'ochiai']
   -c, --cutoff FLOAT RANGE  filter out similarities < cutoff  [default: 0.0;
                             0<=x<=100]
@@ -24,7 +24,7 @@ Options:
 
 This is the user-defined prefix that was used in the indexing step as an output prefix.
 
-<span class="cmd"> -t, --threads INTEGER    number of cores </span>
+<span class="cmd"> -t, --threads INTEGER     number of cores  [default: 1] </span>
 
 The number of processing cores to be used for parallel computation during the pairwise comparisons.
 
