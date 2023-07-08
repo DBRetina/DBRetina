@@ -49,7 +49,7 @@ The labels to be used in all outputs (plots, newick, dissimilarity matrix). Defa
 The output files prefix.
 
 
----
+<hr class="fancy-hr">
 
 
 ## Output files format

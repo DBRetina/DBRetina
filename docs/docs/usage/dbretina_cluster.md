@@ -42,7 +42,7 @@ This flag will cluster the supergroups by a community detection algorithm. The d
 
 The user-defined prefix for the output files.
 
----
+<hr class="fancy-hr">
 
 ## 4.2 Output files format
 

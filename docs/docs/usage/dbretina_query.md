@@ -51,7 +51,7 @@ The cluster IDs selected from the clusters file. This argument is only used if t
 
 The output prefix that should be unique for this query.
 
----
+<hr class="fancy-hr">
 
 ## Output files format
 

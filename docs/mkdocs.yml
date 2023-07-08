@@ -63,6 +63,7 @@ nav:
       - Cluster: usage/dbretina_cluster.md
       - Query: usage/dbretina_query.md
       - Export: usage/dbretina_export.md
+      - Bipartite: usage/dbretina_bipartite.md
 
   - Examples:
     - Example 1: DisGeNET_similarity_network-complete.ipynb

@@ -75,7 +75,7 @@ The output file prefix is used to name the output files. The output files are ex
       <b>You can't use combination of gmt files and association files, the command accepts only one type of input.</b>
 
 
----
+<hr class="fancy-hr">
 
 ## Output files format
 
