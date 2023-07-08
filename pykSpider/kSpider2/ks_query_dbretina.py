@@ -85,7 +85,7 @@ def invert_json(json_file):
     return inverted_json
 
 
-@cli.command(name="query", help_priority=6)
+@cli.command(name="query", epilog = dbretina_doc.doc_url("query"), help_priority=6)
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="index file prefix")
 @click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
 @click.option('--clusters-file', "clusters_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
@@ -206,17 +206,20 @@ Examples:
 
 
     features_to_groups_file = f"{output_prefix}_feature_to_groups.tsv"
-    counts_file = f"{output_prefix}_features_count_per_group.tsv"
+    # counts_file = f"{output_prefix}_features_count_per_group.tsv"
     kSpider_internal.query(index_prefix, inverted_index_prefix, query_file, output_prefix, commands)
-    ctx.obj.INFO(
-        f"writing query results to {features_to_groups_file}, and {counts_file}")
+    # ctx.obj.INFO(f"writing query results to {features_to_groups_file}, and {counts_file}")
+    ctx.obj.INFO(f"writing query results to {features_to_groups_file}")
 
     # if _tmp_file exists, remove it
     if os.path.exists(_tmp_file):
         os.remove(_tmp_file)
 
+    #### <<< ------ TODO: Fix later ------ >>> ####
+    """
     features_counts = []
     with open(counts_file) as f:
+        print(f"[DEBUG] reading {counts_file}")
         for line in f:
             if not line.startswith('#'):
                 break
@@ -227,7 +230,7 @@ Examples:
     ctx.obj.INFO(
         f"Plotting histogram of features frequencies to {output_file}")
     plot_histogram(features_counts, output_file)
-
+    """
 
     ctx.obj.SUCCESS("Query done!")
 
