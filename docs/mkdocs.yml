@@ -64,6 +64,7 @@ nav:
       - Query: usage/dbretina_query.md
       - Export: usage/dbretina_export.md
       - Bipartite: usage/dbretina_bipartite.md
+      - Interactome: usage/dbretina_interactome.md
 
   - Examples:
     - Example 1: DisGeNET_similarity_network-complete.ipynb

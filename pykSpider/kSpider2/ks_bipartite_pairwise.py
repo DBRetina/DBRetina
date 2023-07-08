@@ -267,7 +267,7 @@ def check_if_there_is_a_pvalue(pairwise_file):
 @click.pass_context
 def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
     """
-        Create a bipartite connections between two group files
+        Create a bipartite connections between two group files.
     """
     LOGGER = ctx.obj
     
