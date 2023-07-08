@@ -73,3 +73,12 @@ A circular dendrogram plot of the tree.
 <span class="cmd"> {output_prefix}_heatmap.png </span>
 
 A heatmap plot of the similarity matrix.
+
+=== "Heatmap example"
+
+    ![Image title](../assets/images/dbretina_export/example_heatmap.png){ align=left }
+
+
+=== "Dendrogram example"
+
+    ![Image title](../assets/images/dbretina_export/example_dendrogram.png){ align=left }
