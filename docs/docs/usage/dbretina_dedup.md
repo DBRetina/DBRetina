@@ -1,6 +1,6 @@
 # Dedup
 
-The `Dedup` command is used to remove duplicate groups from a pairwise file that shares very high similarity.
+The `dedup` command is used to remove duplicate groups from a pairwise file that shares very high similarity.
 
 
 ```

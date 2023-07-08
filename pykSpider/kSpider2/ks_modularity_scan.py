@@ -12,18 +12,18 @@ import os
 from collections import defaultdict
 import csv
 import pandas as pd
-
+import kSpider2.dbretina_doc_url as dbretina_doc
 
 
 def path_to_absolute_path(ctx, param, value):
     return value if value == "NA" else os.path.abspath(value)
 
 
-@cli.command(name="modularity", help_priority=7)
+@cli.command(name="modularity", epilog=dbretina_doc.doc_url("modularity"), help_priority=7)
 @click.option('-i', '--index-prefix', 'index_prefix', required=True, type=click.STRING, help="Index file prefix")
-@click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
+@click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="pairwise TSV file")
 @click.option('-c', '--cutoff', 'cutoff', required=True, type=click.FloatRange(0, 100, clamp=False), help="containment cutoff")
-@click.option('-o', '--output', "output_prefix", required=True, default=None, help="output file prefix")
+@click.option('-o', '--output', "output_prefix", required=True, help="output file prefix")
 @click.pass_context
 def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
     """
@@ -59,7 +59,7 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
     # 2. Pairwise file parsing
     #################################
 
-    distance_to_col = {
+    metric_to_col = {
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
@@ -67,7 +67,7 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
         "pvalue": 9,
     }
 
-    DISTANCE_COL = distance_to_col["containment"]
+    DISTANCE_COL = metric_to_col["containment"]
 
     gene_sets_nodes_data = defaultdict(lambda: {'fragmentation': 0, 'heterogeneity': 0})
 
