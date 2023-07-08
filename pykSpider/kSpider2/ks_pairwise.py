@@ -89,7 +89,7 @@ def get_command():
 
 @cli.command(name="pairwise", epilog=dbretina_doc.doc_url("pairwise"), help_priority=2)
 @click.option('-i', '--index-prefix', required=True, type=click.STRING, help="Index file prefix")
-@click.option('-t', '--threads', "user_threads", default=1, required=False, type=int, help="number of cores")
+@click.option('-t', '--threads', "user_threads", default=1, required=False, show_default=True, type=int, help="number of cores")
 @click.option('-m', '--metric', "similarity_type", required=False, default="containment", type=click.STRING, help="select from ['containment', 'jaccard', 'ochiai']")
 @click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default=True, help="filter out similarities < cutoff")
 @click.option('--pvalue', 'calculate_pvalue', is_flag=True, required = False, default = False, help="calculate Hypergeometric p-value")
