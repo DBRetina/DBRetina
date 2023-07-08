@@ -38,6 +38,10 @@ The similarity metric to apply the cutoff on.
 <!-- TODO: Explain properly -->
 This flag will cluster the supergroups by a community detection algorithm. The default is to cluster the supergroups using the weakly connected components algorithm.
 
+<span class="cmd"> -o, --output-prefix TEXT  output file prefix  [required] </span>
+
+The user-defined prefix for the output files.
+
 ---
 
 ## 4.2 Output files format
