@@ -119,7 +119,7 @@ void query(string index_prefix, string inverted_index_prefix, string query_file,
 
 
     ofstream outfile2;
-    outfile2.open(output_prefix + val_key_suffix);
+    outfile2.open(output_prefix + key_val_suffix);
     outfile2 << commands << endl;
     outfile2 << "feature\tsupergroups_count\tsupergroups" << endl;
 
