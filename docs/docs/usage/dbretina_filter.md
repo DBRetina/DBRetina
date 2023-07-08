@@ -61,11 +61,28 @@ The `-c --cutoff` argument is used with the `-m --metric` argument to define the
 
 In pairwise comparisons, imagine a graph with groups as nodes and their relationships as edges. Initially, only edges between user-defined groups are considered. The `--extend` option enlarges this scope, incorporating all nodes directly linked to user-defined groups, from either the `--groups` input or the `--clusters-file` & `--cluster-ids`. This option can only be used when groups information is provided.
 
+Here's an example of the effect of `--extend` on the pairwise graph. The user-defined groups are nodes (1,2,5).
+
+<div class="grid" markdown>
+
+=== "Without `--extend`"
+
+    ![Image title](../assets/images/dbretina_filter/example_dbretina_filter_initial.png){ align=left width="500"}
+
+=== "After `--extend`"
+
+    ![Image title](../assets/images/dbretina_filter/example_dbretina_filter_extend.png){ align=left width="500"}
+
+</div>
+
+
+<br>
 
 <span class="cmd"> -o, --output TEXT         output file prefix  [required] </span>
 
 The output files prefix.
 
+<br>
 
 !!! example "Usage examples"
 
