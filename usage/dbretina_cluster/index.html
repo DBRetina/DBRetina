@@ -7,6 +7,8 @@
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
       
+        <meta name="author" content="Mohamed Abuelanin">
+      
       
         <link rel="canonical" href="https://dbretina.github.io/DBRetina/usage/dbretina_cluster/">
       
@@ -44,6 +46,8 @@
       
     
     
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce((e,_)=>(e<<5)-e+_.charCodeAt(0),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -51,17 +55,32 @@
     
     
     
-  </head>
+   <link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"/><style>
+        html.glightbox-open { overflow: initial; height: 100%; }
+        .gslide-title { margin-top: 0px; user-select: text; }
+        .gslide-desc { color: #666; user-select: text; }
+        .gslide-image img { background: white; }
+        
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color);}
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color);}
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color);}
+            </style> <script src="../../assets/javascripts/glightbox.min.js"></script></head>
   
   
     
     
+      
     
     
     
-    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo">
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
   
     
+    
+      <script>var palette=__md_get("__palette");if(palette&&"object"==typeof palette.color)for(var key of Object.keys(palette.color))document.body.setAttribute("data-md-color-"+key,palette.color[key])</script>
     
     <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
     <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
@@ -69,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#4-cluster" class="md-skip">
+        <a href="#clustering-the-pairwise-similarities" class="md-skip">
           Skip to content
         </a>
       
@@ -81,9 +100,7 @@
     
       
 
-  
-
-<header class="md-header md-header--shadow" data-md-component="header">
+<header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href="../.." title="DBRetina Documentation" class="md-header__button md-logo" aria-label="DBRetina Documentation" data-md-component="logo">
       
@@ -111,6 +128,30 @@
       </div>
     </div>
     
+      
+        <form class="md-header__option" data-md-component="palette">
+          
+            
+            
+            
+            <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+            
+              <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69Z"/></svg>
+              </label>
+            
+          
+            
+            
+            
+            <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_2">
+            
+              <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12c0-2.42-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69Z"/></svg>
+              </label>
+            
+          
+        </form>
       
     
     
@@ -149,6 +190,18 @@
 </div>
     
     
+      <div class="md-header__source">
+        <a href="https://github.com/DBRetina/DBRetina/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.4.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2023 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81z"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DBRetina/DBRetina
+  </div>
+</a>
+      </div>
+    
   </nav>
   
 </header>
@@ -157,6 +210,61 @@
       
       
         
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+
+
+  <li class="md-tabs__item">
+    <a href="../.." class="md-tabs__link">
+      Home
+    </a>
+  </li>
+
+      
+        
+  
+  
+    
+  
+
+
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../installation/" class="md-tabs__link md-tabs__link--active">
+        Getting Started
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+
+
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../DisGeNET_similarity_network-complete/" class="md-tabs__link">
+        Examples
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
           
         
       
@@ -170,8 +278,10 @@
                   <div class="md-sidebar__inner">
                     
 
+  
 
-<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
     <a href="../.." title="DBRetina Documentation" class="md-nav__button md-logo" aria-label="DBRetina Documentation" data-md-component="logo">
       
@@ -181,6 +291,18 @@
     </a>
     DBRetina Documentation
   </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/DBRetina/DBRetina/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.4.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2023 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81z"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DBRetina/DBRetina
+  </div>
+</a>
+    </div>
   
   <ul class="md-nav__list" data-md-scrollfix>
     
@@ -217,6 +339,12 @@
       <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
       
       
+        
+          
+        
+          
+        
+      
       
         <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
           Getting Started
@@ -252,13 +380,35 @@
   
   
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
       
       
       
       <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" checked>
       
+      
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
       
       
         <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
@@ -397,8 +547,50 @@
   
   
     <li class="md-nav__item">
-      <a href="../dbretina_export.md" class="md-nav__link">
+      <a href="../dbretina_export/" class="md-nav__link">
         Export
+      </a>
+    </li>
+  
+
+            
+          
+            
+              
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dbretina_bipartite/" class="md-nav__link">
+        Bipartite
+      </a>
+    </li>
+  
+
+            
+          
+            
+              
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dbretina_interactome/" class="md-nav__link">
+        Interactome
+      </a>
+    </li>
+  
+
+            
+          
+            
+              
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dbretina_dedup/" class="md-nav__link">
+        Dedup
       </a>
     </li>
   
@@ -434,6 +626,10 @@
       <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
       
       
+        
+          
+        
+      
       
         <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
           Examples
@@ -453,8 +649,8 @@
   
   
     <li class="md-nav__item">
-      <a href="../../DisGeNET_similarity_network-complete.ipynb" class="md-nav__link">
-        Example 1
+      <a href="../../DisGeNET_similarity_network-complete/" class="md-nav__link">
+        USECASE: Building a disease-disease similairty netwrok
       </a>
     </li>
   
@@ -521,37 +717,80 @@
                 
                   
 
+  
+  
+    
+      
+    
+    <a href="https://github.com/DBRetina/DBRetina/raw/master/docs/usage/dbretina_cluster.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.15 8.15 0 0 1-1.23-2Z"/></svg>
+    </a>
+  
 
-<h1 id="4-cluster">4. Cluster</h1>
-<p>Graph-based clustering of the pairwise TSV file based on the connected components algorithm. The clustering is based on the distance metric and the cutoff value. The output is a DBRetina clusters file.</p>
+
+<h1 id="clustering-the-pairwise-similarities">Clustering the pairwise similarities</h1>
+<p>Graph-based clustering of the pairwise TSV file based on the connected components algorithm. The clustering is based on the similarity metric and the cutoff value. The output is a DBRetina clusters file.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Usage: DBRetina cluster [OPTIONS]
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  Graph-based clustering of the pairwise TSV file.
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>Options:
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  -p, --pairwise PATH       filtered pairwise TSV file
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>  -d, --dist-type TEXT      select from [&#39;min_cont&#39;, &#39;avg_cont&#39;, &#39;max_cont&#39;,
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                            &#39;ochiai&#39;, &#39;jaccard&#39;]  [required]
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  -c, --cutoff FLOAT RANGE  cluster the supergroups with (distance &gt; cutoff)
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>                            [default: 0.0; 0&lt;=x&lt;=100]
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>  -o, --output-prefix TEXT  output file prefix  [required]
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>  --help                    Show this message and exit.
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  -p, --pairwise PATH       pairwise TSV file  [required]
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>  -m, --metric TEXT         select from [&#39;containment&#39;, &#39;ochiai&#39;, &#39;jaccard&#39;,
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                            &#39;pvalue&#39;]  [required]
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  --community               clusters as communities
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>  -c, --cutoff FLOAT RANGE  cluster the supergroups with (similarity &gt; cutoff)
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>                            [0&lt;=x&lt;=100; required]
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>  -o, --output-prefix TEXT  output file prefix  [required]
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>  --help                    Show this message and exit.
 </span></code></pre></div>
 <h2 id="41-command-arguments">4.1 Command arguments</h2>
-<p><span style="color:orange;"><strong> -c, --cutoff FLOAT RANGE  cluster the supergroups with (distance &gt; cutoff) [default: 0.0; 0&lt;=x&lt;=100] </strong></span></p>
-<p>The cutoff value for clustering the supergroups. The default value is 0.0, which means that all supergroups will be clustered together. The cutoff value can be between 0% and 100%.</p>
-<p><span style="color:orange;"><strong> -p, --pairwise PATH       filtered pairwise TSV file  [required] </strong></span></p>
-<p>The original or a filtered pairwise TSV file.</p>
-<p><span style="color:orange;"><strong> -d, --dist-type TEXT      select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']  [required] </strong></span></p>
-<p>The distance metric to apply the cutoff on.</p>
-<hr />
+<p><span class="cmd"> -c, --cutoff FLOAT RANGE  cluster the supergroups with (similarity &gt; cutoff) [0&lt;=x&lt;=100; required] </span></p>
+<p>The cutoff value for clustering the supergroups. The default value is 0.0, which means that all comparisons are included in the clustering.</p>
+<p><span class="cmd"> -p, --pairwise PATH       pairwise TSV file  [required] </span></p>
+<p>The original pairwise TSV file generated from <a href="../dbretina_pairwise/" target="_blank"><code>DBRetina pairwise</code></a> command, or <a href="../dbretina_filter/" target="_blank"><code>DBRetina filter</code></a> command.</p>
+<p><span class="cmd"> -m, --metric TEXT         select from ['containment', 'ochiai', 'jaccard', 'pvalue']  [required] </span></p>
+<p>The similarity metric to apply the cutoff on.</p>
+<p><span class="cmd"> --community               clusters as communities </span></p>
+<!-- TODO: Explain properly -->
+<p>This flag will cluster the supergroups by a community detection algorithm. The default is to cluster the supergroups using the weakly connected components algorithm.</p>
+<p><span class="cmd"> -o, --output-prefix TEXT  output file prefix  [required] </span></p>
+<p>The user-defined prefix for the output files.</p>
+<hr class="fancy-hr">
+
 <h2 id="42-output-files-format">4.2 Output files format</h2>
-<p><span style="color:orange;"><strong> {output_prefix}_clusters.tsv </strong></span></p>
+<p><span class="cmd"> {output_prefix}_clusters.tsv </span></p>
 <p>The DBRetina clusters TSV file. First column is the cluster ID, second column is the cluster size, and the third column is PIPE separated cluster members.</p>
-<p><span style="color:orange;"><strong> {output_prefix}_clusters_histogram.png </strong></span></p>
-<p>A histogram provides a visual representation of the distribution of cluster sizes. Each bar corresponds to a size range, with the height of the bar indicating the number of clusters falling within that range. This allows for a quick understanding of how cluster sizes are distributed, identifying common sizes and outliers.</p>
-<p><span style="color:orange;"><strong> {output_prefix}_clusters_bubbles.png </strong></span></p>
-<p>Bubble plot uses a grid layout to represent distinct clusters. The bubble size and color gradient both denote the magnitude of each cluster. The bubble plot is useful for visualizing the distribution of cluster sizes and the relative sizes of each cluster.</p>
+<p><span class="cmd"> {output_prefix}_clusters_histogram.png </span></p>
+<p>A histogram provides of cluster sizes. Each bar corresponds to a size range, with a log-scale y-axis indicating the number of clusters falling within that range. This allows for a quick understanding of how cluster sizes are distributed, identifying common sizes and outliers.</p>
+<figure>
+<p><a class="glightbox" href="../assets/images/dbretina_cluster/example_clusters_histogram.png" data-type="image" data-width="100%" data-height="auto" data-desc-position="bottom"><img alt="Image title" src="../assets/images/dbretina_cluster/example_clusters_histogram.png" width="400" /></a>
+  </p>
+<figcaption>Example histogram plot</figcaption>
+</figure>
+<p><span class="cmd"> {output_prefix}_clusters_bubbles.png </span></p>
+<p>A Bubble plot uses a grid layout to represent distinct clusters. The bubble size and color gradient both denote the magnitude of each cluster. The bubble plot is useful for visualizing the distribution of cluster sizes and the relative sizes of each cluster.</p>
+<figure>
+<p><a class="glightbox" href="../assets/images/dbretina_cluster/example_clusters_bubbles.png" data-type="image" data-width="100%" data-height="auto" data-desc-position="bottom"><img alt="Image title" src="../assets/images/dbretina_cluster/example_clusters_bubbles.png" width="400" /></a>
+  </p>
+<figcaption>Example Bubble plot</figcaption>
+</figure>
+
+  <hr>
+<div class="md-source-file">
+  <small>
+    
+      Last update:
+      <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date">July 8, 2023</span>
+      
+        <br>
+        Created:
+        <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date">July 5, 2023</span>
+      
+    
+  </small>
+</div>
 
 
 
@@ -562,11 +801,51 @@
             </div>
           
           
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var tab,labels=set.querySelector(".tabbed-labels");for(tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
         </div>
         
       </main>
       
         <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../dbretina_filter/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Filter" rel="prev">
+            <div class="md-footer__button md-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12Z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Filter
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../dbretina_query/" class="md-footer__link md-footer__link--next" aria-label="Next: Query" rel="next">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Query
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4Z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
   
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
@@ -589,11 +868,11 @@
       <div class="md-dialog__inner md-typeset"></div>
     </div>
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["content.code.copy"], "search": "../../assets/javascripts/workers/search.74e28a9f.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": ["content.code.copy", "content.code.annotate", "content.action.view", "content.tooltips", "navigation.footer", "navigation.indexes", "navigation.sections", "navigation.tabs", "search.highlight", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.74e28a9f.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.220ee61c.min.js"></script>
       
     
-  </body>
+  <script>document$.subscribe(() => {const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});})</script></body>
 </html>

@@ -7,6 +7,8 @@
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
       
+        <meta name="author" content="Mohamed Abuelanin">
+      
       
         <link rel="canonical" href="https://dbretina.github.io/DBRetina/usage/dbretina_pairwise/">
       
@@ -44,6 +46,8 @@
       
     
     
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce((e,_)=>(e<<5)-e+_.charCodeAt(0),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -51,17 +55,32 @@
     
     
     
-  </head>
+   <link href="../../assets/stylesheets/glightbox.min.css" rel="stylesheet"/><style>
+        html.glightbox-open { overflow: initial; height: 100%; }
+        .gslide-title { margin-top: 0px; user-select: text; }
+        .gslide-desc { color: #666; user-select: text; }
+        .gslide-image img { background: white; }
+        
+            .gscrollbar-fixer { padding-right: 15px; }
+            .gdesc-inner { font-size: 0.75rem; }
+            body[data-md-color-scheme="slate"] .gdesc-inner { background: var(--md-default-bg-color);}
+            body[data-md-color-scheme="slate"] .gslide-title { color: var(--md-default-fg-color);}
+            body[data-md-color-scheme="slate"] .gslide-desc { color: var(--md-default-fg-color);}
+            </style> <script src="../../assets/javascripts/glightbox.min.js"></script></head>
   
   
     
     
+      
     
     
     
-    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo">
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
   
     
+    
+      <script>var palette=__md_get("__palette");if(palette&&"object"==typeof palette.color)for(var key of Object.keys(palette.color))document.body.setAttribute("data-md-color-"+key,palette.color[key])</script>
     
     <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
     <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
@@ -69,7 +88,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#2-pairwise" class="md-skip">
+        <a href="#pairwise" class="md-skip">
           Skip to content
         </a>
       
@@ -81,9 +100,7 @@
     
       
 
-  
-
-<header class="md-header md-header--shadow" data-md-component="header">
+<header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href="../.." title="DBRetina Documentation" class="md-header__button md-logo" aria-label="DBRetina Documentation" data-md-component="logo">
       
@@ -111,6 +128,30 @@
       </div>
     </div>
     
+      
+        <form class="md-header__option" data-md-component="palette">
+          
+            
+            
+            
+            <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+            
+              <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69Z"/></svg>
+              </label>
+            
+          
+            
+            
+            
+            <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_2">
+            
+              <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12c0-2.42-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69Z"/></svg>
+              </label>
+            
+          
+        </form>
       
     
     
@@ -149,6 +190,18 @@
 </div>
     
     
+      <div class="md-header__source">
+        <a href="https://github.com/DBRetina/DBRetina/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.4.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2023 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81z"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DBRetina/DBRetina
+  </div>
+</a>
+      </div>
+    
   </nav>
   
 </header>
@@ -157,6 +210,61 @@
       
       
         
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+
+
+  <li class="md-tabs__item">
+    <a href="../.." class="md-tabs__link">
+      Home
+    </a>
+  </li>
+
+      
+        
+  
+  
+    
+  
+
+
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../installation/" class="md-tabs__link md-tabs__link--active">
+        Getting Started
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+
+
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../DisGeNET_similarity_network-complete/" class="md-tabs__link">
+        Examples
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
           
         
       
@@ -170,8 +278,10 @@
                   <div class="md-sidebar__inner">
                     
 
+  
 
-<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
     <a href="../.." title="DBRetina Documentation" class="md-nav__button md-logo" aria-label="DBRetina Documentation" data-md-component="logo">
       
@@ -181,6 +291,18 @@
     </a>
     DBRetina Documentation
   </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/DBRetina/DBRetina/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.4.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2023 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81z"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DBRetina/DBRetina
+  </div>
+</a>
+    </div>
   
   <ul class="md-nav__list" data-md-scrollfix>
     
@@ -217,6 +339,12 @@
       <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
       
       
+        
+          
+        
+          
+        
+      
       
         <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
           Getting Started
@@ -252,13 +380,35 @@
   
   
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
       
       
       
       <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" checked>
       
+      
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
+          
+        
       
       
         <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
@@ -327,16 +477,29 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#21-command-arguments" class="md-nav__link">
-    2.1 Command arguments
+  <a href="#command-arguments" class="md-nav__link">
+    Command arguments
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#22-output-files-format" class="md-nav__link">
-    2.2 Output files format
+  <a href="#output-files" class="md-nav__link">
+    Output files
   </a>
+  
+    <nav class="md-nav" aria-label="Output files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#primary-output-files" class="md-nav__link">
+    Primary output files
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -397,8 +560,50 @@
   
   
     <li class="md-nav__item">
-      <a href="../dbretina_export.md" class="md-nav__link">
+      <a href="../dbretina_export/" class="md-nav__link">
         Export
+      </a>
+    </li>
+  
+
+            
+          
+            
+              
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dbretina_bipartite/" class="md-nav__link">
+        Bipartite
+      </a>
+    </li>
+  
+
+            
+          
+            
+              
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dbretina_interactome/" class="md-nav__link">
+        Interactome
+      </a>
+    </li>
+  
+
+            
+          
+            
+              
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dbretina_dedup/" class="md-nav__link">
+        Dedup
       </a>
     </li>
   
@@ -434,6 +639,10 @@
       <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
       
       
+        
+          
+        
+      
       
         <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
           Examples
@@ -453,8 +662,8 @@
   
   
     <li class="md-nav__item">
-      <a href="../../DisGeNET_similarity_network-complete.ipynb" class="md-nav__link">
-        Example 1
+      <a href="../../DisGeNET_similarity_network-complete/" class="md-nav__link">
+        USECASE: Building a disease-disease similairty netwrok
       </a>
     </li>
   
@@ -494,16 +703,29 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#21-command-arguments" class="md-nav__link">
-    2.1 Command arguments
+  <a href="#command-arguments" class="md-nav__link">
+    Command arguments
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#22-output-files-format" class="md-nav__link">
-    2.2 Output files format
+  <a href="#output-files" class="md-nav__link">
+    Output files
   </a>
+  
+    <nav class="md-nav" aria-label="Output files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#primary-output-files" class="md-nav__link">
+    Primary output files
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -521,33 +743,49 @@
                 
                   
 
+  
+  
+    
+      
+    
+    <a href="https://github.com/DBRetina/DBRetina/raw/master/docs/usage/dbretina_pairwise.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.15 8.15 0 0 1-1.23-2Z"/></svg>
+    </a>
+  
 
-<h1 id="2-pairwise">2. Pairwise</h1>
+
+<h1 id="pairwise">Pairwise</h1>
 <p>The Pairwise command in DBRetina is designed to perform pairwise comparisons between supergroups based on their shared features. This command takes the index prefix and the number of cores as input parameters.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Usage: DBRetina pairwise [OPTIONS]
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  Calculate pairwise distances.
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  Calculate pairwise similarities.
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>Options:
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  -i, --index-prefix TEXT   Index file prefix  [required]
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>  -t, --threads INTEGER     number of cores
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  -d, --dist-type TEXT      select from [&#39;min_cont&#39;, &#39;avg_cont&#39;, &#39;max_cont&#39;,
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                            &#39;ochiai&#39;, &#39;jaccard&#39;]  [default: max_cont]
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>  -c, --cutoff FLOAT RANGE  filter out distances &lt; cutoff  [default: 0.0;
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>                            0&lt;=x&lt;=100]
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>  -t, --threads INTEGER     number of cores  [default: 1]
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  -m, --metric TEXT         select from [&#39;containment&#39;, &#39;jaccard&#39;, &#39;ochiai&#39;]
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  -c, --cutoff FLOAT RANGE  filter out similarities &lt; cutoff  [default: 0.0;
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>                            0&lt;=x&lt;=100]
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>  --pvalue                  calculate Hypergeometric p-value
 </span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>  --help                    Show this message and exit.
 </span></code></pre></div>
-<h2 id="21-command-arguments">2.1 Command arguments</h2>
-<p><span style="color:orange;"><strong> -i, --index-prefix TEXT  Index file prefix  [required] </strong></span></p>
-<p>This is the user-defined prefix that was used in the indexing step.</p>
-<p><span style="color:orange;"><strong> -t, --threads INTEGER    number of cores </strong></span></p>
+<h2 id="command-arguments">Command arguments</h2>
+<p><span class="cmd"> -i, --index-prefix TEXT   Index file prefix  [required] </span></p>
+<p>This is the user-defined prefix that was used in the indexing step as an output prefix.</p>
+<p><span class="cmd"> -t, --threads INTEGER     number of cores  [default: 1] </span></p>
 <p>The number of processing cores to be used for parallel computation during the pairwise comparisons.</p>
-<p><span style="color:orange;"><strong> -d, --dist-type TEXT     select from ['min_cont', 'avg_cont', 'max_cont', 'ochiai', 'jaccard']  [default: max_cont] </strong></span></p>
-<p><span style="color:orange;"><strong> -c, --cutoff FLOAT RANGE filter out distances &lt; cutoff  [default: 0.0; 0&lt;=x&lt;=100] </strong></span></p>
-<p>The <code>-d</code> and <code>-c</code> input parameters serve the purpose of selecting a particular distance metric and predefined cutoff. This cutoff will eliminate all pairwise comparisons that have a distance value lower than the cutoff.</p>
-<hr />
-<h2 id="22-output-files-format">2.2 Output files format</h2>
-<p><span style="color:orange;"><strong> {perfix}_DBRetina_pairwise.tsv </strong></span></p>
+<p><span class="cmd"> -m, --metric TEXT         select from ['containment', 'jaccard', 'ochiai'] </span></p>
+<p>Optional similarity metric to filter out pairwise comparisons below a certain cutoff from exporting.</p>
+<p><span class="cmd"> -c, --cutoff FLOAT RANGE filter out similarities &lt; cutoff  [default: 0.0; 0&lt;=x&lt;=100] </span></p>
+<p>The <code>-c</code> argument is used with the <code>-m</code> argument to define the cutoff.</p>
+<p><span class="cmd"> --pvalue                  calculate Hypergeometric p-value </span>
+This flag calculates the Hypergeometric p-value for pairwise comparisons based on shared features between supergroups and the total number of features in the database.</p>
+<hr class="fancy-hr">
+
+<h2 id="output-files">Output files</h2>
+<h3 id="primary-output-files">Primary output files</h3>
+<p><span class="cmd"> {index_prefix}_DBRetina_pairwise.tsv </span></p>
 <p>A TSV file that provides information about shared features between each pair of supergroups. The TSV columns are defined as follows:</p>
 <table>
   <tbody>
@@ -572,33 +810,62 @@
       <td>number of features shared between the two supergroups</td>
     </tr>
     <tr>
-      <td><strong>min_containment</strong></td>
-      <td>minimum containment between the two supergroups</td>
-    </tr>
-    <tr>
-      <td><strong>avg_containment</strong></td>
-      <td>average containment between the two supergroups</td>
-    </tr>
-    <tr>
-      <td><strong>max_containment</strong></td>
-      <td>maximum containment between the two supergroups</td>
+      <td><strong>containment</strong></td>
+      <td>The containment metric is the ratio of shared kmers to the smallest set of kmers. This score is calculated as (shared_kmers / minimum_source_kmers) * 100.</td>
     </tr>
     <tr>
       <td><strong>ochiai</strong></td>
-      <td>Ochiai distance between the two supergroups</td>
+      <td>Ochiai similarity computed as 100 * (shared_kmers / sqrt(source_1_kmers * source_2_kmers))</td>
     </tr>
     <tr>
       <td><strong>jaccard</strong></td>
-      <td>Jaccard distance between the two supergroups</td>
+      <td>Jaccard similarity percentage. calculated as 100 * (shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers))</td>
+    </tr>
+    <tr>
+      <td><strong>odds_ratio</strong></td>
+      <td>The `odds_ratio` function calculates the odds ratio between two supergroups, quantifying the strength of association between them based on shared features. It returns a `double` representing the odds ratio, or `-1` if the calculation encounters a division by zero.</td>
+    </tr>
+    <tr>
+      <td><strong>pvalue</strong></td>
+      <td>This p-value quantifies the statistical significance of the overlap between the two supergroups, given their sizes and the universe of all features. Calculated from hypergeometric distribution.</td>
     </tr>
   </tbody>
 </table>
 
-<h1 id="the-output-png-file-of-histogram-of-pairwise-distances">The output PNG file of histogram of pairwise distances</h1>
-<p><span style="color:orange;"><strong> {index_prefix}_DBRetina_distance_metrics_plot_log.png </strong></span></p>
-<p>clustered bar chart illustrates the frequency distribution of five distance metrics - min_cont, avg_cont, max_cont, ochiai, and jaccard - across various distance ranges. The y-axis is displayed on a logarithmic scale to accommodate the wide range of frequencies observed in the data.</p>
-<p><span style="color:orange;"><strong> {index_prefix}_DBRetina_distance_metrics_plot_linear.png </strong></span></p>
+<p><span class="cmd"> {index_prefix}_DBRetina_similarity_metrics_plot_log.png </span></p>
+<p>The clustered bar chart shows the logarithmic frequency distribution of three similarity metrics - containment, ochiai, and jaccard - over different similarity ranges.</p>
+<p><span class="cmd"> {index_prefix}_DBRetina_similarity_metrics_plot_linear.png </span></p>
 <p>Same as above, but the y-axis is displayed on a linear scale.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Example plot (Log)</label><label for="__tabbed_1_2">Example plot (Linear)</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p><a class="glightbox" href="../../assets/images/dbretina_pairwise/example_DBRetina_similarity_metrics_plot_log.png" data-type="image" data-width="100%" data-height="auto" data-desc-position="bottom"><img align="left" alt="Image title" src="../../assets/images/dbretina_pairwise/example_DBRetina_similarity_metrics_plot_log.png" /></a></p>
+</div>
+<div class="tabbed-block">
+<p><a class="glightbox" href="../../assets/images/dbretina_pairwise/example_DBRetina_similarity_metrics_plot_linear.png" data-type="image" data-width="100%" data-height="auto" data-desc-position="bottom"><img align="left" alt="Image title" src="../../assets/images/dbretina_pairwise/example_DBRetina_similarity_metrics_plot_linear.png" /></a></p>
+</div>
+</div>
+</div>
+<details class="info end">
+<summary>Advanced Output (For developers)</summary>
+<p><code>{index_prefix}_DBRetina_pairwise_stats.json</code>: used to generate the similarity metrics plot.
+<code>{index_prefix}_DBRetina_pairwise_stats_odds_ratio.txt</code>: odds-ratio metadata for next step of commands.</p>
+</details>
+
+  <hr>
+<div class="md-source-file">
+  <small>
+    
+      Last update:
+      <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date">July 8, 2023</span>
+      
+        <br>
+        Created:
+        <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date">July 5, 2023</span>
+      
+    
+  </small>
+</div>
 
 
 
@@ -609,11 +876,51 @@
             </div>
           
           
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var tab,labels=set.querySelector(".tabbed-labels");for(tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
         </div>
         
       </main>
       
         <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../dbretina_index/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Index" rel="prev">
+            <div class="md-footer__button md-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11h12Z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Index
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../dbretina_filter/" class="md-footer__link md-footer__link--next" aria-label="Next: Filter" rel="next">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Filter
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11H4Z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
   
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
@@ -636,11 +943,11 @@
       <div class="md-dialog__inner md-typeset"></div>
     </div>
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["content.code.copy"], "search": "../../assets/javascripts/workers/search.74e28a9f.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    <script id="__config" type="application/json">{"base": "../..", "features": ["content.code.copy", "content.code.annotate", "content.action.view", "content.tooltips", "navigation.footer", "navigation.indexes", "navigation.sections", "navigation.tabs", "search.highlight", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.74e28a9f.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
       <script src="../../assets/javascripts/bundle.220ee61c.min.js"></script>
       
     
-  </body>
+  <script>document$.subscribe(() => {const lightbox = GLightbox({"touchNavigation": true, "loop": false, "zoomable": true, "draggable": true, "openEffect": "zoom", "closeEffect": "zoom", "slideEffect": "slide"});})</script></body>
 </html>
