@@ -32,7 +32,7 @@ Options:
   --help                   Show this message and exit.
 ```
 
-## 5.1 Command arguments
+## Command arguments
 
 
 <span class="cmd"> -i, --index-prefix TEXT  Index file prefix  [required] </span>
@@ -53,7 +53,7 @@ The output prefix that should be unique for this query.
 
 ---
 
-## 5.2 Output files format
+## Output files format
 
 <span class="cmd"> {output_prefix}_features_count_per_group.tsv </span>
 
