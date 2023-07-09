@@ -62,6 +62,7 @@ nav:
     - Bipartite: usage/dbretina_bipartite.md
     - Modularity: usage/dbretina_modularity.md
     - Dedup: usage/dbretina_dedup.md
+    - Setcov: usage/dbretina_setcov.md
     - Query: usage/dbretina_query.md
     - Interactome: usage/dbretina_interactome.md
     - Export: usage/dbretina_export.md
@@ -76,9 +77,9 @@ plugins:
   - git-authors
   - git-revision-date-localized:
       enable_creation_date: true
-  - git-committers:
-      repository: DBRetina/DBRetina
-      branch: main
+  # - git-committers:
+  #     repository: DBRetina/DBRetina
+  #     branch: main
   - glightbox:
       zoomable: true
       slide_effect: slide
@@ -112,3 +113,10 @@ markdown_extensions:
           # format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true 
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
