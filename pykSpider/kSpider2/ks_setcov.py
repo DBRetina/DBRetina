@@ -52,7 +52,7 @@ class DeduplicateGroups():
     """
     A class for deduplicating groups.
 
-    This class provides methods for deduplicating groups based on various criteria, such as item coverage, PPI, and CSI.
+    This class provides methods for deduplicating groups based on various criteria, such as item coverage, GPI, and CSI.
     """
     
     communities_clusters_file = ''
@@ -75,8 +75,8 @@ class DeduplicateGroups():
     df_associations = None
     df_gene_to_CSI = None
     df_group_to_avg_CSI = None
-    df_group_to_avg_ppi = None
-    df_gene_to_ppi = None
+    df_group_to_avg_gpi = None
+    df_gene_to_gpi = None
     df_group_to_modularity = None
     df_logging = None
     df_groups_per_gene = None
@@ -106,7 +106,7 @@ class DeduplicateGroups():
         self.ochiai_community_cutoff = ochiai_community_cutoff
         # Initialize a logging DataFrame
         self.df_logging = pd.DataFrame(columns=[
-            'group', 'no_of_genes', 'coverage %', 'ppi', 'CSI', 'fragmentation', 'heterogeneity', 'modularity', 'selected', 'cluster_id'
+            'group', 'no_of_genes', 'coverage %', 'gpi', 'CSI', 'fragmentation', 'heterogeneity', 'modularity', 'selected', 'cluster_id'
         ])
         self.main_pairwise_file = index_prefix + "_DBRetina_pairwise.tsv"
         self.GC = GC
@@ -148,18 +148,18 @@ class DeduplicateGroups():
 
 
     def build_gene_to_CSI(self):
-        # we have can use df_gene_to_ppi to get the number of groups and clusters per item
+        # we have can use df_gene_to_gpi to get the number of groups and clusters per item
         
         total_number_of_clusters = self.cluster_id_to_groups.keys().__len__()
         self.total_number_of_groups = self.df_associations['group'].nunique()
         self.df_groups_per_gene = self.df_associations.groupby('item')['group'].nunique()
         
         self.df_gene_to_CSI = pd.DataFrame({
-            'item' : self.df_gene_to_ppi['item'].values,
-            'group_count': self.df_gene_to_ppi['group_count'].values,
-            'cluster_count': self.df_gene_to_ppi['cluster_count'].values,
+            'item' : self.df_gene_to_gpi['item'].values,
+            'group_count': self.df_gene_to_gpi['group_count'].values,
+            'cluster_count': self.df_gene_to_gpi['cluster_count'].values,
             'CSI': 100 * 
-                    np.log2(self.df_gene_to_ppi['cluster_count'].values / total_number_of_clusters) / 
+                    np.log2(self.df_gene_to_gpi['cluster_count'].values / total_number_of_clusters) / 
                     np.log2(1.0 / total_number_of_clusters)
         })
         
@@ -174,7 +174,7 @@ class DeduplicateGroups():
             'average_CSI': group_group['sum'] / group_group['count']
         })
         
-    def build_group_to_ppi(self):
+    def build_group_to_gpi(self):
         #1 Get the number of unique clusters and groups each item is found in
         self.cluster_id_to_groups = self.cluster_to_groups(self.communities_clusters_file)
         # Convert dictionary to dataframe
@@ -192,41 +192,41 @@ class DeduplicateGroups():
             group_count=pd.NamedAgg(column='group', aggfunc='nunique')
         )
         
-        #4. Calculate the Group Pleiotropy Index (PPI) for each item (Cd/Nd)
-        gene_counts['ppi'] = gene_counts['cluster_count'] / gene_counts['group_count']
+        #4. Calculate the Group Pleiotropy Index (GPI) for each item (Cd/Nd)
+        gene_counts['gpi'] = gene_counts['cluster_count'] / gene_counts['group_count']
 
         #5 All information in one dataframe
-        self.df_gene_to_ppi = pd.DataFrame({
+        self.df_gene_to_gpi = pd.DataFrame({
             'item': gene_counts.index,
             'cluster_count': gene_counts['cluster_count'].values,
             'group_count': gene_counts['group_count'].values,
-            'ppi': gene_counts['ppi'].values
+            'gpi': gene_counts['gpi'].values
         })
 
-        #5. Merge cluster_to_genes with gene_to_ppi to get ppi for each item in each group
-        # ['cluster_id', 'group', 'item', 'cluster_count', 'group_count', 'ppi']
-        merged_df = pd.merge(cluster_to_genes, self.df_gene_to_ppi, on='item', how='inner')
+        #5. Merge cluster_to_genes with gene_to_gpi to get gpi for each item in each group
+        # ['cluster_id', 'group', 'item', 'cluster_count', 'group_count', 'gpi']
+        merged_df = pd.merge(cluster_to_genes, self.df_gene_to_gpi, on='item', how='inner')
 
-        # Calculate the average PPI for each group
-        group_group = merged_df.groupby('group')['ppi'].mean()
+        # Calculate the average GPI for each group
+        group_group = merged_df.groupby('group')['gpi'].mean()
 
         # Create the DataFrame
-        self.df_group_to_avg_ppi = pd.DataFrame({
+        self.df_group_to_avg_gpi = pd.DataFrame({
             'group': group_group.index,
-            'average_ppi': 100 * group_group.values
+            'average_gpi': 100 * group_group.values
         })
              
         
-    def export_gene_to_ppi_CSI(self, file_name):
-        # Merge gene_to_ppi with gene_to_CSI
-        merged_df = pd.merge(self.df_gene_to_CSI, self.df_gene_to_ppi, on='item', how='left')
+    def export_gene_to_gpi_CSI(self, file_name):
+        # Merge gene_to_gpi with gene_to_CSI
+        merged_df = pd.merge(self.df_gene_to_CSI, self.df_gene_to_gpi, on='item', how='left')
         # Export to CSV
         merged_df.to_csv(file_name, index=False, sep='\t')
         return file_name
     
-    def export_group_to_ppi_CSI(self, file_name):
-        # Merge group_to_ppi with group_to_CSI
-        merged_df = pd.merge(self.df_group_to_avg_CSI, self.df_group_to_avg_ppi, on='group', how='left')
+    def export_group_to_gpi_CSI(self, file_name):
+        # Merge group_to_gpi with group_to_CSI
+        merged_df = pd.merge(self.df_group_to_avg_CSI, self.df_group_to_avg_gpi, on='group', how='left')
         # Export to CSV
         merged_df.to_csv(file_name, index=False, sep='\t')
         return file_name
@@ -298,9 +298,9 @@ class DeduplicateGroups():
         self.df_group_to_modularity.columns = ['group', 'fragmentation', 'heterogeneity', 'modularity']
         
     def build_groups_metadata(self):
-        # This builds the groups metadata (ppi, CSI, frag, het, modularity, length)
-        #1 merge df_group_to_avg_ppi and df_group_to_CSI
-        self.df_groups_metadata = pd.merge(self.df_group_to_avg_ppi, self.df_group_to_avg_CSI, on='group', how='outer')
+        # This builds the groups metadata (gpi, CSI, frag, het, modularity, length)
+        #1 merge df_group_to_avg_gpi and df_group_to_CSI
+        self.df_groups_metadata = pd.merge(self.df_group_to_avg_gpi, self.df_group_to_avg_CSI, on='group', how='outer')
         # add deduplication status, default = remain
 
         #2 merge with df_group_indices
@@ -311,7 +311,7 @@ class DeduplicateGroups():
 
         #4 Rename the columns
         self.df_groups_metadata['dedup'] = 'remained'
-        self.df_groups_metadata.columns = ['group', 'average_ppi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity', 'no_of_genes', 'dedup']
+        self.df_groups_metadata.columns = ['group', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity', 'no_of_genes', 'dedup']
 
 
     def remove_exact_ochiai_matches(self):
@@ -349,7 +349,7 @@ class DeduplicateGroups():
         # Save the dataframe to a CSV file
         # fill NA values with 0
         self.df_groups_metadata = self.df_groups_metadata.fillna(0)
-        self.df_groups_metadata.to_csv(file_name, index=False, sep='\t', columns=['group', 'no_of_genes', 'average_ppi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity', 'dedup'])
+        self.df_groups_metadata.to_csv(file_name, index=False, sep='\t', columns=['group', 'no_of_genes', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity', 'dedup'])
         return file_name
 
     def cluster_to_universe_set(self, cluster_id):
@@ -417,8 +417,8 @@ class DeduplicateGroups():
     def export_split_group_metadata(self, file_name):
         remaining_groups_df = self.df_groups_metadata[self.df_groups_metadata['group'].isin(self.final_remaining_groups)]
         removed_groups_df = self.df_groups_metadata[~self.df_groups_metadata['group'].isin(self.final_remaining_groups)]
-        remaining_groups_df.to_csv(f'{file_name}_remaining_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_genes', 'average_ppi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity'])
-        removed_groups_df.to_csv(f'{file_name}_removed_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_genes', 'average_ppi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity'])
+        remaining_groups_df.to_csv(f'{file_name}_remaining_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_genes', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity'])
+        removed_groups_df.to_csv(f'{file_name}_removed_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_genes', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity'])
 
 
     def export_deduplicated_gmt(self, file_name):
@@ -502,10 +502,10 @@ class DeduplicateGroups():
             _communities_file_prefix)
         
         self.process_associations()
-        self.build_group_to_ppi()
+        self.build_group_to_gpi()
         self.build_gene_to_CSI()
         self.build_group_to_CSI()
-        self.LOGGER.SUCCESS("Calculated PPI and CSI")
+        self.LOGGER.SUCCESS("Calculated GPI and CSI")
 
         self.process_pairwise_file(self.main_pairwise_file, self.containment_cutoff)
         self.LOGGER.SUCCESS(f"Group modularities computed with containment cutoff {self.containment_cutoff}")
@@ -513,9 +513,9 @@ class DeduplicateGroups():
         self.build_groups_metadata()
         self.LOGGER.SUCCESS("Groups metadata built")
 
-        _file_gene_ppi_CSI = f"{output_prefix}_gene_to_ppi_CSI.tsv"
-        self.export_gene_to_ppi_CSI(_file_gene_ppi_CSI)
-        self.LOGGER.SUCCESS(f"Exported Item to PPI CSI to {_file_gene_ppi_CSI}")
+        _file_gene_gpi_CSI = f"{output_prefix}_gene_to_gpi_CSI.tsv"
+        self.export_gene_to_gpi_CSI(_file_gene_gpi_CSI)
+        self.LOGGER.SUCCESS(f"Exported Item to GPI CSI to {_file_gene_gpi_CSI}")
 
         self.remove_exact_ochiai_matches()
         self.LOGGER.SUCCESS("Deduplication completed")
@@ -742,8 +742,8 @@ class GraphBasedDeduplication(DeduplicateGroups):
         self.process_associations()
         print("Associations processed")
 
-        self.build_group_to_ppi()
-        print("Group to PPI built")
+        self.build_group_to_gpi()
+        print("Group to GPI built")
 
         self.build_gene_to_CSI()
         print("Item to CSI built")
@@ -757,8 +757,8 @@ class GraphBasedDeduplication(DeduplicateGroups):
         self.build_groups_metadata()
         print("Groups metadata built")
 
-        self.export_gene_to_ppi_CSI(f"{output_prefix}_gene_to_ppi_CSI.tsv")
-        print(f"Item to PPI CSI exported at {output_prefix}_gene_to_ppi_CSI.tsv")
+        self.export_gene_to_gpi_CSI(f"{output_prefix}_gene_to_gpi_CSI.tsv")
+        print(f"Item to GPI CSI exported at {output_prefix}_gene_to_gpi_CSI.tsv")
 
         self.remove_exact_ochiai_matches()
         print("Exact Ochiai matches removed")
