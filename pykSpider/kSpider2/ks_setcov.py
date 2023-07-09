@@ -318,19 +318,28 @@ class DeduplicateGroups():
         connected_components = self.ochiai_graph.get_connected_components()
         unselected_groups = set()
         selected_groups = set()
+        
+        # create a temporary column for number of edges
+        self.df_groups_metadata['total_edges'] = abs(self.df_groups_metadata["heterogeneity"]) + abs(self.df_groups_metadata["fragmentation"])
+
         for component_groups in connected_components:
             if len(component_groups) == 1:
                 selected_groups.add(component_groups[0])
                 continue
             
             # sort the groups by lowest average_CSI and highest no_of_genes
-            sorted_groups = self.df_groups_metadata[self.df_groups_metadata['group'].isin(component_groups)].sort_values(by=['average_ppi', 'no_of_genes'], ascending=[True, False])
+            # modified to reflect `DBRetina dedup`
+            sorted_groups = self.df_groups_metadata[self.df_groups_metadata['group'].isin(component_groups)].sort_values(by=['total_edges', 'no_of_genes'], ascending=[False, False])
             selected_groups.add(sorted_groups.iloc[0]['group'])
             unselected_groups.update(sorted_groups.iloc[1:]['group'].tolist())
                 
+        # drop the temporary column
+        self.df_groups_metadata.drop('total_edges', axis=1, inplace=True)
+        
         # set deduplication status to exact_ochiai
         self.removed_exact_ochiai_groups = unselected_groups
         self.filtered_exact_ochiai_groups_count = len(unselected_groups)
+        
         
         # set df_groups_metadata dedup to exact_ochiai if in self.removed_exact_ochiai_groups
         self.df_groups_metadata.loc[self.df_groups_metadata['group'].isin(self.removed_exact_ochiai_groups), 'dedup'] = 'exact_ochiai'
@@ -847,10 +856,10 @@ def path_to_absolute_path(ctx, param, value):
 
 @cli.command(name="setcov", epilog = dbretina_doc.doc_url("setcov"), help_priority=10)
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="index file prefix")
-@click.option('--modularity', "containment_cutoff", required=False, default=80, type=click.INT, help="containment cutoff for modularity calculation")
-@click.option('--dedup', "ochiai_cutoff", required=False, default=101, type=click.INT, help="deduplication similarity cutoff")
-@click.option('--community', "ochiai_community_cutoff", required=False, default=30, type=click.INT, help="community detection similarity cutoff")
-@click.option('--GC', "GC", required=False, default=100, type=click.INT, help="Item coverage threshold")
+@click.option('--modularity', "containment_cutoff", required=False, default=80, show_default = True, type=click.FloatRange(0, 100, clamp=False), help="containment cutoff for modularity calculation")
+@click.option('--dedup', "ochiai_cutoff", required=False, default=100, show_default = True, type=click.FloatRange(0, 100, clamp=False), help="deduplication similarity cutoff")
+@click.option('--community', "ochiai_community_cutoff", required=False, default=30, show_default = True, type=click.FloatRange(0, 100, clamp=False), help="community detection similarity cutoff")
+@click.option('--stop-cov', "GC", required=False, default=100, type=click.FloatRange(0, 100, clamp=False), help="stop when items covered by %")
 @click.option('-o', '--output', "output_prefix", required=True, default=None, help="output file prefix")
 @click.pass_context
 def main(ctx, index_prefix, containment_cutoff, ochiai_cutoff, GC, output_prefix, ochiai_community_cutoff):
