@@ -1,4 +1,4 @@
-# Dedup
+# Modularity
 
 The `modularity` command calculates the fragmentation, heterogeneity, and modularity of the groups.
 
