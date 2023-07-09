@@ -58,7 +58,7 @@ class DeduplicateGroups():
     communities_clusters_file = ''
     associations_file = ''
     cluster_id_to_groups = dict()
-    groups_to_genes_no = dict()
+    groups_to_items_no = dict()
     total_number_of_groups = 0
     main_pairwise_file = ''
     index_prefix = ''
@@ -70,16 +70,16 @@ class DeduplicateGroups():
     removed_exact_ochiai_groups = set()
     
     # Dataframes
-    df_genes_metadata = None
+    df_items_metadata = None
     df_groups_metadata = None
     df_associations = None
-    df_gene_to_CSI = None
+    df_item_to_CSI = None
     df_group_to_avg_CSI = None
     df_group_to_avg_gpi = None
-    df_gene_to_gpi = None
+    df_item_to_gpi = None
     df_group_to_modularity = None
     df_logging = None
-    df_groups_per_gene = None
+    df_groups_per_item = None
     
     LOGGER = None # click custom logger
     ctx = None # click context
@@ -106,7 +106,7 @@ class DeduplicateGroups():
         self.ochiai_community_cutoff = ochiai_community_cutoff
         # Initialize a logging DataFrame
         self.df_logging = pd.DataFrame(columns=[
-            'group', 'no_of_genes', 'coverage %', 'gpi', 'CSI', 'fragmentation', 'heterogeneity', 'modularity', 'selected', 'cluster_id'
+            'group', 'no_of_items', 'coverage %', 'gpi', 'CSI', 'fragmentation', 'heteroitemity', 'modularity', 'selected', 'cluster_id'
         ])
         self.main_pairwise_file = index_prefix + "_DBRetina_pairwise.tsv"
         self.GC = GC
@@ -142,32 +142,32 @@ class DeduplicateGroups():
         self.df_associations['item'] = self.df_associations['item'].str.lower()
         self.df_associations['group'] = self.df_associations['group'].str.lower()
         # calculate group to size
-        self.groups_to_genes_no = self.df_associations.groupby('group')['item'].nunique().to_dict()
-        # constrcut dictionary of group to genes list
-        self.groups_to_genes = self.df_associations.groupby('group')['item'].apply(set).to_dict()
+        self.groups_to_items_no = self.df_associations.groupby('group')['item'].nunique().to_dict()
+        # constrcut dictionary of group to items list
+        self.groups_to_items = self.df_associations.groupby('group')['item'].apply(set).to_dict()
 
 
-    def build_gene_to_CSI(self):
-        # we have can use df_gene_to_gpi to get the number of groups and clusters per item
+    def build_item_to_CSI(self):
+        # we have can use df_item_to_gpi to get the number of groups and clusters per item
         
         total_number_of_clusters = self.cluster_id_to_groups.keys().__len__()
         self.total_number_of_groups = self.df_associations['group'].nunique()
-        self.df_groups_per_gene = self.df_associations.groupby('item')['group'].nunique()
+        self.df_groups_per_item = self.df_associations.groupby('item')['group'].nunique()
         
-        self.df_gene_to_CSI = pd.DataFrame({
-            'item' : self.df_gene_to_gpi['item'].values,
-            'group_count': self.df_gene_to_gpi['group_count'].values,
-            'cluster_count': self.df_gene_to_gpi['cluster_count'].values,
+        self.df_item_to_CSI = pd.DataFrame({
+            'item' : self.df_item_to_gpi['item'].values,
+            'group_count': self.df_item_to_gpi['group_count'].values,
+            'cluster_count': self.df_item_to_gpi['cluster_count'].values,
             'CSI': 100 * 
-                    np.log2(self.df_gene_to_gpi['cluster_count'].values / total_number_of_clusters) / 
+                    np.log2(self.df_item_to_gpi['cluster_count'].values / total_number_of_clusters) / 
                     np.log2(1.0 / total_number_of_clusters)
         })
         
     
     def build_group_to_CSI(self):
-        #1 merge our original associations with gene_to_CSI
-        merged_df = pd.merge(self.df_associations, self.df_gene_to_CSI, left_on='item', right_on='item', how='left')
-        #2 Calculate the sum of CSI for each group and the number of genes per group
+        #1 merge our original associations with item_to_CSI
+        merged_df = pd.merge(self.df_associations, self.df_item_to_CSI, left_on='item', right_on='item', how='left')
+        #2 Calculate the sum of CSI for each group and the number of items per group
         group_group = merged_df.groupby('group')['CSI'].agg(['sum', 'count'])
         #3 Calculate average CSI
         self.df_group_to_avg_CSI = pd.DataFrame({
@@ -181,31 +181,31 @@ class DeduplicateGroups():
         cluster_to_groups_df = pd.DataFrame([(k, v) for k, vv in self.cluster_id_to_groups.items() for v in vv], 
                                             columns=['cluster_id', 'group'])
 
-        #2 map cluster_id to genes
-        cluster_to_genes = pd.merge(cluster_to_groups_df, self.df_associations, on='group', how='left')
-        cluster_to_genes = pd.merge(cluster_to_groups_df, self.df_associations, on='group', how='left')
+        #2 map cluster_id to items
+        cluster_to_items = pd.merge(cluster_to_groups_df, self.df_associations, on='group', how='left')
+        cluster_to_items = pd.merge(cluster_to_groups_df, self.df_associations, on='group', how='left')
 
 
         #3. Get the number of unique clusters and groups each item is found in
-        gene_counts = cluster_to_genes.groupby('item').agg(
+        item_counts = cluster_to_items.groupby('item').agg(
             cluster_count=pd.NamedAgg(column='cluster_id', aggfunc='nunique'),
             group_count=pd.NamedAgg(column='group', aggfunc='nunique')
         )
         
         #4. Calculate the Group Pleiotropy Index (GPI) for each item (Cd/Nd)
-        gene_counts['gpi'] = gene_counts['cluster_count'] / gene_counts['group_count']
+        item_counts['gpi'] = item_counts['cluster_count'] / item_counts['group_count']
 
         #5 All information in one dataframe
-        self.df_gene_to_gpi = pd.DataFrame({
-            'item': gene_counts.index,
-            'cluster_count': gene_counts['cluster_count'].values,
-            'group_count': gene_counts['group_count'].values,
-            'gpi': gene_counts['gpi'].values
+        self.df_item_to_gpi = pd.DataFrame({
+            'item': item_counts.index,
+            'cluster_count': item_counts['cluster_count'].values,
+            'group_count': item_counts['group_count'].values,
+            'gpi': item_counts['gpi'].values
         })
 
-        #5. Merge cluster_to_genes with gene_to_gpi to get gpi for each item in each group
+        #5. Merge cluster_to_items with item_to_gpi to get gpi for each item in each group
         # ['cluster_id', 'group', 'item', 'cluster_count', 'group_count', 'gpi']
-        merged_df = pd.merge(cluster_to_genes, self.df_gene_to_gpi, on='item', how='inner')
+        merged_df = pd.merge(cluster_to_items, self.df_item_to_gpi, on='item', how='inner')
 
         # Calculate the average GPI for each group
         group_group = merged_df.groupby('group')['gpi'].mean()
@@ -217,9 +217,9 @@ class DeduplicateGroups():
         })
              
         
-    def export_gene_to_gpi_CSI(self, file_name):
-        # Merge gene_to_gpi with gene_to_CSI
-        merged_df = pd.merge(self.df_gene_to_CSI, self.df_gene_to_gpi, on='item', how='left')
+    def export_item_to_gpi_CSI(self, file_name):
+        # Merge item_to_gpi with item_to_CSI
+        merged_df = pd.merge(self.df_item_to_CSI, self.df_item_to_gpi, on='item', how='left')
         # Export to CSV
         merged_df.to_csv(file_name, index=False, sep='\t')
         return file_name
@@ -234,7 +234,7 @@ class DeduplicateGroups():
     
     def process_pairwise_file(self, tsv_file, max_cont_threshold):
         # Initialize a dictionary to store group metrics
-        group_metrics = defaultdict(lambda: {'fragmentation': 0, 'heterogeneity': 0})
+        group_metrics = defaultdict(lambda: {'fragmentation': 0, 'heteroitemity': 0})
         
         self.ochiai_graph = Graph()
 
@@ -268,34 +268,34 @@ class DeduplicateGroups():
                     continue      
 
                 # Get the lengths of the groups
-                group1_len = self.groups_to_genes_no[group1]
-                group2_len = self.groups_to_genes_no[group2]
+                group1_len = self.groups_to_items_no[group1]
+                group2_len = self.groups_to_items_no[group2]
 
                 # Compute the metrics
                 # Large node fragmented to small nodes
                 # Large node heterogenous to small nodes
                 if group1_len < group2_len:
                     group_metrics[group1]['fragmentation'] -= 1
-                    group_metrics[group2]['heterogeneity'] += 1
+                    group_metrics[group2]['heteroitemity'] += 1
                 elif group1_len > group2_len:
-                    group_metrics[group1]['heterogeneity'] += 1
+                    group_metrics[group1]['heteroitemity'] += 1
                     group_metrics[group2]['fragmentation'] -= 1
                 # else:  # if they are equal, update both
                 #     print("ELSEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
                 #     group_metrics[group1]['fragmentation'] -= 1
-                #     group_metrics[group1]['heterogeneity'] += 1
+                #     group_metrics[group1]['heteroitemity'] += 1
                 #     group_metrics[group2]['fragmentation'] -= 1
-                #     group_metrics[group2]['heterogeneity'] += 1
+                #     group_metrics[group2]['heteroitemity'] += 1
 
         # Compute the modularity index for each group
         for metrics in group_metrics.values():
             fragmentation = metrics['fragmentation']
-            heterogeneity = metrics['heterogeneity']
-            metrics['modularity'] = abs(fragmentation + heterogeneity)
+            heteroitemity = metrics['heteroitemity']
+            metrics['modularity'] = abs(fragmentation + heteroitemity)
 
         # Convert the dictionary to a pandas DataFrame
         self.df_group_to_modularity = pd.DataFrame.from_dict(group_metrics, orient='index').reset_index()
-        self.df_group_to_modularity.columns = ['group', 'fragmentation', 'heterogeneity', 'modularity']
+        self.df_group_to_modularity.columns = ['group', 'fragmentation', 'heteroitemity', 'modularity']
         
     def build_groups_metadata(self):
         # This builds the groups metadata (gpi, CSI, frag, het, modularity, length)
@@ -306,12 +306,12 @@ class DeduplicateGroups():
         #2 merge with df_group_indices
         self.df_groups_metadata = pd.merge(self.df_groups_metadata, self.df_group_to_modularity, on='group', how='outer')
 
-        #3 Add no_of_genes column from groups_to_genes_no dictionary
-        self.df_groups_metadata['no_of_genes'] = self.df_groups_metadata['group'].apply(lambda x: self.groups_to_genes_no[x])
+        #3 Add no_of_items column from groups_to_items_no dictionary
+        self.df_groups_metadata['no_of_items'] = self.df_groups_metadata['group'].apply(lambda x: self.groups_to_items_no[x])
 
         #4 Rename the columns
         self.df_groups_metadata['dedup'] = 'remained'
-        self.df_groups_metadata.columns = ['group', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity', 'no_of_genes', 'dedup']
+        self.df_groups_metadata.columns = ['group', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity', 'no_of_items', 'dedup']
 
 
     def remove_exact_ochiai_matches(self):
@@ -320,16 +320,16 @@ class DeduplicateGroups():
         selected_groups = set()
         
         # create a temporary column for number of edges
-        self.df_groups_metadata['total_edges'] = abs(self.df_groups_metadata["heterogeneity"]) + abs(self.df_groups_metadata["fragmentation"])
+        self.df_groups_metadata['total_edges'] = abs(self.df_groups_metadata["heteroitemity"]) + abs(self.df_groups_metadata["fragmentation"])
 
         for component_groups in connected_components:
             if len(component_groups) == 1:
                 selected_groups.add(component_groups[0])
                 continue
             
-            # sort the groups by lowest average_CSI and highest no_of_genes
+            # sort the groups by lowest average_CSI and highest no_of_items
             # modified to reflect `DBRetina dedup`
-            sorted_groups = self.df_groups_metadata[self.df_groups_metadata['group'].isin(component_groups)].sort_values(by=['total_edges', 'no_of_genes'], ascending=[False, False])
+            sorted_groups = self.df_groups_metadata[self.df_groups_metadata['group'].isin(component_groups)].sort_values(by=['total_edges', 'no_of_items'], ascending=[False, False])
             selected_groups.add(sorted_groups.iloc[0]['group'])
             unselected_groups.update(sorted_groups.iloc[1:]['group'].tolist())
                 
@@ -349,7 +349,7 @@ class DeduplicateGroups():
         # Save the dataframe to a CSV file
         # fill NA values with 0
         self.df_groups_metadata = self.df_groups_metadata.fillna(0)
-        self.df_groups_metadata.to_csv(file_name, index=False, sep='\t', columns=['group', 'no_of_genes', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity', 'dedup'])
+        self.df_groups_metadata.to_csv(file_name, index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity', 'dedup'])
         return file_name
 
     def cluster_to_universe_set(self, cluster_id):
@@ -359,10 +359,10 @@ class DeduplicateGroups():
         # Filter df_associations to only include rows with groups in cluster_groups
         cluster_df = self.df_associations[self.df_associations['group'].isin(cluster_groups)]
 
-        # Get the unique set of genes associated with these groups
+        # Get the unique set of items associated with these groups
         return set(cluster_df['item'].unique())
 
-    def unique_set_of_genes(self):
+    def unique_set_of_items(self):
         return set(self.df_associations['item'].unique())
     
         
@@ -371,29 +371,29 @@ class DeduplicateGroups():
         
         def _deduplicate_all_groups_instead_of_communities(GC = 100):
             selected_groups = {}
-            uncovered_genes = self.unique_set_of_genes()
-            total_genes = len(uncovered_genes)
-            genes_covered = 0
+            uncovered_items = self.unique_set_of_items()
+            total_items = len(uncovered_items)
+            items_covered = 0
             sorted_groups_df = self.df_groups_metadata[
                 self.df_groups_metadata['dedup'] != 'exact_ochiai'].sort_values(
-                    by=['modularity', 'average_CSI', 'no_of_genes'], ascending=[True, False, False]
+                    by=['modularity', 'average_CSI', 'no_of_items'], ascending=[True, False, False]
                     )
             
             # Iterate through sorted groups
             for _, group_row in sorted_groups_df.iterrows():
                 group = group_row['group']
-                # Calculate the intersection of the current group genes with the uncovered genes
-                group_genes = self.groups_to_genes[group]
-                if common_genes := group_genes.intersection(uncovered_genes):
+                # Calculate the intersection of the current group items with the uncovered items
+                group_items = self.groups_to_items[group]
+                if common_items := group_items.intersection(uncovered_items):
                     # Add the group to the set cover
-                    coverage = len(common_genes) / total_genes * 100
+                    coverage = len(common_items) / total_items * 100
                     selected_groups[group] = coverage
-                    # Remove the covered genes from the uncovered set
-                    uncovered_genes -= common_genes
-                    # Update the count of covered genes
-                    genes_covered += len(common_genes)
+                    # Remove the covered items from the uncovered set
+                    uncovered_items -= common_items
+                    # Update the count of covered items
+                    items_covered += len(common_items)
                     # If the required item coverage is met, break the loop
-                    if genes_covered / total_genes * 100 >= GC:
+                    if items_covered / total_items * 100 >= GC:
                         break
 
             return selected_groups
@@ -408,17 +408,17 @@ class DeduplicateGroups():
 
     def write_new_associations_file(self, new_associations_file):
         with open(new_associations_file, 'w') as NEW_ASSOCIATIONS_FILE:
-            NEW_ASSOCIATIONS_FILE.write('group\tgene\n')
+            NEW_ASSOCIATIONS_FILE.write('group\titem\n')
             for group in self.final_remaining_groups:
-                for item in self.groups_to_genes[group]:
+                for item in self.groups_to_items[group]:
                     NEW_ASSOCIATIONS_FILE.write(f'{group}\t{item}\n')    
 
 
     def export_split_group_metadata(self, file_name):
         remaining_groups_df = self.df_groups_metadata[self.df_groups_metadata['group'].isin(self.final_remaining_groups)]
         removed_groups_df = self.df_groups_metadata[~self.df_groups_metadata['group'].isin(self.final_remaining_groups)]
-        remaining_groups_df.to_csv(f'{file_name}_remaining_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_genes', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity'])
-        removed_groups_df.to_csv(f'{file_name}_removed_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_genes', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity'])
+        remaining_groups_df.to_csv(f'{file_name}_remaining_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity'])
+        removed_groups_df.to_csv(f'{file_name}_removed_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity'])
 
 
     def export_deduplicated_gmt(self, file_name):
@@ -426,10 +426,10 @@ class DeduplicateGroups():
         groups_of_interest_df = self.df_associations[
             self.df_associations['group'].isin(self.final_remaining_groups)
         ]
-        groups_to_genes_df = groups_of_interest_df.groupby('group')['item'].apply(list).reset_index()
+        groups_to_items_df = groups_of_interest_df.groupby('group')['item'].apply(list).reset_index()
         with open(file_name, 'w') as f:
             fake_url = 'PLACEHOLDER_DESCRIPTION'
-            for idx, row in groups_to_genes_df.iterrows():
+            for idx, row in groups_to_items_df.iterrows():
                 row['item'] = [item.upper() for item in row['item']]
                 f.write('\t'.join([row['group'], fake_url] + row['item']))
                 # f.write('\t'.join([row['group'], row['group']] + row['item']))
@@ -437,37 +437,37 @@ class DeduplicateGroups():
 
     def export_original_gmt(self, file_name):
         file_name = f'{file_name}'
-        groups_to_genes_df = self.df_associations.groupby('group')['item'].apply(list).reset_index()
+        groups_to_items_df = self.df_associations.groupby('group')['item'].apply(list).reset_index()
         with open(file_name, 'w') as f:
-            for idx, row in groups_to_genes_df.iterrows():
+            for idx, row in groups_to_items_df.iterrows():
                 # upper case row['item']
                 row['item'] = [item.upper() for item in row['item']]
                 f.write('\t'.join([row['group'], row['group']] + row['item']))
                 f.write('\n')
 
-    def calculate_genes_stats(self):
+    def calculate_items_stats(self):
         # calculate overlap score for the original data
-        original_overlap_score = self.df_groups_per_gene.mean()
+        original_overlap_score = self.df_groups_per_item.mean()
         final_stats = {
             "original_overlap_score": 0,
             "remaining_overlap_score": 0,
-            "original_no_of_genes": 0,
-            "remaining_no_of_genes": 0,
-            "percentage_of_genes_remaining": 0,
+            "original_no_of_items": 0,
+            "remaining_no_of_items": 0,
+            "percentage_of_items_remaining": 0,
             'original_overlap_score': original_overlap_score,
-            'original_no_of_genes': len(self.df_groups_per_gene),
+            'original_no_of_items': len(self.df_groups_per_item),
         }
         # create a new dataframe removing groups not in final_remaining_groups
         df_remaining_associations = self.df_associations[
             self.df_associations['group'].isin(self.final_remaining_groups)]
 
         # calculate number of remaining groups per item
-        df_remaining_groups_per_gene = df_remaining_associations.groupby('item')['group'].nunique()
+        df_remaining_groups_per_item = df_remaining_associations.groupby('item')['group'].nunique()
 
-        final_stats['remaining_overlap_score'] = df_remaining_groups_per_gene.mean()
-        final_stats['remaining_no_of_genes'] = len(df_remaining_groups_per_gene)
+        final_stats['remaining_overlap_score'] = df_remaining_groups_per_item.mean()
+        final_stats['remaining_no_of_items'] = len(df_remaining_groups_per_item)
 
-        final_stats['percentage_of_genes_remaining'] = final_stats['remaining_no_of_genes'] / final_stats['original_no_of_genes'] * 100
+        final_stats['percentage_of_items_remaining'] = final_stats['remaining_no_of_items'] / final_stats['original_no_of_items'] * 100
 
         return final_stats
     
@@ -503,7 +503,7 @@ class DeduplicateGroups():
         
         self.process_associations()
         self.build_group_to_gpi()
-        self.build_gene_to_CSI()
+        self.build_item_to_CSI()
         self.build_group_to_CSI()
         self.LOGGER.SUCCESS("Calculated GPI and CSI")
 
@@ -513,9 +513,9 @@ class DeduplicateGroups():
         self.build_groups_metadata()
         self.LOGGER.SUCCESS("Groups metadata built")
 
-        _file_gene_gpi_CSI = f"{output_prefix}_gene_to_gpi_CSI.tsv"
-        self.export_gene_to_gpi_CSI(_file_gene_gpi_CSI)
-        self.LOGGER.SUCCESS(f"Exported Item to GPI CSI to {_file_gene_gpi_CSI}")
+        _file_item_gpi_CSI = f"{output_prefix}_item_to_gpi_CSI.tsv"
+        self.export_item_to_gpi_CSI(_file_item_gpi_CSI)
+        self.LOGGER.SUCCESS(f"Exported Item to GPI CSI to {_file_item_gpi_CSI}")
 
         self.remove_exact_ochiai_matches()
         self.LOGGER.SUCCESS("Deduplication completed")
@@ -551,12 +551,12 @@ class DeduplicateGroups():
         total_percentage = percentage_number_of_groups_removed_from_exact_duplicates + percentage_number_of_groups_removed_from_set_cover + (100 * self.final_remaining_groups_count / self.total_number_of_groups)
         self.LOGGER.INFO(f"[DEBUG] total percentage of groups: {total_percentage}%")
 
-        genes_stats = self.calculate_genes_stats()
-        self.LOGGER.INFO(f"original number of genes {genes_stats['original_no_of_genes']}")
-        self.LOGGER.INFO(f"remaining number of genes {genes_stats['remaining_no_of_genes']}")
-        self.LOGGER.INFO(f"percentage of genes remaining {genes_stats['percentage_of_genes_remaining']}%")
-        self.LOGGER.INFO(f"original overlap score {genes_stats['original_overlap_score']}")
-        self.LOGGER.INFO(f"remaining overlap score {genes_stats['remaining_overlap_score']}")
+        items_stats = self.calculate_items_stats()
+        self.LOGGER.INFO(f"original number of items {items_stats['original_no_of_items']}")
+        self.LOGGER.INFO(f"remaining number of items {items_stats['remaining_no_of_items']}")
+        self.LOGGER.INFO(f"percentage of items remaining {items_stats['percentage_of_items_remaining']}%")
+        self.LOGGER.INFO(f"original overlap score {items_stats['original_overlap_score']}")
+        self.LOGGER.INFO(f"remaining overlap score {items_stats['remaining_overlap_score']}")
     
 
 class GraphBasedDeduplication(DeduplicateGroups):
@@ -577,15 +577,15 @@ class GraphBasedDeduplication(DeduplicateGroups):
 
 
         selected_groups = {}
-        uncovered_genes = self.unique_set_of_genes()
-        total_genes = len(uncovered_genes)
-        genes_covered = 0
+        uncovered_items = self.unique_set_of_items()
+        total_items = len(uncovered_items)
+        items_covered = 0
         iteration = 1        
 
         # get initial sorting of groups
         sorted_groups_df = self.df_groups_metadata[
             self.df_groups_metadata['dedup'] != 'exact_ochiai'].sort_values(
-                by=['modularity', 'average_CSI', 'no_of_genes'], ascending=[True, False, False]
+                by=['modularity', 'average_CSI', 'no_of_items'], ascending=[True, False, False]
                 )
 
         # drop rows having dedup = 'exact_ochiai'
@@ -654,19 +654,19 @@ class GraphBasedDeduplication(DeduplicateGroups):
         print(f"[DEBUG] {first_group_name} removed |  Graph size: {len(G.nodes())}")
         # remove first_group_name edges
 
-        # update uncovered_genes with groups_to_genes[first_group_name]
-        intersected_genes = self.groups_to_genes[first_group_name].intersection(uncovered_genes)
-        # update uncovered_genes
-        uncovered_genes = uncovered_genes.difference(intersected_genes)
-        genes_covered += len(intersected_genes)
+        # update uncovered_items with groups_to_items[first_group_name]
+        intersected_items = self.groups_to_items[first_group_name].intersection(uncovered_items)
+        # update uncovered_items
+        uncovered_items = uncovered_items.difference(intersected_items)
+        items_covered += len(intersected_items)
 
 
         # add first group to graph_remaining_groups_df without the simularity_bin column, ignore the index
         self.final_remaining_groups_count += 1
         self.final_remaining_groups.add(first_group_name)
-        selected_groups[first_group_name] = {'similarity_bin': len(intersected_genes)}
+        selected_groups[first_group_name] = {'similarity_bin': len(intersected_items)}
 
-        # if len(uncovered_genes) == 0:
+        # if len(uncovered_items) == 0:
         #     return graph_remaining_groups_df.index.tolist()
 
         while True and sorted_groups_df.shape[0] > 0:
@@ -674,17 +674,17 @@ class GraphBasedDeduplication(DeduplicateGroups):
             # TODO REMOVE DEBUG
             # sorted_groups_df.to_csv(f"iteration_{iteration}_sorted_groups_df.tsv", sep="\t")
 
-            # sort groups by lowest similarity_bin, lowest modularity, highest average_CSI, highest no_of_genes
+            # sort groups by lowest similarity_bin, lowest modularity, highest average_CSI, highest no_of_items
             print(f"Iteration {iteration} | number of sorted_groups_df = {len(sorted_groups_df)}")
             sorted_groups_df = sorted_groups_df.sort_values(
-                by=['similarity_bin', 'modularity', 'average_CSI', 'no_of_genes'], ascending=[True, True, False, False]
+                by=['similarity_bin', 'modularity', 'average_CSI', 'no_of_items'], ascending=[True, True, False, False]
                 )
 
             # get the first group
             first_group_name = sorted_groups_df.iloc[0].name
-            print(f"[CURRENT PATHWAY] {first_group_name} |  Graph nodes: {len(G.nodes())} | Uncovered genes: {len(uncovered_genes)} | Genes covered: {genes_covered} | Iteration: {iteration} | Remaining groups: {len(sorted_groups_df)}")
+            print(f"[CURRENT GROUP] {first_group_name} |  Graph nodes: {len(G.nodes())} | Uncovered items: {len(uncovered_items)} | Items covered: {items_covered} | Iteration: {iteration} | Remaining groups: {len(sorted_groups_df)}")
             # export graph nodes to TSV
-            intersected_genes = self.groups_to_genes[first_group_name].intersection(uncovered_genes)
+            intersected_items = self.groups_to_items[first_group_name].intersection(uncovered_items)
             print(f"[DEBUG] Next group to remove: {first_group_name}")
 
             group_neighbors = get_all_neighbor_weights_dict(first_group_name)
@@ -709,21 +709,21 @@ class GraphBasedDeduplication(DeduplicateGroups):
             sorted_groups_df.drop(first_group_name, inplace=True)
             print(f"[REMOVED] {first_group_name} removed |  Graph size: {len(G.nodes())}")
             
-            if len(intersected_genes) == 0:
-                print(f"!!! [DEBUG] iteration: {iteration}, first_group_name: {first_group_name}, intersected_genes: {intersected_genes}, uncovered_genes: {len(uncovered_genes)}")
+            if len(intersected_items) == 0:
+                print(f"!!! [DEBUG] iteration: {iteration}, first_group_name: {first_group_name}, intersected_items: {intersected_items}, uncovered_items: {len(uncovered_items)}")
                 iteration -= 1
                 continue
             
-            # update uncovered_genes
-            uncovered_genes = uncovered_genes.difference(intersected_genes)
+            # update uncovered_items
+            uncovered_items = uncovered_items.difference(intersected_items)
 
-            # update genes_covered
-            genes_covered += len(intersected_genes)
-            selected_groups[first_group_name] = {'similarity_bin': len(intersected_genes)}
+            # update items_covered
+            items_covered += len(intersected_items)
+            selected_groups[first_group_name] = {'similarity_bin': len(intersected_items)}
 
 
-            print(f"\n[DEBUG] genes_coverage until now: {genes_covered} / {total_genes} ({genes_covered / total_genes * 100}%)")
-            if genes_covered / total_genes * 100 >= GC:
+            print(f"\n[DEBUG] items_coverage until now: {items_covered} / {total_items} ({items_covered / total_items * 100}%)")
+            if items_covered / total_items * 100 >= GC:
                 break
 
 
@@ -745,7 +745,7 @@ class GraphBasedDeduplication(DeduplicateGroups):
         self.build_group_to_gpi()
         print("Group to GPI built")
 
-        self.build_gene_to_CSI()
+        self.build_item_to_CSI()
         print("Item to CSI built")
 
         self.build_group_to_CSI()
@@ -757,8 +757,8 @@ class GraphBasedDeduplication(DeduplicateGroups):
         self.build_groups_metadata()
         print("Groups metadata built")
 
-        self.export_gene_to_gpi_CSI(f"{output_prefix}_gene_to_gpi_CSI.tsv")
-        print(f"Item to GPI CSI exported at {output_prefix}_gene_to_gpi_CSI.tsv")
+        self.export_item_to_gpi_CSI(f"{output_prefix}_item_to_gpi_CSI.tsv")
+        print(f"Item to GPI CSI exported at {output_prefix}_item_to_gpi_CSI.tsv")
 
         self.remove_exact_ochiai_matches()
         print("Exact Ochiai matches removed")
@@ -793,12 +793,12 @@ class GraphBasedDeduplication(DeduplicateGroups):
         total_percentage = percentage_number_of_groups_removed_from_exact_duplicates + percentage_number_of_groups_removed_from_set_cover + (100 * self.final_remaining_groups_count / self.total_number_of_groups)
         print(f"[DEBUG] total percentage of groups: {total_percentage}%")
         
-        genes_stats = self.calculate_genes_stats()
-        print(f"original number of genes {genes_stats['original_no_of_genes']}")
-        print(f"remaining number of genes {genes_stats['remaining_no_of_genes']}")
-        print(f"percentage of genes remaining {genes_stats['percentage_of_genes_remaining']}%")
-        print(f"original overlap score {genes_stats['original_overlap_score']}")
-        print(f"remaining overlap score {genes_stats['remaining_overlap_score']}")
+        items_stats = self.calculate_items_stats()
+        print(f"original number of items {items_stats['original_no_of_items']}")
+        print(f"remaining number of items {items_stats['remaining_no_of_items']}")
+        print(f"percentage of items remaining {items_stats['percentage_of_items_remaining']}%")
+        print(f"original overlap score {items_stats['original_overlap_score']}")
+        print(f"remaining overlap score {items_stats['remaining_overlap_score']}")
 
 
 def modularity_based_deduplication():
@@ -823,7 +823,7 @@ def modularity_based_deduplication():
     DEDUP_GMT = parser.parse_args().output_prefix + "_DEDUP_GMT.gmt"
     ORIGINAL_GMT = parser.parse_args().output_prefix + "_ORIGINAL_GMT.gmt"
     dedup.export_deduplicated_gmt("DEDUP_GMT")
-    dedup.export_original_gmt("NO_ABS_GMT_ORIGINAL_PATHWAYS")
+    dedup.export_original_gmt("NO_ABS_GMT_ORIGINAL_GROUPS")
 
 
 def graph_based_deduplication():
@@ -849,7 +849,7 @@ def graph_based_deduplication():
     DEDUP_GMT = parser.parse_args().output_prefix + "_DEDUP_GMT.gmt"
     ORIGINAL_GMT = parser.parse_args().output_prefix + "_ORIGINAL_GMT.gmt"
     dedup.export_deduplicated_gmt("DEDUP_GMT")
-    dedup.export_original_gmt("NO_ABS_GMT_ORIGINAL_PATHWAYS")
+    dedup.export_original_gmt("NO_ABS_GMT_ORIGINAL_GROUPS")
 
 def path_to_absolute_path(ctx, param, value):
     return value if value == "NA" else os.path.abspath(value)
@@ -873,7 +873,7 @@ def main(ctx, index_prefix, containment_cutoff, ochiai_cutoff, GC, output_prefix
     # write the associations to a two columns tsv file
     _tmp_associations = f".DBRetina_tmp_association_{index_prefix}.tsv"
     with open(_tmp_associations, "w") as f:
-        f.write("geneset\tgene\n")
+        f.write("itemset\titem\n")
         for group, items in raw_associations_json.items():
             for item in items:            
                 f.write(f"{group}\t{item}\n")
