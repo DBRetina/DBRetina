@@ -117,7 +117,6 @@ class Clusters:
         batch_counter = 0
         edges_tuples = []
 
-        print("[i] constructing graph")
         with open(self.pairwise_file, 'r') as pairwise_tsv:
 
             # skip comments
