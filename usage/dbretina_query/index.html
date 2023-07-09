@@ -409,6 +409,8 @@
         
           
         
+          
+        
       
       
         <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
@@ -597,6 +599,20 @@
 
             
           
+            
+              
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dbretina_modularity/" class="md-nav__link">
+        Modularity
+      </a>
+    </li>
+  
+
+            
+          
         </ul>
       </nav>
     </li>
@@ -768,11 +784,15 @@
 <p>The cluster IDs selected from the clusters file. This argument is only used if the clusters file is not provided.</p>
 <p><span class="cmd"> -o, --output TEXT        output file prefix  [required] </span></p>
 <p>The output prefix that should be unique for this query.</p>
-<hr class="fancy-hr">
-
+<hr />
 <h2 id="output-files-format">Output files format</h2>
-<p><span class="cmd"> {output_prefix}_features_count_per_group.tsv </span></p>
-<p>A TSV file containing two columns, the first column is the supergroup name and the second column is the number of features that are contained in that supergroup, and the third column is a PIPE-separated list of supergroups from the user query that are associated with the feature in the first column.</p>
+<!-- TODO: Implement later -->
+<!-- <span class="cmd"> {output_prefix}_features_count_per_group.tsv </span>
+
+A TSV file containing two columns, the first column is the supergroup name and the second column is the number of features that are contained in that supergroup, and the third column is a PIPE-separated list of supergroups from the user query that are associated with the feature in the first column. -->
+
+<p><span class="cmd"> {output_prefix}_feature_to_groups.tsv </span></p>
+<p>A three-columns TSV file containing the feature name, the number of supergroups associated with that feature, and a PIPE-separated list of supergroups associated with that feature.</p>
 <!-- TODO: Fix later -->
 <!-- <span class="cmd"> {output_prefix}_features_count_per_group_histogram.png </span>
 
@@ -783,7 +803,7 @@ A histogram plot showing the distribution of the number of features per supergro
   <small>
     
       Last update:
-      <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date">July 8, 2023</span>
+      <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date">July 9, 2023</span>
       
         <br>
         Created:
