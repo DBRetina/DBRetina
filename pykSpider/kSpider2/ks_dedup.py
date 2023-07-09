@@ -12,15 +12,34 @@ import os
 from collections import defaultdict
 import csv
 import kSpider2.dbretina_doc_url as dbretina_doc
+import json
 
 class Graph:
     
     # node_to_edges dict with default = 0
     node_to_edges = defaultdict(lambda: 0)
+    node_to_size = {}
+    all_groups = set()
     
-    def __init__(self):
+    def __init__(self, index_prefix):
         self.parent = {}
         self.components = None
+        self.index_prefix = index_prefix
+        self.load_raw_json()
+        
+
+    def load_raw_json(self):
+        raw_json_file = f"{self.index_prefix}_raw.json"
+        with open(raw_json_file) as f:
+            group_to_items = json.load(f)["data"]
+        
+        for group, items in group_to_items.items():
+            self.node_to_size[group] = len(items)
+            self.all_groups.add(group)
+    
+    def get_all_groups_set(self):
+        return self.all_groups
+
 
     def find(self, x):
         if x not in self.parent:
@@ -54,9 +73,8 @@ class Graph:
         if len(cluster) == 1:
             return cluster[0]
 
-        # select the node with the most edges
-        return max(cluster, key=lambda x: self.node_to_edges[x])
-
+        # select the node with the most edges, if tie, select the largest node
+        return max(cluster, key=lambda x: (self.node_to_edges[x], self.node_to_size[x]))
 
 
 def path_to_absolute_path(ctx, param, value):
@@ -71,25 +89,19 @@ def path_to_absolute_path(ctx, param, value):
 @click.pass_context
 def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
     """
-        Deduplicate the pairwise distance file using ochiai similarity
+        Deduplicate the pairwise similarity file using ochiai similarity
     """
 
     LOGGER = ctx.obj
+    ochiai_graph = Graph(index_prefix)
 
 
     #################################
     # 1. Extract all gene sets
     #################################
-    all_groups = set()
-    namesMap_file = f"{index_prefix}.namesMap"
-    with open(namesMap_file, 'r') as f:
-        next(f)
-        for line in f:
-            gene_set_name = line.strip().split('|')[1]
-            all_groups.add(gene_set_name)
-
-
+    all_groups = ochiai_graph.get_all_groups_set()
     original_groups_count = len(all_groups)
+    
     #################################
     # 2. Pairwise file parsing
     #################################
@@ -102,9 +114,8 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
         "pvalue": 9,
     }
 
-    DISTANCE_COL = metric_to_col["ochiai"]
+    METRIC_COL = metric_to_col["ochiai"]
 
-    ochiai_graph = Graph()
 
     LOGGER.INFO(f"parsing the pairwise file: {pairwise_file}")
     with open(pairwise_file, 'r') as f:
@@ -121,8 +132,8 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
 
         reader = csv.reader(f, delimiter="\t")
         for row in reader:
-            ochiai_distance = float(row[DISTANCE_COL])
-            if ochiai_distance >= cutoff:
+            ochiai_similarity = float(row[METRIC_COL])
+            if ochiai_similarity >= cutoff:
                 # Extract the gene_set names from columns 3 and 4
                 gene_set1 = row[2]
                 gene_set2 = row[3]
@@ -134,7 +145,7 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
     connected_components = ochiai_graph.get_connected_components()
 
     if len(connected_components) == 0:
-        LOGGER.ERROR("no connected components found. Please adjust the cutoff value.")
+        LOGGER.ERROR(f"There is no at least one pair of groups with similarity >= {cutoff}")
 
     LOGGER.INFO(f"number of connected components: {len(connected_components)}")
 
