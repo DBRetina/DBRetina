@@ -41,9 +41,6 @@ Options:
   --stop-cov FLOAT RANGE    stop when items covered by %  [0<=x<=100]
   -o, --output TEXT         output file prefix  [required]
   --help                    Show this message and exit.
-
-  Read more at
-  https://dbretina.github.io/DBRetina/usage/dbretina_setcov
 ```
 
 ## Command arguments
