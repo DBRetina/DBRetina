@@ -66,4 +66,4 @@ A TSV file that provides information about the fragmentation, heterogeneity, and
   </tbody>
 </table>
 
-The lower modularity value indicates a more modular group. Which means that the group is more likely to be a representative group.
+The higher modularity **(low value)** indicates a more modular group. Which means that the group is more likely to be a representative group.
