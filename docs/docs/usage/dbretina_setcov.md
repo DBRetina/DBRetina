@@ -49,37 +49,123 @@ Options:
 ## Command arguments
 
 
-<span class="cmd"> -i, --index-prefix TEXT  Index file prefix  [required] </span>
+<span class="cmd"> -i, --index-prefix TEXT   index file prefix  [required] </span>
 
 This is the user-defined prefix that was used in the indexing step.
 
-<span class="cmd"> -g, --groups-file PATH    single-column supergroups file </span>
+<span class="cmd"> --modularity FLOAT RANGE  containment cutoff for modularity calculation  [default: 80; 0<=x<=100] </span>
 
-This will filter out all pairwise similarities that are between supergroups that are not in the provided groups file. The groups file is a single-column file that contains the names of the supergroups to be included in the filtering.
+This parameter specifies the containment cutoff for modularity calculation. The default value is 80%.
 
-<span class="cmd"> --cluster-ids TEXT        comma-separated list of cluster IDs </span>
+<span class="cmd"> --dedup FLOAT RANGE       deduplication similarity cutoff  [default: 100; 0<=x<=100] </span>
 
-The cluster IDs selected from the clusters file. This argument is only used if the clusters file is not provided.
+This parameter specifies the Ochiai similarity threshold for deduplication. The default value is 100% which means no items loss and deduplicate only identical groups.
 
-<span class="cmd"> -o, --output TEXT        output file prefix  [required] </span>
+<span class="cmd"> --community FLOAT RANGE   community detection similarity cutoff  [default: 30; 0<=x<=100] </span>
 
-The output prefix that should be unique for this query.
+This parameter specifies the Ochiai similarity threshold for community detection. The default value is 30%.
 
----
+<span class="cmd"> --stop-cov FLOAT RANGE    stop when items covered by %  [0<=x<=100] </span>
+
+This parameter specifies the percentage of items to be covered before stopping the set cover algorithm. The default value is 100% which means the algorithm will stop only when all items are covered.
+
+<span class="cmd"> -o, --output TEXT         output file prefix  [required] </span>
+
+This is the user-defined prefix for the output files.
+
+<hr class="fancy-hr">
 
 ## Output files format
 
+<span class="cmd"> {output_prefix}_item_to_GPI_CSI.tsv </span>
 
-<!-- TODO: Implement later -->
-<!-- <span class="cmd"> {output_prefix}_features_count_per_group.tsv </span>
+A TSV file with the following columns:
 
-A TSV file containing two columns, the first column is the supergroup name and the second column is the number of features that are contained in that supergroup, and the third column is a PIPE-separated list of supergroups from the user query that are associated with the feature in the first column. -->
 
-<span class="cmd"> {output_prefix}_feature_to_groups.tsv </span>
+<table>
+  <tbody>
+    <tr>
+      <td><strong>Item name</strong></td>
+      <td>The item name (i.e. gene, protein)</td>
+    </tr>
+    <tr>
+      <td><strong>GPI</strong></td>
+      <td>Group Pleitropy Index</td>
+    </tr>
+    <tr>
+      <td><strong>CSI</strong></td>
+      <td>Cluster Specificity Index</td>
+    </tr>
+  </tbody>
+</table>
 
-A three-columns TSV file containing the feature name, the number of supergroups associated with that feature, and a PIPE-separated list of supergroups associated with that feature.
 
-<!-- TODO: Fix later -->
-<!-- <span class="cmd"> {output_prefix}_features_count_per_group_histogram.png </span>
+<span class="cmd"> {output_prefix}_groups_metadata.tsv </span>
 
-A histogram plot showing the distribution of the number of features per supergroup. -->
+A TSV file with the following columns:
+
+<table>
+  <tbody>
+    <tr>
+      <th>Column</th>
+      <th>Description</th>
+    </tr>
+    <tr>
+      <td>group</td>
+      <td>The group name (node name)</td>
+    </tr>
+    <tr>
+      <td>no_of_items</td>
+      <td>Number of items in the group</td>
+    </tr>
+    <tr>
+      <td>average_gpi</td>
+      <td>Group's average Pleitropy Index</td>
+    </tr>
+    <tr>
+      <td>average_CSI</td>
+      <td>Group's average Cluster Specificity Index</td>
+    </tr>
+    <tr>
+      <td>fragmentation</td>
+      <td>Number of outbound edges from the node (-ve value)</td>
+    </tr>
+    <tr>
+      <td>heterogeneity</td>
+      <td>Number of inbound edges to the node</td>
+    </tr>
+    <tr>
+      <td>modularity</td>
+      <td>absolute(fragmentation + heterogeneity)</td>
+    </tr>
+    <tr>
+      <td>status</td>
+      <td>The status of the group.<br>
+          `set-cov`: removed by the set-cov.<br> 
+          `dedup`: removed by deduplication.<br>
+          `remained`: remained group.
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<span class="cmd"> {output_prefix}_remaining_groups_metadata.tsv </span>
+
+Same as {output_prefix}_groups_metadata.tsv but only for the remaining groups after set cover and without the `status` column.
+
+<span class="cmd"> {output_prefix}_removed_groups_metadata.tsv </span>
+
+Same as {output_prefix}_groups_metadata.tsv but only for the removed groups after set cover and without the `status` column.
+
+<span class="cmd"> {output_prefix}_associations.tsv </span>
+
+A new association files as described in [`DBretina index`](dbretina_index.md) section. This file contains the final remaining groups after set cover and deduplication.
+
+<span class="cmd"> {output_prefix}_new.gmt </span>
+
+A new GMT file as described in [`DBretina index`](dbretina_index.md) section. This file contains the final remaining groups after set cover and deduplication.
+
+<span class="cmd"> {output_prefix}_original.gmt </span>
+
+The original GMT file as described in [`DBretina index`](dbretina_index.md) section. This file contains the original groups before set cover and deduplication.
+

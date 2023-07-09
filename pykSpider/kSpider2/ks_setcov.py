@@ -310,8 +310,8 @@ class DeduplicateGroups():
         self.df_groups_metadata['no_of_items'] = self.df_groups_metadata['group'].apply(lambda x: self.groups_to_items_no[x])
 
         #4 Rename the columns
-        self.df_groups_metadata['dedup'] = 'remained'
-        self.df_groups_metadata.columns = ['group', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity', 'no_of_items', 'dedup']
+        self.df_groups_metadata['status'] = 'remained'
+        self.df_groups_metadata.columns = ['group', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity', 'no_of_items', 'status']
 
 
     def remove_exact_ochiai_matches(self):
@@ -342,14 +342,14 @@ class DeduplicateGroups():
         
         
         # set df_groups_metadata dedup to exact_ochiai if in self.removed_exact_ochiai_groups
-        self.df_groups_metadata.loc[self.df_groups_metadata['group'].isin(self.removed_exact_ochiai_groups), 'dedup'] = 'exact_ochiai'
+        self.df_groups_metadata.loc[self.df_groups_metadata['group'].isin(self.removed_exact_ochiai_groups), 'status'] = 'exact_ochiai'
 
     
     def export_groups_metadata(self, file_name):
         # Save the dataframe to a CSV file
         # fill NA values with 0
         self.df_groups_metadata = self.df_groups_metadata.fillna(0)
-        self.df_groups_metadata.to_csv(file_name, index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity', 'dedup'])
+        self.df_groups_metadata.to_csv(file_name, index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity', 'status'])
         return file_name
 
     def cluster_to_universe_set(self, cluster_id):
@@ -375,7 +375,7 @@ class DeduplicateGroups():
             total_items = len(uncovered_items)
             items_covered = 0
             sorted_groups_df = self.df_groups_metadata[
-                self.df_groups_metadata['dedup'] != 'exact_ochiai'].sort_values(
+                self.df_groups_metadata['status'] != 'exact_ochiai'].sort_values(
                     by=['modularity', 'average_CSI', 'no_of_items'], ascending=[True, False, False]
                     )
             
@@ -404,7 +404,7 @@ class DeduplicateGroups():
         
         self.df_groups_metadata.loc[
             ~self.df_groups_metadata['group'].isin(selected_groups) &
-            ~self.df_groups_metadata['group'].isin(self.removed_exact_ochiai_groups), 'dedup'] = 'set-cov'
+            ~self.df_groups_metadata['group'].isin(self.removed_exact_ochiai_groups), 'status'] = 'set-cov'
 
     def write_new_associations_file(self, new_associations_file):
         with open(new_associations_file, 'w') as NEW_ASSOCIATIONS_FILE:
@@ -513,7 +513,7 @@ class DeduplicateGroups():
         self.build_groups_metadata()
         self.LOGGER.SUCCESS("Groups metadata built")
 
-        _file_item_gpi_CSI = f"{output_prefix}_item_to_gpi_CSI.tsv"
+        _file_item_gpi_CSI = f"{output_prefix}_item_to_GPI_CSI.tsv"
         self.export_item_to_gpi_CSI(_file_item_gpi_CSI)
         self.LOGGER.SUCCESS(f"Exported Item to GPI CSI to {_file_item_gpi_CSI}")
 
@@ -533,8 +533,8 @@ class DeduplicateGroups():
         self.write_new_associations_file(f"{output_prefix}_associations.tsv")
         self.LOGGER.SUCCESS(f"The new association file exported to {output_prefix}_associations.tsv")
 
-        DEDUP_GMT = output_prefix + "_DEDUP_GMT.gmt"
-        ORIGINAL_GMT = output_prefix + "_ORIGINAL_GMT.gmt"
+        DEDUP_GMT = output_prefix + "_new.gmt"
+        ORIGINAL_GMT = output_prefix + "_original.gmt"
         self.export_deduplicated_gmt(DEDUP_GMT)
         self.export_original_gmt(ORIGINAL_GMT)
         self.LOGGER.SUCCESS(f"Original and setcov GMT files exported to {DEDUP_GMT} and {ORIGINAL_GMT}")
@@ -557,6 +557,11 @@ class DeduplicateGroups():
         self.LOGGER.INFO(f"percentage of items remaining {items_stats['percentage_of_items_remaining']}%")
         self.LOGGER.INFO(f"original overlap score {items_stats['original_overlap_score']}")
         self.LOGGER.INFO(f"remaining overlap score {items_stats['remaining_overlap_score']}")
+        
+        # remove the community clusters file
+        if os.path.exists(self.communities_clusters_file):
+            os.remove(self.communities_clusters_file)
+
     
 
 class GraphBasedDeduplication(DeduplicateGroups):
@@ -584,12 +589,12 @@ class GraphBasedDeduplication(DeduplicateGroups):
 
         # get initial sorting of groups
         sorted_groups_df = self.df_groups_metadata[
-            self.df_groups_metadata['dedup'] != 'exact_ochiai'].sort_values(
+            self.df_groups_metadata['status'] != 'exact_ochiai'].sort_values(
                 by=['modularity', 'average_CSI', 'no_of_items'], ascending=[True, False, False]
                 )
 
         # drop rows having dedup = 'exact_ochiai'
-        sorted_groups_df = sorted_groups_df[sorted_groups_df['dedup'] != 'exact_ochiai']
+        sorted_groups_df = sorted_groups_df[sorted_groups_df['status'] != 'exact_ochiai']
 
         # add similarity_bin column to sorted_groups_df
         sorted_groups_df['similarity_bin'] = 0
@@ -733,7 +738,7 @@ class GraphBasedDeduplication(DeduplicateGroups):
 
         self.df_groups_metadata.loc[
             ~self.df_groups_metadata['group'].isin(selected_groups) &
-            ~self.df_groups_metadata['group'].isin(self.removed_exact_ochiai_groups), 'dedup'] = 'set-cov'
+            ~self.df_groups_metadata['group'].isin(self.removed_exact_ochiai_groups), 'status'] = 'set-cov'
         
 
 
@@ -757,8 +762,8 @@ class GraphBasedDeduplication(DeduplicateGroups):
         self.build_groups_metadata()
         print("Groups metadata built")
 
-        self.export_item_to_gpi_CSI(f"{output_prefix}_item_to_gpi_CSI.tsv")
-        print(f"Item to GPI CSI exported at {output_prefix}_item_to_gpi_CSI.tsv")
+        self.export_item_to_gpi_CSI(f"{output_prefix}_item_to_GPI_CSI.tsv")
+        print(f"Item to GPI CSI exported at {output_prefix}_item_to_GPI_CSI.tsv")
 
         self.remove_exact_ochiai_matches()
         print("Exact Ochiai matches removed")
@@ -799,7 +804,7 @@ class GraphBasedDeduplication(DeduplicateGroups):
         print(f"percentage of items remaining {items_stats['percentage_of_items_remaining']}%")
         print(f"original overlap score {items_stats['original_overlap_score']}")
         print(f"remaining overlap score {items_stats['remaining_overlap_score']}")
-
+        
 
 def modularity_based_deduplication():
     parser = argparse.ArgumentParser(description='Deduplicate groups')
