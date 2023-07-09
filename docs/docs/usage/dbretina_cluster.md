@@ -19,7 +19,7 @@ Options:
 ```
 
 
-## 4.1 Command arguments
+## Command arguments
 
 <span class="cmd"> -c, --cutoff FLOAT RANGE  cluster the supergroups with (similarity > cutoff) [0<=x<=100; required] </span>
 
@@ -44,7 +44,7 @@ The user-defined prefix for the output files.
 
 <hr class="fancy-hr">
 
-## 4.2 Output files format
+## Output files format
 
 <span class="cmd"> {output_prefix}_clusters.tsv </span>
 
