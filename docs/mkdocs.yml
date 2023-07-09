@@ -66,6 +66,7 @@ nav:
       - Bipartite: usage/dbretina_bipartite.md
       - Interactome: usage/dbretina_interactome.md
       - Dedup: usage/dbretina_dedup.md
+      - Modularity: usage/dbretina_modularity.md
 
   - Examples:
     - Example 1: DisGeNET_similarity_network-complete.ipynb
