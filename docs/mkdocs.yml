@@ -53,20 +53,18 @@ extra_css:
 
 nav:
   - Home: index.md
-  - Getting Started:
-    - Installation: installation.md
-    # - Quick Example: quick_example.md
-    - Usage:
-      - Index: usage/dbretina_index.md
-      - Pairwise: usage/dbretina_pairwise.md
-      - Filter: usage/dbretina_filter.md
-      - Cluster: usage/dbretina_cluster.md
-      - Bipartite: usage/dbretina_bipartite.md
-      - Modularity: usage/dbretina_modularity.md
-      - Dedup: usage/dbretina_dedup.md
-      - Query: usage/dbretina_query.md
-      - Interactome: usage/dbretina_interactome.md
-      - Export: usage/dbretina_export.md
+  - Installation: installation.md
+  - Usage:
+    - Index: usage/dbretina_index.md
+    - Pairwise: usage/dbretina_pairwise.md
+    - Filter: usage/dbretina_filter.md
+    - Cluster: usage/dbretina_cluster.md
+    - Bipartite: usage/dbretina_bipartite.md
+    - Modularity: usage/dbretina_modularity.md
+    - Dedup: usage/dbretina_dedup.md
+    - Query: usage/dbretina_query.md
+    - Interactome: usage/dbretina_interactome.md
+    - Export: usage/dbretina_export.md
 
   - Examples:
     - Example 1: DisGeNET_similarity_network-complete.ipynb
