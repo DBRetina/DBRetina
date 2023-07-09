@@ -61,12 +61,12 @@ nav:
       - Pairwise: usage/dbretina_pairwise.md
       - Filter: usage/dbretina_filter.md
       - Cluster: usage/dbretina_cluster.md
-      - Query: usage/dbretina_query.md
-      - Export: usage/dbretina_export.md
       - Bipartite: usage/dbretina_bipartite.md
-      - Interactome: usage/dbretina_interactome.md
-      - Dedup: usage/dbretina_dedup.md
       - Modularity: usage/dbretina_modularity.md
+      - Dedup: usage/dbretina_dedup.md
+      - Query: usage/dbretina_query.md
+      - Interactome: usage/dbretina_interactome.md
+      - Export: usage/dbretina_export.md
 
   - Examples:
     - Example 1: DisGeNET_similarity_network-complete.ipynb
