@@ -51,13 +51,19 @@ The cluster IDs selected from the clusters file. This argument is only used if t
 
 The output prefix that should be unique for this query.
 
-<hr class="fancy-hr">
+---
 
 ## Output files format
 
-<span class="cmd"> {output_prefix}_features_count_per_group.tsv </span>
 
-A TSV file containing two columns, the first column is the supergroup name and the second column is the number of features that are contained in that supergroup, and the third column is a PIPE-separated list of supergroups from the user query that are associated with the feature in the first column.
+<!-- TODO: Implement later -->
+<!-- <span class="cmd"> {output_prefix}_features_count_per_group.tsv </span>
+
+A TSV file containing two columns, the first column is the supergroup name and the second column is the number of features that are contained in that supergroup, and the third column is a PIPE-separated list of supergroups from the user query that are associated with the feature in the first column. -->
+
+<span class="cmd"> {output_prefix}_feature_to_groups.tsv </span>
+
+A three-columns TSV file containing the feature name, the number of supergroups associated with that feature, and a PIPE-separated list of supergroups associated with that feature.
 
 <!-- TODO: Fix later -->
 <!-- <span class="cmd"> {output_prefix}_features_count_per_group_histogram.png </span>
