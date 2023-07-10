@@ -1,0 +1,15 @@
+Click>=8.1.4
+pandas>=2.0.3
+scipy>=1.11.1
+numpy>=1.25
+rustworkx>=0.13.0
+tqdm>=4.65.0
+seaborn>=0.12.2
+matplotlib>=3.7.2
+fastcluster>=1.2.6
+leidenalg>=0.10.0
+igraph>=0.10.5
+plotly>=5.15.0
+dash_bio>=1.0.2
+pycirclize>=0.4.0
+networkx>=3.1

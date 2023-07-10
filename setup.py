@@ -2,7 +2,9 @@
 
 from shutil import which as find_executable
 from setuptools import setup, Extension, find_packages
+import pkg_resources
 from setuptools.command.build_py import build_py
+# import pip parse_requirements
 
 import sys
 import os
@@ -144,6 +146,12 @@ class BuildPy(build_py):
         super(build_py, self).run()
 
 
+with pathlib.Path('requirements.txt').open() as requirements_txt:
+    install_requires = [
+        str(requirement)
+        for requirement
+        in pkg_resources.parse_requirements(requirements_txt)
+    ]
 
 setup(name='DBRetina',
       version=get_version(),
@@ -158,19 +166,7 @@ setup(name='DBRetina',
       long_description_content_type='text/markdown',
       long_description=readme,
       classifiers=classifiers,
-      install_requires=[
-          'Click', 
-          'pandas', 
-          'scipy',
-          'numpy',
-          'rustworkx',
-          'tqdm',
-          'seaborn',
-          'matplotlib',
-          'fastcluster',
-          'leidenalg',
-          'igraph',
-      ],
+      install_requires=install_requires,
       include_package_data=True,
       entry_points='''
         [console_scripts]
