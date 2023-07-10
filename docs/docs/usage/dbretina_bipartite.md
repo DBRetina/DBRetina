@@ -51,7 +51,7 @@ A pairwise TSV file with the bipartite connections.
 
 <span class="cmd"> {output_prefix}_bipartite.html </span>
 
-An intercative bipartite graph in HTML format.
+An interactive bipartite graph in HTML format.
 
 <span class="cmd"> {output_prefix}_bipartite.png </span>
 
