@@ -2,82 +2,82 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://dbretina.github.io/DBRetina/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/DisGeNET_similarity_network-complete/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/installation/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/quick_example/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/assets/images/dbretina_filter/Untitled/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_bipartite/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_cluster/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_dedup/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_export/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_filter/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_index/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_interactome/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_modularity/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_pairwise/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_query/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://dbretina.github.io/DBRetina/usage/dbretina_setcov/</loc>
-         <lastmod>2023-07-09</lastmod>
+         <lastmod>2023-07-10</lastmod>
          <changefreq>daily</changefreq>
     </url>
 </urlset>
