@@ -4,6 +4,7 @@ from __future__ import division
 import sys
 import _kSpider_internal as kSpider_internal
 import click
+import contextlib
 from kSpider2.click_context import cli
 import subprocess
 import os
@@ -51,7 +52,8 @@ def get_command():
 
 
 def path_to_absolute_path(ctx, param, value):
-    return value if value == "NA" else os.path.abspath(value)
+    with contextlib.suppress(Exception):
+        return os.path.abspath(value) if value is not None else None
 
 # TODO: Remove later
 def working2_plot_bipartite(df_bipartite, output_prefix):
@@ -260,12 +262,14 @@ def check_if_there_is_a_pvalue(pairwise_file):
 
 @cli.command(name="bipartite", epilog = dbretina_doc.doc_url("bipartite"), help_priority=8)
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
-@click.option('--group1', "group_1_file", callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="group1 single-column supergroups file")
-@click.option('--group2', "group_2_file", callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="group2 single-column supergroups file")
+@click.option('--group1', "group_1_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="group1 single-column supergroups file")
+@click.option('--group2', "group_2_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="group2 single-column supergroups file")
+@click.option('--gmt1', "gmt_1_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="GMT file 1")
+@click.option('--gmt2', "gmt_2_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="GMT file 2")
 @click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('-o', '--output', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
-def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
+def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file, metric, output_prefix):
     """
         Create a bipartite connections between two group files.
     """
@@ -274,6 +278,11 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
     # check if pvalue
     if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
         LOGGER.ERROR("pvalue not found in pairwise file!")
+                
+    # must be two group files or two gmt files
+    if (not gmt_1_file and not gmt_2_file) and (not group_1_file and not group_2_file):
+        LOGGER.ERROR("Please provide either two GMT files or two group files.")
+            
 
     ###########################################################
     # 1. parse the two group files to dictionary for O(1) access
@@ -284,14 +293,29 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
     group1_dict = {}
     group2_dict = {}
     unmatched_groups = []
+    
+    dbretina_str_escape = lambda x: x.lower().replace('"', '')
+    
+    # if gmt files are provided, convert them to group files
+    if gmt_1_file and gmt_2_file:
+        with open(gmt_1_file) as IN_GMT:
+            for line in IN_GMT:
+                group1_dict[dbretina_str_escape(line.strip().split("\t")[0])] = {}
+        with open(gmt_2_file) as IN_GMT:
+            for line in IN_GMT:
+                group2_dict[dbretina_str_escape(line.strip().split("\t")[0])] = {}
+    elif group_1_file and group_2_file:
+        with open(group_1_file) as IN_GROUP:
+            for line in IN_GROUP:
+                group1_dict[dbretina_str_escape(line.strip())] = {}
 
-    with open(group_1_file) as IN_GROUP:
-        for line in IN_GROUP:
-            group1_dict[line.strip()] = {}
+        with open(group_2_file) as IN_GROUP:
+            for line in IN_GROUP:
+                group2_dict[dbretina_str_escape(line.strip())] = {}
 
-    with open(group_2_file) as IN_GROUP:
-        for line in IN_GROUP:
-            group2_dict[line.strip()] = {}
+    else:
+        LOGGER.ERROR("Please provide either two GMT files or two group files.")
+
 
     # make sure there is no overlap between the two groups
     if set(group1_dict.keys()).intersection(set(group2_dict.keys())):

@@ -5,12 +5,14 @@ The Bipartite command will create a bipartite graph from a pairwise TSV file bet
 ```
 Usage: DBRetina bipartite [OPTIONS]
 
-  Create a bipartite connections between two group files
+  Create a bipartite connections between two group files.
 
 Options:
   -p, --pairwise PATH  the pairwise TSV file  [required]
-  --group1 PATH        group1 single-column supergroups file  [required]
-  --group2 PATH        group2 single-column supergroups file  [required]
+  --group1 PATH        group1 single-column supergroups file
+  --group2 PATH        group2 single-column supergroups file
+  --gmt1 PATH          GMT file 1
+  --gmt2 PATH          GMT file 2
   -m, --metric TEXT    select from ['containment', 'ochiai', 'jaccard',
                        'pvalue']  [required]
   -o, --output TEXT    output file prefix  [required]
@@ -23,13 +25,25 @@ Options:
 
 The original or a filtered pairwise TSV file.
 
-<span class="cmd"> --group1 PATH        group1 single-column supergroups file  [required] </span>
+<span class="cmd"> --group1 PATH        group1 single-column supergroups file </span>
 
 A single-column file with the group1 supergroups.
 
-<span class="cmd"> --group2 PATH        group2 single-column supergroups file  [required] </span>
+<span class="cmd"> --group2 PATH        group2 single-column supergroups file </span>
 
 A single-column file with the group2 supergroups.
+
+<span class="cmd"> --gmt1 PATH          GMT file 1 </span>
+
+A GMT file with the group1 supergroups.
+
+<span class="cmd"> --gmt2 PATH          GMT file 2 </span>
+
+A GMT file with the group2 supergroups.
+
+!!! warning
+      <b>You can't use combination of gmt files and single-column group files, the command accepts only one type of input.</b>
+
 
 <span class="cmd"> -m, --metric TEXT    select from ['containment', 'ochiai', 'jaccard', 'pvalue']  [required] </span>
 
