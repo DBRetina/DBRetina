@@ -260,25 +260,106 @@ def check_if_there_is_a_pvalue(pairwise_file):
                 continue
 
 
+def similarities_distribution_histogram(df_bipartite, filename, log_scale = False):
+    # Function to map values to ranges
+    def map_value_to_range(value):
+        lower = (int(value) // 5) * 5
+        upper = lower + 5
+        if upper > 100: 
+            upper = 100
+        return f"{lower}-{upper}"
+
+    # List of metrics to consider
+    metrics = ["containment", "ochiai", "jaccard"]
+
+    # Initialize a dict to store data
+    data = {}
+
+    # Create all possible ranges with zero counts
+    all_ranges = [f"{i}-{i+5}" for i in range(0, 105, 5)]
+    for metric in metrics:
+        data[metric] = dict.fromkeys(all_ranges, 0)
+
+    # Iterate over metrics
+    for metric in metrics:
+        # Bin the similarity scores into ranges
+        df_bipartite[metric+'_range'] = df_bipartite[metric].apply(map_value_to_range)
+        
+        # Count the number of pairs in each range
+        counts = df_bipartite[metric+'_range'].value_counts().to_dict()
+
+        # Update counts in data
+        data[metric].update(counts)
+
+    # Prepare data for plotting
+    df = pd.DataFrame(data)
+
+    # Convert index to integer for sorting
+    df.index = df.index.map(lambda x: int(x.split('-')[0]))
+    df = df.sort_index()
+
+    # Reset index to string for correct x-axis labels
+    df.index = df.index.map(lambda x: f"{x}-{x+5}")
+
+    # Melt dataframe to have format suitable for seaborn
+    df = df.reset_index().melt('index', var_name='Metric', value_name='Count')
+
+    # Create the plot
+    plt.figure(figsize=(10, 6))
+    sns.set(style="whitegrid")
+    sns.set_color_codes("pastel")
+    sns.barplot(x='index', y='Count', hue='Metric', data=df, palette="viridis")
+
+
+    # Add title and labels
+    plt.title('Histogram of Similarity Scores', fontsize=18)
+    plt.xlabel('Similarity Score Range', fontsize=14)
+    plt.ylabel('Count', fontsize=14)
+
+    # Increase the size of the legend and x-axis ticks labels
+    plt.legend(title='Metrics', title_fontsize='13', fontsize='12')
+    plt.legend(loc='upper right')
+    plt.xticks(fontsize=10, rotation=90)
+
+
+
+    if log_scale:
+        plt.ylabel('Count (log scale)')
+    else:
+        plt.ylabel('Count')
+
+    # Rotate x-axis labels for better readability
+    plt.xticks(rotation=90)
+    
+    # y-axis in log scale
+    if log_scale:
+        plt.yscale('log')
+
+    # Show the plot
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300)
+    # plt.show()
+
+
+
+
 @cli.command(name="bipartite", epilog = dbretina_doc.doc_url("bipartite"), help_priority=8)
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('--group1', "group_1_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="group1 single-column supergroups file")
 @click.option('--group2', "group_2_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="group2 single-column supergroups file")
 @click.option('--gmt1', "gmt_1_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="GMT file 1")
 @click.option('--gmt2', "gmt_2_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="GMT file 2")
-@click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+# @click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('-o', '--output', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
-def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file, metric, output_prefix):
+def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file, output_prefix):
     """
         Create a bipartite connections between two group files.
     """
     LOGGER = ctx.obj
     
-    # check if pvalue
-    if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
-        LOGGER.ERROR("pvalue not found in pairwise file!")
-                
+    FILE_HAS_PVALUE = check_if_there_is_a_pvalue(pairwise_file)
+                    
     # must be two group files or two gmt files
     if (not gmt_1_file and not gmt_2_file) and (not group_1_file and not group_2_file):
         LOGGER.ERROR("Please provide either two GMT files or two group files.")
@@ -351,7 +432,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
                 pairwise_tsv.seek(pos)
                 break
             else:
-                metadata.append(line)            
+                metadata.append(line)
         metadata.append(f"#command: {get_command()}\n")
 
         next(pairwise_tsv)
@@ -393,6 +474,14 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
     LOGGER.INFO(f"Writing the bipartite TSV file to {output_prefix}_bipartite_pairwise.tsv")
     df_bipartite = pd.DataFrame(df_rows)
     df_bipartite.to_csv(f"{output_prefix}_bipartite_pairwise.tsv", sep='\t', index=False)
+    
+    histogram_plot_file = f"{output_prefix}_similarity_metrics_histogram.png"
+    LOGGER.INFO(f"Plotting the similarity metrics histogram to {histogram_plot_file}")
+    similarities_distribution_histogram(df_bipartite, histogram_plot_file, log_scale = False)
+    
+    histogram_plot_file = f"{output_prefix}_similarity_metrics_histogram_log.png"
+    LOGGER.INFO(f"Plotting the similarity metrics histogram (log-scale) to {histogram_plot_file}")
+    similarities_distribution_histogram(df_bipartite, histogram_plot_file, log_scale = True)
     
     # report if there are unmatched groups
     unique_matched_group1 = set(df_bipartite['group_1'].unique())

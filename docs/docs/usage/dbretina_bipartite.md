@@ -41,13 +41,10 @@ A GMT file with the group1 supergroups.
 
 A GMT file with the group2 supergroups.
 
+
 !!! warning
       <b>You can't use combination of gmt files and single-column group files, the command accepts only one type of input.</b>
 
-
-<span class="cmd"> -m, --metric TEXT    select from ['containment', 'ochiai', 'jaccard', 'pvalue']  [required] </span>
-
-The similarity metric that will be used to create the bipartite graph.
 
 <span class="cmd"> -o, --output TEXT    output prefix  [required] </span>
 
@@ -71,12 +68,18 @@ An interactive bipartite graph in HTML format.
 
 A bipartite graph in PNG format.
 
+
+<span class="cmd"> {output_prefix}_similarity_metrics_histogram_log.png </span>
+
+The clustered bar chart shows the logarithmic frequency distribution of the three similarity metrics - containment, ochiai, and jaccard - over different similarity ranges between the two groups.
+
+<span class="cmd"> {output_prefix}_similarity_metrics_histogram.png </span>
+
+Same as above, but without logarithmic scale.
+
 <span class="cmd"> {output_prefix}_missing_groups.txt </span>
 
 If there are missing groups in the group files, they will be reported in this file.
-
-
-
 
 
 
@@ -84,8 +87,16 @@ If there are missing groups in the group files, they will be reported in this fi
 
     <iframe src="../../assets/images/dbretina_bipartite/bipartite_output_prefix_bipartite.html" width="700" height="450" frameBorder="0">Browser not compatible.</iframe>
 
-
-
 === "Bipartite PNG plot"
 
     ![Image title](../assets/images/dbretina_bipartite/bipartite_output_prefix_bipartite.png){ align=left }
+---
+
+=== "Similarities distribution (Logarithmic scale)"
+
+    ![Image title](../assets/images/dbretina_bipartite/bipartite_output_prefix_similarity_metrics_histogram_log.png){ align=left }
+
+
+=== "Similarities distribution"
+
+    ![Image title](../assets/images/dbretina_bipartite/bipartite_output_prefix_similarity_metrics_histogram.png){ align=left }
