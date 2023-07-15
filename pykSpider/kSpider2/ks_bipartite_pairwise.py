@@ -25,6 +25,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import plotly.subplots as sp
+import json
 
 def execute_bash_command(command):
     try:
@@ -260,7 +261,7 @@ def check_if_there_is_a_pvalue(pairwise_file):
                 continue
 
 
-def similarities_distribution_histogram(df_bipartite, filename, log_scale = False):
+def similarities_distribution_histogram(df_bipartite, filename, json_output_file = None, log_scale = False):
     # Function to map values to ranges
     def map_value_to_range(value):
         lower = (int(value) // 5) * 5
@@ -303,6 +304,23 @@ def similarities_distribution_histogram(df_bipartite, filename, log_scale = Fals
 
     # Melt dataframe to have format suitable for seaborn
     df = df.reset_index().melt('index', var_name='Metric', value_name='Count')
+    
+    df['index'] = df['index'].replace('100-105', '100-100')
+    
+    if json_output_file:
+        # Dictionary to store the results
+        results = {}
+
+        # Iterate over the metrics
+        for metric in ['containment', 'ochiai', 'jaccard']:
+            metric_df = df[df['Metric'] == metric]  # Filter the dataframe by the current metric
+            metric_dict = dict(zip(metric_df['index'], metric_df['Count']))  # Create a dictionary: {range: count}
+            results[metric] = metric_dict  # Add the dictionary to the results
+
+        # Write the results to a JSON file
+        with open(json_output_file, 'w') as f:
+            json.dump(results, f, indent=4)
+
 
     # Create the plot
     plt.figure(figsize=(10, 6))
@@ -480,8 +498,10 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
     similarities_distribution_histogram(df_bipartite, histogram_plot_file, log_scale = False)
     
     histogram_plot_file = f"{output_prefix}_similarity_metrics_histogram_log.png"
+    json_stats_file = f"{output_prefix}_similarity_metrics_histogram.json"
+    LOGGER.INFO(f"Writing the similarity metrics histogram to {json_stats_file}")
     LOGGER.INFO(f"Plotting the similarity metrics histogram (log-scale) to {histogram_plot_file}")
-    similarities_distribution_histogram(df_bipartite, histogram_plot_file, log_scale = True)
+    similarities_distribution_histogram(df_bipartite, histogram_plot_file, json_output_file=json_stats_file, log_scale = True)
     
     # report if there are unmatched groups
     unique_matched_group1 = set(df_bipartite['group_1'].unique())

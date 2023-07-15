@@ -68,6 +68,9 @@ An interactive bipartite graph in HTML format.
 
 A bipartite graph in PNG format.
 
+<span class="cmd"> {output_prefix}_similarity_metrics_histogram.json </span>
+
+A histogram json file with the frequency distribution of the three similarity metrics - containment, ochiai, and jaccard - over different similarity ranges between the two groups.
 
 <span class="cmd"> {output_prefix}_similarity_metrics_histogram_log.png </span>
 
