@@ -70,6 +70,15 @@ def validate_numbers(ctx, param, value):
 def path_to_absolute_path(ctx, param, value):
     return value if value == "NA" else os.path.abspath(value)
 
+def check_cutoff_value(ctx, param, value):
+    # if value not == -1 and not between 0 to 100
+    if value != -1 and (value < 0 or value > 100):
+        raise click.BadParameter(
+            'cutoff must be between 0 and 100 or -1 for no cutoff.')
+    else:
+        return value
+        
+
 
 def check_if_there_is_a_pvalue(pairwise_file):
     with open(pairwise_file) as F:
@@ -85,7 +94,7 @@ def check_if_there_is_a_pvalue(pairwise_file):
 @click.option('--clusters-file', "clusters_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
 @click.option('--cluster-ids', "cluster_ids", callback=validate_numbers, required=False, default="", help="comma-separated list of cluster IDs")
 @click.option('-m', '--metric', "metric", required=False, default="NA", type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
-@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=-1, help="filter out similarities < cutoff")
+@click.option('-c', '--cutoff', callback=check_cutoff_value, required=False, default=-1, help="filter out similarities < cutoff")
 @click.option('--extend', "extend", is_flag=True, default=False, show_default=True, help="include all supergroups that are linked to the given supergroups.")
 @click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
