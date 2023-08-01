@@ -15,6 +15,7 @@ Options:
   --gmt2 PATH          GMT file 2
   -m, --metric TEXT    select from ['containment', 'ochiai', 'jaccard',
                        'pvalue']  [required]
+  --no-plot            do not plot the bipartite graph
   -o, --output TEXT    output file prefix  [required]
   --help               Show this message and exit.
 ```
@@ -44,6 +45,14 @@ A GMT file with the group2 supergroups.
 
 !!! warning
       <b>You can't use combination of gmt files and single-column group files, the command accepts only one type of input.</b>
+
+<span class="cmd"> -m, --metric TEXT    select from ['containment', 'ochiai', 'jaccard', 'pvalue']  [required] </span>
+
+The similarity metric that will be used to color the bipartite graph.
+
+<span class="cmd"> --no-plot            do not plot the bipartite graph </span>
+
+Sometimes graphs are very large, better not to plot them.
 
 
 <span class="cmd"> -o, --output TEXT    output prefix  [required] </span>
