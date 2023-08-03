@@ -197,14 +197,20 @@ class DBRetinaGraph:
                 self.node_to_size[node] = int(size)
 
 
-    def export_node_attributes(self):
-        df_nodes = pd.DataFrame.from_dict(self.node_to_fragmentation, orient='index', columns=['fragmentation'])
+    def export_node_attributes(self, include_isolates):
+        df_nodes = pd.DataFrame.from_dict(self.geneSetToTargetsArgumentID, orient='index', columns=['targetGroup'])
         df_nodes["target_name"] = df_nodes.index.map(self.gene_set_to_targetID)
         df_nodes['heterogeneity'] = df_nodes.index.map(self.node_to_heterogeneity)
         df_nodes['size'] = df_nodes.index.map(self.node_to_size)
-        df_nodes['targetGroup'] = df_nodes.index.map(self.geneSetToTargetsArgumentID)
+        df_nodes['fragmentation'] = df_nodes.index.map(self.node_to_fragmentation)        
         df_nodes['modularity'] = abs(df_nodes['fragmentation'] + df_nodes['heterogeneity'])
         df_nodes.index.name = 'id'
+        self.LOGGER.INFO(f"total number of nodes: {len(df_nodes)}")
+        # keep only nodes in self.nodes_with_edges
+        if not include_isolates:
+            df_nodes = df_nodes.loc[list(self.nodes_with_edges)]
+            self.LOGGER.INFO(f"remaining nodes after removing isolates: {len(df_nodes)}")
+    
         df_nodes.to_csv(f"{self.output_prefix}_nodes.tsv", sep='\t')
 
 
@@ -236,6 +242,7 @@ class DBRetinaGraph:
     def build_graph(self):
         total_edges = 0
         pairwise_iter = self.pairwise_file_iterator(self.output_prefix)
+        self.nodes_with_edges = set()
         with open(f"{self.output_prefix}_edges.tsv", 'w') as f_edges:
             f_edges.write(f"from\tto\t{self.metric}\n")
             for gene_set_1, gene_set_2, similarity in pairwise_iter:
@@ -257,6 +264,8 @@ class DBRetinaGraph:
 
                 if both_same_intra or coming_from_differnt_arguments:
                     f_edges.write(f"{gene_set_1}\t{gene_set_2}\t{similarity}\n")
+                    self.nodes_with_edges.add(gene_set_1)
+                    self.nodes_with_edges.add(gene_set_2)
                     total_edges += 1
                 else:
                     continue
@@ -285,8 +294,9 @@ def process_targets_option(ctx, param, value):
 @click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="Similarity metric ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('-c', '--cutoff', 'cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default = True, help="Include comparisons (similarity > cutoff)")
 @click.option('-o', '--output', "output_prefix", required=True, type=click.STRING, help="output file prefix")
+@click.option('--include-isolates', "include_isolates", is_flag=True, default=False, show_default = True, help="Include isolate nodes")
 @click.pass_context
-def main(ctx, index_prefix, pairwise_file, intra_targets, inter_targets, metric, cutoff, output_prefix):
+def main(ctx, index_prefix, pairwise_file, intra_targets, inter_targets, metric, cutoff, output_prefix, include_isolates):
     """
         Export edges, nodes graph files for visualization.
         Optionally visualize the DBRetina's graph.
@@ -317,7 +327,7 @@ def main(ctx, index_prefix, pairwise_file, intra_targets, inter_targets, metric,
     )
     
     db_graph.build_graph()
-    db_graph.export_node_attributes()
+    db_graph.export_node_attributes(include_isolates)
     LOGGER.SUCCESS("Done!")
     
 
