@@ -201,7 +201,7 @@ class DBRetinaGraph:
         df_nodes = pd.DataFrame.from_dict(self.geneSetToTargetsArgumentID, orient='index', columns=['targetGroup'])
         df_nodes["target_name"] = df_nodes.index.map(self.gene_set_to_targetID)
         df_nodes['heterogeneity'] = df_nodes.index.map(self.node_to_heterogeneity)
-        df_nodes['size'] = df_nodes.index.map(self.node_to_size)
+        df_nodes['geneSet_size'] = df_nodes.index.map(self.node_to_size)
         df_nodes['fragmentation'] = df_nodes.index.map(self.node_to_fragmentation)        
         df_nodes['modularity'] = abs(df_nodes['fragmentation'] + df_nodes['heterogeneity'])
         df_nodes.index.name = 'id'
@@ -295,8 +295,9 @@ def process_targets_option(ctx, param, value):
 @click.option('-c', '--cutoff', 'cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default = True, help="Include comparisons (similarity > cutoff)")
 @click.option('-o', '--output', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.option('--include-isolates', "include_isolates", is_flag=True, default=False, show_default = True, help="Include isolate nodes")
+@click.option('--visualize', "visualize", is_flag=True, default=False, show_default = True, help="Visualize the graph")
 @click.pass_context
-def main(ctx, index_prefix, pairwise_file, intra_targets, inter_targets, metric, cutoff, output_prefix, include_isolates):
+def main(ctx, index_prefix, pairwise_file, intra_targets, inter_targets, metric, cutoff, output_prefix, include_isolates, visualize):
     """
         Export edges, nodes graph files for visualization.
         Optionally visualize the DBRetina's graph.
@@ -328,6 +329,15 @@ def main(ctx, index_prefix, pairwise_file, intra_targets, inter_targets, metric,
     
     db_graph.build_graph()
     db_graph.export_node_attributes(include_isolates)
+    
+    if visualize:
+        from kSpider2.dbretina_viz import DBRetinaViz
+
+        edge_df = pd.read_csv(f"{output_prefix}_edges.tsv", sep='\t')
+        node_df = pd.read_csv(f"{output_prefix}_nodes.tsv", sep='\t')
+        viz = DBRetinaViz(edge_df, node_df)
+        viz.plot(debug=False)
+    
     LOGGER.SUCCESS("Done!")
     
 
