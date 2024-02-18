@@ -8,7 +8,7 @@ from kSpider2.click_context import cli
 import matplotlib.pyplot as plt
 import seaborn as sns
 from kSpider2.ks_clustering import main as ks_clustering
-from kSpider2.ks_filter import main as ks_filter
+from kSpider2.ks_query import main as ks_filter
 from kSpider2.ks_pairwise import main as ks_pairwise
 from kSpider2.ks_dataset_indexing import main as ks_index
 from tqdm import tqdm
