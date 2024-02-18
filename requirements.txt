@@ -13,3 +13,8 @@ plotly>=5.15.0
 dash_bio>=1.0.2
 pycirclize>=0.4.0
 networkx>=3.1
+dash>=1.19.0
+visdcc>=0.0.40
+dash_core_components>=1.15.0
+dash_html_components>=1.1.2 
+dash_bootstrap_components>1.4.0

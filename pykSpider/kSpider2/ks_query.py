@@ -70,6 +70,15 @@ def validate_numbers(ctx, param, value):
 def path_to_absolute_path(ctx, param, value):
     return value if value == "NA" else os.path.abspath(value)
 
+def check_cutoff_value(ctx, param, value):
+    # if value not == -1 and not between 0 to 100
+    if value != -1 and (value < 0 or value > 100):
+        raise click.BadParameter(
+            'cutoff must be between 0 and 100 or -1 for no cutoff.')
+    else:
+        return value
+        
+
 
 def check_if_there_is_a_pvalue(pairwise_file):
     with open(pairwise_file) as F:
@@ -79,59 +88,63 @@ def check_if_there_is_a_pvalue(pairwise_file):
             else:
                 continue
 
-@cli.command(name="filter", epilog = dbretina_doc.doc_url("filter") , help_priority=3)
+@cli.command(name="query", epilog = dbretina_doc.doc_url("query") , help_priority=3)
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
 @click.option('--clusters-file', "clusters_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
 @click.option('--cluster-ids', "cluster_ids", callback=validate_numbers, required=False, default="", help="comma-separated list of cluster IDs")
 @click.option('-m', '--metric', "metric", required=False, default="NA", type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
-@click.option('-c', '--cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=-1, help="filter out similarities < cutoff")
+@click.option('-c', '--cutoff', callback=check_cutoff_value, required=False, default=-1, type=click.FLOAT, help="filter out similarities < cutoff")
 @click.option('--extend', "extend", is_flag=True, default=False, show_default=True, help="include all supergroups that are linked to the given supergroups.")
 @click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
 def main(ctx, pairwise_file, groups_file, metric, cutoff, output_file, clusters_file, cluster_ids, extend):
     # sourcery skip: low-code-quality
-    """Filter a pairwise file.
+    """Query a pairwise file.
 
 Detailed description:
 
-    Filter a pairwise file by similarity cutoff and/or a set of groups (provided as a single-column file or cluster IDs in a DBRetina cluster file).
+    Query a pairwise file by similarity cutoff and/or a set of groups (provided as a single-column file or cluster IDs in a DBRetina cluster file).
     """
+    
+    # error if cutoff > 100 or < 0
+    if cutoff > 100 or cutoff < 0:
+        ctx.obj.ERROR("cutoff must be between 0 and 100")
     
     # Extend must be used only when clusters file or groups file is provided
     if extend and groups_file == "NA" and clusters_file == "NA":
-        ctx.obj.ERROR("DBRetina's filter command requires a groups_file or clusters_file if --extend is provided.")
+        ctx.obj.ERROR("DBRetina's query command requires a groups_file or clusters_file if --extend is provided.")
 
 
     # check if not any option is provided for filteration
     if metric == "NA" and cutoff == -1 and groups_file == "NA" and clusters_file == "NA":
         ctx.obj.ERROR(
-            "DBRetina's filter command requires at least one option to filter the pairwise file.")
+            "DBRetina's query command requires at least one option to query the pairwise file.")
 
     # if clusters_file then must be cluster_id
     if clusters_file != "NA" and not len(cluster_ids):
         ctx.obj.ERROR(
-            "DBRetina's filter command requires cluster_id(s) if clusters_file is provided.")
+            "DBRetina's query command requires cluster_id(s) if clusters_file is provided.")
     elif clusters_file == "NA" and len(cluster_ids):
         ctx.obj.ERROR(
-            "DBRetina's filter command requires a clusters_file if cluster_id(s) is provided.")
+            "DBRetina's query command requires a clusters_file if cluster_id(s) is provided.")
 
-    # can't filter by groups_file and clusters_file at the same time
+    # can't query by groups_file and clusters_file at the same time
     if groups_file != "NA" and clusters_file != "NA":
         ctx.obj.ERROR(
-            "DBRetina's filter command can't filter by groups_file and clusters_file at the same time.")
+            "DBRetina's query command can't query by groups_file and clusters_file at the same time.")
 
     # if metric is provided then cutoff must be provided
     if metric != "NA" and cutoff == -1:
         ctx.obj.ERROR(
-            "DBRetina's filter command requires a cutoff if metric is provided.")
+            "DBRetina's query command requires a cutoff if metric is provided.")
     elif metric == "NA" and cutoff != -1:
         ctx.obj.ERROR(
-            "DBRetina's filter command requires a metric if cutoff is provided.")
+            "DBRetina's query command requires a metric if cutoff is provided.")
 
     if not is_awk_available():
         ctx.obj.ERROR(
-            "DBRetina's filter command requires awk to be installed and available in the PATH.")
+            "DBRetina's query command requires awk to be installed and available in the PATH.")
 
     metric_to_col = {
         "containment": 5,
@@ -149,7 +162,7 @@ Detailed description:
         # +1 because awk is 1-indexed
         awk_column = metric_to_col[metric] + 1
     elif metric != "NA":
-        ctx.obj.ERROR(f"DBRetina's filter command doesn't support the metric {metric}.")
+        ctx.obj.ERROR(f"DBRetina's query command doesn't support the metric {metric}.")
 
     # check if output_file already exist
     output_file += ".tsv"
@@ -171,7 +184,7 @@ Detailed description:
                 break
 
     ctx.obj.INFO(
-        f"Filtering the pairwise matrix on the {metric} column with a cutoff of {cutoff} and groups file {groups_file}."
+        f"Querying the pairwise matrix on the {metric} column with a cutoff of {cutoff} and groups file {groups_file}."
     )
 
     _tmp_file = ".DBRetina.tmp.group"
@@ -224,12 +237,12 @@ Detailed description:
 
     elif cutoff != -1:
         ctx.obj.INFO(
-            f"Filtering the pairwise matrix on the {metric} column with a cutoff of {cutoff}.")
+            f"Querying the pairwise matrix on the {metric} column with a cutoff of {cutoff}.")
         command = f"grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"
         result = execute_bash_command(command)
 
     elif groups_file != "NA":
-        ctx.obj.INFO(f"Filtering by groups file {groups_file}\nPlease wait...")
+        ctx.obj.INFO(f"Querying by groups file {groups_file}\nPlease wait...")
         awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 |LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' >> {output_file}"""
         result = execute_bash_command(awk_script)
 

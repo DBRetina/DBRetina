@@ -73,15 +73,15 @@ A TSV file that provides information about shared features between each pair of 
     </tr>
     <tr>
       <td><strong>containment</strong></td>
-      <td>The containment metric is the ratio of shared kmers to the smallest set of kmers. This score is calculated as (shared_kmers / minimum_source_kmers) * 100.</td>
+      <td>The containment metric is the ratio of shared features to the smallest set of features. This score is calculated as (shared_features / minimum_source_features) * 100.</td>
     </tr>
     <tr>
       <td><strong>ochiai</strong></td>
-      <td>Ochiai similarity computed as 100 * (shared_kmers / sqrt(source_1_kmers * source_2_kmers))</td>
+      <td>Ochiai similarity computed as 100 * (shared_features / sqrt(source_1_features * source_2_features))</td>
     </tr>
     <tr>
       <td><strong>jaccard</strong></td>
-      <td>Jaccard similarity percentage. calculated as 100 * (shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers))</td>
+      <td>Jaccard similarity percentage. calculated as 100 * (shared_features / (source_1_features + source_2_features - shared_features))</td>
     </tr>
     <tr>
       <td><strong>odds_ratio</strong></td>

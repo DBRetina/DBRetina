@@ -57,14 +57,14 @@ nav:
   - Usage:
     - Index: usage/dbretina_index.md
     - Pairwise: usage/dbretina_pairwise.md
-    - Filter: usage/dbretina_filter.md
+    - Query: usage/dbretina_query.md
     - Cluster: usage/dbretina_cluster.md
     - Bipartite: usage/dbretina_bipartite.md
     - Modularity: usage/dbretina_modularity.md
     - Dedup: usage/dbretina_dedup.md
     - Setcov: usage/dbretina_setcov.md
-    - Query: usage/dbretina_query.md
-    - Interactome: usage/dbretina_interactome.md
+    - GeneInfo: usage/dbretina_geneinfo.md
+    - GeneNet: usage/dbretina_genenet.md
     - Export: usage/dbretina_export.md
 
   - Examples:

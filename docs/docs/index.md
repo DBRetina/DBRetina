@@ -10,7 +10,7 @@ DBRetina streamlines the analysis of complex relationships within databases by l
 
 ## DBRetina's commands chaining
 
-<img src="usage/dbretina_chain.png" alt="DBRetina's commands chaining" width="500"/>
+<img src="usage/dbretina_chain.png" alt="DBRetina's commands chaining" width="600"/>
 
 **The commands can be chained together as follows:**
 

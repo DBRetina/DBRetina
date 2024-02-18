@@ -16,7 +16,7 @@ from tqdm import tqdm
 import pandas as pd
 import kSpider2.dbretina_doc_url as dbretina_doc
 
-class Interactome:
+class GeneNet:
     def __init__(self, output_prefix):
         self.graph = {}
         self.output_prefix = output_prefix
@@ -44,8 +44,8 @@ class Interactome:
                 if node1 < node2
             )
             
-        output_file_name = f"{self.output_prefix}_interactome.tsv"
-        ctx.obj.INFO(f"Exporting interactome to {output_file_name}")
+        output_file_name = f"{self.output_prefix}_genenet.tsv"
+        ctx.obj.INFO(f"Exporting genenet to {output_file_name}")
         with open(output_file_name, 'w') as file:
             file.write("\n".join(rows))
     
@@ -63,7 +63,7 @@ class Interactome:
         df = pd.DataFrame(data)
 
         # Create a summary statistics table
-        print("Summary statistics of the interactome weights:")
+        print("Summary statistics of the genenet weights:")
         summary_stats = df['Weight'].describe()
         print(pd.DataFrame.from_dict(dict(summary_stats), orient='index').to_string())
 
@@ -73,13 +73,13 @@ class Interactome:
         plt.title('Histogram of Edge Weights')
         plt.xlabel('Edge Weight')
         plt.ylabel('Frequency')
-        plt.savefig(f"{self.output_prefix}_interactome_histogram.png", dpi=500)
+        plt.savefig(f"{self.output_prefix}_genenet_histogram.png", dpi=500)
 
         # Boxplot to show spread of weights
         plt.figure(figsize=(10, 6))
         sns.boxplot(x=df['Weight'])
         plt.title('Boxplot of Edge Weights')
-        plt.savefig(f"{self.output_prefix}_interactome_boxplot.png", dpi=500)
+        plt.savefig(f"{self.output_prefix}_genenet_boxplot.png", dpi=500)
 
         # Scatter plot to show any potential relationship between nodes and weights
         df['NodePair'] = df.apply(lambda row: f"{row['Node1']} - {row['Node2']}", axis=1)
@@ -87,7 +87,7 @@ class Interactome:
         sns.scatterplot(x='NodePair', y='Weight', data=df)
         plt.title('Scatter Plot of Node Pairs and Weights')
         plt.xticks(rotation=90)
-        plt.savefig(f"{self.output_prefix}_interactome_scatter.png", dpi=500)
+        plt.savefig(f"{self.output_prefix}_genenet_scatter.png", dpi=500)
     
     def graph_export(self, graphml, gexf, ctx):
         if graphml or gexf:
@@ -97,11 +97,11 @@ class Interactome:
                     self.G.add_edge(node1, node2, weight=weight)
 
         if graphml:
-            ctx.obj.INFO("Exporting interactome as graphml file")
-            nx.write_graphml(self.G, f"{self.output_prefix}_interactome.graphml")
+            ctx.obj.INFO("Exporting genenet as graphml file")
+            nx.write_graphml(self.G, f"{self.output_prefix}_genenet.graphml")
         if gexf:
-            ctx.obj.INFO("Exporting interactome as gexf file")
-            nx.write_gexf(self.G, f"{self.output_prefix}_interactome.gexf")
+            ctx.obj.INFO("Exporting genenet as gexf file")
+            nx.write_gexf(self.G, f"{self.output_prefix}_genenet.gexf")
 
 
 def get_command():
@@ -112,22 +112,22 @@ def get_command():
     return "#command: DBRetina " + " ".join(_sys_argv[1:])
 
 
-@cli.command(name="interactome", epilog = dbretina_doc.doc_url("interactome"), help_priority=9)
+@cli.command(name="genenet", epilog = dbretina_doc.doc_url("genenet"), help_priority=9)
 # @click.option('-t', '--threads', "user_threads", default=1, required=False, type=int, help="number of cores") # TODO later in C++ version
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="index file prefix")
 @click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
-@click.option('--graphml', 'graphml', is_flag=True, default = False, help="export interactome as graphml file")
-@click.option('--gexf', 'gexf', is_flag=True, default = False, help="export interactome as gexf file")
+@click.option('--graphml', 'graphml', is_flag=True, default = False, help="export genenet as graphml file")
+@click.option('--gexf', 'gexf', is_flag=True, default = False, help="export genenet as gexf file")
 @click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
 def main(ctx, index_prefix, pairwise_file, output_prefix, graphml, gexf):
-    """Construct a features-interactome.
+    """Construct a Gene Network.
  
 
     Detailed description:
 
 
-    For a groups pairwise file, construct an interactome between the features of each group and all other features in the pairwise file.
+    For a groups pairwise file, construct an gene network between the features of each group and all other features in the pairwise file.
     """
 
     ###################################
@@ -165,11 +165,11 @@ def main(ctx, index_prefix, pairwise_file, output_prefix, graphml, gexf):
         supergroups_to_features = json.loads(f.read())["data"]
     
     ##############################################
-    #3. Build the interactome
+    #3. Build the genenet
     ##############################################
     
-    ctx.obj.INFO("Building the interactome. Please wait...")
-    interactome = Interactome(output_prefix)
+    ctx.obj.INFO("Building the genenet. Please wait...")
+    genenet = GeneNet(output_prefix)
     
     for geneSet_pair in tqdm(geneSet_pairs):
         geneSet1_features = supergroups_to_features[geneSet_pair[0]]
@@ -178,9 +178,9 @@ def main(ctx, index_prefix, pairwise_file, output_prefix, graphml, gexf):
         # create edges between all pairs of features
         for feature1 in geneSet1_features:
             for feature2 in geneSet2_features:
-                interactome.add_edge(feature1, feature2)
+                genenet.add_edge(feature1, feature2)
                 
-    interactome.export(ctx)
-    interactome.graph_export(graphml, gexf, ctx)
-    ctx.obj.SUCCESS("Interactome has been constructed successfully.")
-    # interactome.plot_statistics()
+    genenet.export(ctx)
+    genenet.graph_export(graphml, gexf, ctx)
+    ctx.obj.SUCCESS("Gene Network has been constructed successfully.")
+    # genenet.plot_statistics()
