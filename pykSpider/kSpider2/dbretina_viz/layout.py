@@ -1,3 +1,4 @@
+import contextlib
 import os
 import visdcc
 import base64
@@ -168,18 +169,18 @@ def get_select_form_layout(id, options, label, description):
                 dbc.FormText(description, color="secondary",)
             ,])
 
-def get_categorical_features(df_, unique_limit=20, blacklist_features=['shape', 'label', 'id']):
+def get_categorical_features(df_, unique_limit=20, blacklist_features=None):
     """Identify categorical features for edge or node data and return their names
     Additional logics: (1) cardinality should be within `unique_limit`, (2) remove blacklist_features
     """
+    if blacklist_features is None:
+        blacklist_features = ['shape', 'label', 'id']
     # identify the rel cols + None
     cat_features = ['None'] + df_.columns[(df_.dtypes == 'object') & (df_.apply(pd.Series.nunique) <= unique_limit)].tolist()
     # remove irrelevant cols
-    try:
+    with contextlib.suppress(Exception):
         for col in blacklist_features:
             cat_features.remove(col)
-    except Exception:
-        pass
     # return
     return cat_features
 
@@ -191,14 +192,12 @@ def get_numerical_features(df_, unique_limit=20):
     # identify numerical features
     numeric_features = ['None'] + df_.select_dtypes(include=numerics).columns.tolist()
     # remove blacklist cols (for nodes)
-    try:
+    with contextlib.suppress(Exception):
         numeric_features.remove('size')
-    except Exception:
-        pass
     # return
     return numeric_features
 
-def get_app_layout(graph_data, color_legends=[], directed=False, vis_opts=None):
+def get_app_layout(graph_data, color_legends=None, directed=False, vis_opts=None):
     """Create and return the layout of the app
 
     Parameters
@@ -206,6 +205,8 @@ def get_app_layout(graph_data, color_legends=[], directed=False, vis_opts=None):
     graph_data: dict{nodes, edges}
         network data in format of visdcc
     """
+    if color_legends is None:
+        color_legends = []
     # Step 1-2: find categorical features of nodes and edges
     cat_node_features = get_categorical_features(pd.DataFrame(graph_data['nodes']), 20, ['shape', 'label', 'id'])
     cat_edge_features = get_categorical_features(pd.DataFrame(graph_data['edges']).drop(columns=['color']), 20, ['color', 'from', 'to', 'id'])
