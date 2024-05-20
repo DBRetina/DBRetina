@@ -14,8 +14,8 @@ import plotly.graph_objects as go
 import networkx as nx
 import dash
 import plotly.io as pio
-import dash_core_components as dcc
-import dash_html_components as html
+from dash import dcc
+from dash import html
 from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 import plotly.express as px
@@ -114,6 +114,10 @@ def plot_bipartite(df_bipartite, color_metric, output_prefix):
     
     fig.update_layout(coloraxis_colorbar=dict(orientation="v"))
     fig.write_html(f"{output_prefix}.html")
+    
+    # write high fidelity image
+    fig.write_image(f"{output_prefix}.png", width=1920, height=1080, scale=5)
+    
     # fig.write_image(f"{output_prefix}.png")
     # fig.write_image(f"{output_prefix}_high_dpi.png", scale=5)
 
