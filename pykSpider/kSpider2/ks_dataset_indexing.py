@@ -132,6 +132,12 @@ def main(ctx, asc_file, output_prefix, gmt_file):
     Index the input data files.
     """
     
+    # create output_path directories if they don't exist
+    parent_directories = os.path.dirname(os.path.abspath(output_prefix))    
+    if not os.path.exists(parent_directories):
+        print(f"Creating output directory {parent_directories}")
+        os.makedirs(parent_directories)
+        
     
     # at least one of asc_file or gmt_file must be provided
     if not asc_file and not gmt_file:

@@ -4,6 +4,7 @@ from __future__ import division
 import sys
 import _kSpider_internal as kSpider_internal
 import click
+import contextlib
 from kSpider2.click_context import cli
 import subprocess
 import os
@@ -12,8 +13,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import networkx as nx
 import dash
-import dash_core_components as dcc
-import dash_html_components as html
+import plotly.io as pio
+from dash import dcc
+from dash import html
 from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 import plotly.express as px
@@ -24,6 +26,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import plotly.subplots as sp
+import json
 
 def execute_bash_command(command):
     try:
@@ -51,7 +54,8 @@ def get_command():
 
 
 def path_to_absolute_path(ctx, param, value):
-    return value if value == "NA" else os.path.abspath(value)
+    with contextlib.suppress(Exception):
+        return os.path.abspath(value) if value is not None else None
 
 # TODO: Remove later
 def working2_plot_bipartite(df_bipartite, output_prefix):
@@ -65,7 +69,10 @@ def working2_plot_bipartite(df_bipartite, output_prefix):
 def plot_bipartite(df_bipartite, color_metric, output_prefix):
     # Min-Max normalization for the color metric to get values in range [0,1]
     scaler = MinMaxScaler()
-    df_bipartite['color'] = scaler.fit_transform(df_bipartite[[color_metric]])
+    # df_bipartite['color'] = scaler.fit_transform(df_bipartite[[color_metric]])
+    df_bipartite['color'] = df_bipartite[color_metric]
+    lowest_color = df_bipartite['color'].min()
+    largest_color = df_bipartite['color'].max()
     
     # Create a new column holding the original color metric data as categorical values
     df_bipartite[color_metric+'_cat'] = df_bipartite[color_metric].apply(lambda x: f"{color_metric}: {x:.3f}")
@@ -75,7 +82,7 @@ def plot_bipartite(df_bipartite, color_metric, output_prefix):
                     {'label': 'Group 2', 'values': df_bipartite['group_2']},
                     {'label': color_metric, 'values': df_bipartite[color_metric+'_cat'], 'visible': False}],
         line={'color': df_bipartite['color'],
-              'colorscale': 'Jet', 'cmin': 0, 'cmax': 1,
+              'colorscale': 'Solar', 'cmin': lowest_color, 'cmax': largest_color,
               'colorbar': {'title': color_metric, 'thickness': 10, 'orientation': 'h'}
               },
         labelfont={'size': 18, 'family': 'Times'},
@@ -83,9 +90,36 @@ def plot_bipartite(df_bipartite, color_metric, output_prefix):
         arrangement='freeform'
     )])
     
+    # Compute the number of unique categories to set the height
+    n_categories = len(pd.concat([df_bipartite['group_1'], df_bipartite['group_2']]).unique())
+    height_per_category = 20  # adjust this as necessary
+    minimum_height = 1300
+    fig_height = max(minimum_height, n_categories * height_per_category)
+    fig.update_layout(height=fig_height)
+    
+    
+    
+    # Compute margin size based on longest label
+    labels = pd.concat([df_bipartite['group_1'], df_bipartite['group_2']])
+    left_margin = df_bipartite['group_1'].str.len().max() * 4
+    right_margin = df_bipartite['group_2'].str.len().max() * 4
+    
+    print(f"Left margin: {left_margin}")
+    print(f"Right margin: {right_margin}")
+    
+    max_margin = max(left_margin, right_margin)
+
+    fig.update_layout(margin={"r":right_margin,"l":left_margin, 'pad' : 5})
+
+    
     fig.update_layout(coloraxis_colorbar=dict(orientation="v"))
     fig.write_html(f"{output_prefix}.html")
-    fig.write_image(f"{output_prefix}.png")
+    
+    # write high fidelity image
+    fig.write_image(f"{output_prefix}.png", width=1920, height=1080, scale=5)
+    
+    # fig.write_image(f"{output_prefix}.png")
+    # fig.write_image(f"{output_prefix}_high_dpi.png", scale=5)
 
 
 # TODO: Remove later
@@ -258,22 +292,155 @@ def check_if_there_is_a_pvalue(pairwise_file):
                 continue
 
 
+def similarities_distribution_histogram(df_bipartite, filename, json_output_file = None, log_scale = False):
+    # Function to map values to ranges
+    def map_value_to_range(value):
+        lower = (int(value) // 5) * 5
+        upper = lower + 5
+        if upper > 100: 
+            upper = 100
+        return f"{lower}-{upper}"
+
+    # List of metrics to consider
+    metrics = ["containment", "ochiai", "jaccard"]
+
+    # Initialize a dict to store data
+    data = {}
+
+    # Create all possible ranges with zero counts
+    all_ranges = [f"{i}-{i+5}" for i in range(0, 105, 5)]
+    for metric in metrics:
+        data[metric] = dict.fromkeys(all_ranges, 0)
+
+    # Iterate over metrics
+    for metric in metrics:
+        # Bin the similarity scores into ranges
+        df_bipartite[metric+'_range'] = df_bipartite[metric].apply(map_value_to_range)
+        
+        # Count the number of pairs in each range
+        counts = df_bipartite[metric+'_range'].value_counts().to_dict()
+
+        # Update counts in data
+        data[metric].update(counts)
+
+    # Prepare data for plotting
+    df = pd.DataFrame(data)
+
+    # Convert index to integer for sorting
+    df.index = df.index.map(lambda x: int(x.split('-')[0]))
+    df = df.sort_index()
+
+    # Reset index to string for correct x-axis labels
+    df.index = df.index.map(lambda x: f"{x}-{x+5}")
+
+    # Melt dataframe to have format suitable for seaborn
+    df = df.reset_index().melt('index', var_name='Metric', value_name='Count')
+    
+    df['index'] = df['index'].replace('100-105', '100-100')
+    
+    if json_output_file:
+        # Dictionary to store the results
+        results = {}
+
+        # Iterate over the metrics
+        for metric in ['containment', 'ochiai', 'jaccard']:
+            metric_df = df[df['Metric'] == metric]  # Filter the dataframe by the current metric
+            metric_dict = dict(zip(metric_df['index'], metric_df['Count']))  # Create a dictionary: {range: count}
+            results[metric] = metric_dict  # Add the dictionary to the results
+
+        # Write the results to a JSON file
+        with open(json_output_file, 'w') as f:
+            json.dump(results, f, indent=4)
+
+
+    # Create the plot
+    plt.figure(figsize=(10, 6))
+    sns.set(style="whitegrid")
+    sns.set_color_codes("pastel")
+    sns.barplot(x='index', y='Count', hue='Metric', data=df, palette="viridis")
+
+
+    # Add title and labels
+    plt.title('Histogram of Similarity Scores', fontsize=18)
+    plt.xlabel('Similarity Score Range', fontsize=14)
+    plt.ylabel('Count', fontsize=14)
+
+    # Increase the size of the legend and x-axis ticks labels
+    plt.legend(title='Metrics', title_fontsize='13', fontsize='12')
+    plt.legend(loc='upper right')
+    plt.xticks(fontsize=10, rotation=90)
+
+
+
+    if log_scale:
+        plt.ylabel('Count (log scale)')
+    else:
+        plt.ylabel('Count')
+
+    # Rotate x-axis labels for better readability
+    plt.xticks(rotation=90)
+    
+    # y-axis in log scale
+    if log_scale:
+        plt.yscale('log')
+
+    # Show the plot
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300)
+    # plt.show()
+
+
+def plot_pivot_table(df_bipartite, metric, output_prefix):
+    pivot_table = df_bipartite.pivot(index='group_1', columns='group_2', values=metric)
+    fig = px.imshow(pivot_table)
+
+    # add labels
+    fig.update_layout(
+        title="Pivot table of group1 vs group2",
+        xaxis_title="Group 2",
+        yaxis_title="Group 1",
+        font=dict(
+            family="Times",
+            size=16,
+            color="#7f7f7f"
+        )
+    )
+    
+    # Dynamic plot size based on pivot table dimensions
+    cell_size = 50  # adjust this value as necessary
+    width = pivot_table.shape[1] * cell_size
+    height = pivot_table.shape[0] * cell_size
+    fig.update_layout(width=width, height=height)
+
+    # make hover label = metric
+    fig.update_traces(hovertemplate = f"{metric}: %{{z:.2f}}")
+
+    fig.write_html(f"{output_prefix}.html")
+    fig.write_image(f"{output_prefix}.png")
+
+
 @cli.command(name="bipartite", epilog = dbretina_doc.doc_url("bipartite"), help_priority=8)
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
-@click.option('--group1', "group_1_file", callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="group1 single-column supergroups file")
-@click.option('--group2', "group_2_file", callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="group2 single-column supergroups file")
-@click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('--group1', "group_1_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="group1 single-column supergroups file")
+@click.option('--group2', "group_2_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="group2 single-column supergroups file")
+@click.option('--gmt1', "gmt_1_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="GMT file 1")
+@click.option('--gmt2', "gmt_2_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="GMT file 2")
+@click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="Bipartite coloring based on ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('-c', '--cutoff', 'cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default = True, help="Include comparisons (similarity > cutoff)")
+@click.option('--no-plot', "no_plot", is_flag=True, default=False, help="do not plot the bipartite graph")
+@click.option('--no-1-1', "no_1_1", is_flag=True, default=False, help="do not include 1-1 mapping")
 @click.option('-o', '--output', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
-def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
+def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file, output_prefix, metric, no_plot, cutoff, no_1_1):
     """
         Create a bipartite connections between two group files.
     """
     LOGGER = ctx.obj
-    
+
     # check if pvalue
     if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
         LOGGER.ERROR("pvalue not found in pairwise file!")
+
 
     ###########################################################
     # 1. parse the two group files to dictionary for O(1) access
@@ -283,19 +450,45 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
 
     group1_dict = {}
     group2_dict = {}
-    unmatched_groups = []
+    deleted_groups = []
 
-    with open(group_1_file) as IN_GROUP:
-        for line in IN_GROUP:
-            group1_dict[line.strip()] = {}
+    dbretina_str_escape = lambda x: x.lower().replace('"', '')
 
-    with open(group_2_file) as IN_GROUP:
-        for line in IN_GROUP:
-            group2_dict[line.strip()] = {}
+    # if gmt files are provided, convert them to group files
+    if gmt_1_file and gmt_2_file:
+        with open(gmt_1_file) as IN_GMT:
+            for line in IN_GMT:
+                group1_dict[dbretina_str_escape(line.strip().split("\t")[0])] = {}
+        with open(gmt_2_file) as IN_GMT:
+            for line in IN_GMT:
+                group2_dict[dbretina_str_escape(line.strip().split("\t")[0])] = {}
+    elif group_1_file and group_2_file:
+        with open(group_1_file) as IN_GROUP:
+            for line in IN_GROUP:
+                group1_dict[dbretina_str_escape(line.strip())] = {}
+
+        with open(group_2_file) as IN_GROUP:
+            for line in IN_GROUP:
+                group2_dict[dbretina_str_escape(line.strip())] = {}
+
+    else:
+        LOGGER.ERROR("Please provide either two GMT files or two group files.")
+
 
     # make sure there is no overlap between the two groups
     if set(group1_dict.keys()).intersection(set(group2_dict.keys())):
-        LOGGER.ERROR("There is an overlap between the two groups. Please make sure there is no overlap between the two groups.")
+        # delete the overlapping groups
+        LOGGER.WARNING("There is an overlap between the two groups. The overlapping groups will be removed from the second groups file.")
+        for group in set(group1_dict.keys()).intersection(set(group2_dict.keys())):
+            # del group1_dict[group]
+            del group2_dict[group]
+            deleted_groups.append(group)
+
+    if len(deleted_groups):
+        LOGGER.WARNING(
+            f'The following groups were removed from the second groups file: {", ".join(deleted_groups)}'
+        )
+                    
 
     ###########################################################
     # 2. parse the pairwise file and create the bipartite graph
@@ -327,7 +520,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
                 pairwise_tsv.seek(pos)
                 break
             else:
-                metadata.append(line)            
+                metadata.append(line)
         metadata.append(f"#command: {get_command()}\n")
 
         next(pairwise_tsv)
@@ -336,6 +529,9 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
 
             _source_1 = row[2]
             _source_2 = row[3]
+            
+            if float(row[metric_to_col[metric]]) < cutoff:
+                continue
 
             if _source_1 in group1_dict and _source_2 in group2_dict:
                 group1 = _source_1
@@ -368,8 +564,34 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
 
     LOGGER.INFO(f"Writing the bipartite TSV file to {output_prefix}_bipartite_pairwise.tsv")
     df_bipartite = pd.DataFrame(df_rows)
-    df_bipartite.to_csv(f"{output_prefix}_bipartite_pairwise.tsv", sep='\t', index=False)
     
+    # check if there is no rows 
+    if df_bipartite.shape[0] == 0:
+        LOGGER.ERROR("There is no overlap between the two groups. Please check the input files.")
+    
+    if no_1_1:
+        # remove one-to-one overlaps between group_1 and group_2
+        LOGGER.INFO("Removing one-to-one overlaps between group_1 and group_2")    # Count the number of connections for each member in both groups
+        group_1_counts = df_bipartite['group_1'].value_counts()
+        group_2_counts = df_bipartite['group_2'].value_counts()
+        
+        # Filter the DataFrame to only keep rows where the count is more than 1 for both groups
+        df_bipartite = df_bipartite[(group_1_counts[df_bipartite['group_1']].values > 1) & 
+                                    (group_2_counts[df_bipartite['group_2']].values > 1)]
+        
+        
+    df_bipartite.to_csv(f"{output_prefix}_bipartite_pairwise.tsv", sep='\t', index=False)
+
+    histogram_plot_file = f"{output_prefix}_similarity_metrics_histogram.png"
+    LOGGER.INFO(f"Plotting the similarity metrics histogram to {histogram_plot_file}")
+    similarities_distribution_histogram(df_bipartite, histogram_plot_file, log_scale = False)
+
+    histogram_plot_file = f"{output_prefix}_similarity_metrics_histogram_log.png"
+    json_stats_file = f"{output_prefix}_similarity_metrics_histogram.json"
+    LOGGER.INFO(f"Writing the similarity metrics histogram to {json_stats_file}")
+    LOGGER.INFO(f"Plotting the similarity metrics histogram (log-scale) to {histogram_plot_file}")
+    similarities_distribution_histogram(df_bipartite, histogram_plot_file, json_output_file=json_stats_file, log_scale = True)
+
     # report if there are unmatched groups
     unique_matched_group1 = set(df_bipartite['group_1'].unique())
     unique_matched_group2 = set(df_bipartite['group_2'].unique())
@@ -382,16 +604,31 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
                 OUT.write(f"Missing group1 names: {','.join(list(unfound_group1))}\n")
             if unfound_group2:
                 OUT.write(f"Missing group2 names: {','.join(list(unfound_group2))}\n")
-                
+
 
     ###########################################################
     # 3. create the bipartite graph
     ###########################################################    
 
-    one_to_one = df_bipartite.drop_duplicates(subset=['group_1', 'group_2'])
-    one_to_many = df_bipartite.groupby('group_1').filter(lambda x: len(x['group_2']) > 1)
-    many_to_one = df_bipartite.groupby('group_2').filter(lambda x: len(x['group_1']) > 1)
-    statistics = df_bipartite.describe()
+    # one_to_one = df_bipartite.drop_duplicates(subset=['group_1', 'group_2'])
+    # one_to_many = df_bipartite.groupby('group_1').filter(lambda x: len(x['group_2']) > 1)
+    # many_to_one = df_bipartite.groupby('group_2').filter(lambda x: len(x['group_1']) > 1)
+    # statistics = df_bipartite.describe()
+    
+    # # write report to terminal
+    # LOGGER.INFO(f"Statistics:")
+    # print(f"  - Number of one-to-one matches: {one_to_one.shape[0]}")
+    # print(f"  - Number of one-to-many matches: {one_to_many.shape[0]}")
+    # print(f"  - Number of many-to-one matches: {many_to_one.shape[0]}")
+    # print(f"  - Number of unique groups in group1: {len(unique_matched_group1)}")
+    # print(f"  - Number of unique groups in group2: {len(unique_matched_group2)}")
+    # print(f"  - Number of groups in group1 that have no match: {len(unfound_group1)}")
+    # print(f"  - Number of groups in group2 that have no match: {len(unfound_group2)}")
+    # print(f"  - Number of groups in group1: {len(group1_dict)}")
+    # print(f"  - Number of groups in group2: {len(group2_dict)}")
+    # print(f"  - Number of groups in group1 that have no overlap with any group in group2: {len(unfound_group1)}")
+    # print(f"  - Number of groups in group2 that have no overlap with any group in group1: {len(unfound_group2)}")
+    
 
 
     ###########################################################
@@ -402,36 +639,20 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
     fig = px.scatter(df_bipartite, x="containment", y="ochiai", color="pvalue", size='jaccard', hover_data=['group_1','group_2'])
     fig.write_html(f"{output_prefix}_scatter.html")
     """
-    
-    ###########################################################
-
-    LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.html")
-    LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.png")
-    plot_bipartite(df_bipartite, 'containment', f"{output_prefix}_bipartite")
 
     ###########################################################
+    if not no_plot:
+        LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.html")
+        LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.png")
+        plot_bipartite(df_bipartite, metric, f"{output_prefix}_bipartite")
 
-    # Create a heatmap
-    ######### HEATMAP | DSABLED FOR NOW #######################
-    """ <<< ----- DISABLED FOR NOW -----
-    LOGGER.INFO(f"Writing the heatmap to {output_prefix}_heatmap.html")
-    pivot_table = df_bipartite.pivot(index='group_1', columns='group_2', values='pvalue')
-    fig = px.imshow(pivot_table)
 
-    # add labels
-    fig.update_layout(
-        title="Pivot table of p-values",
-        xaxis_title="Group 2",
-        yaxis_title="Group 1",
-        font=dict(
-            family="Courier New, monospace",
-            size=18,
-            color="#7f7f7f"
-        )
-    )
-    # save to disk
-    fig.write_html(f"{output_prefix}_pivot_heatmap.html")
-    --------------------------------- >>> """    
+    ###########################################################
+
+
+    # Create a pivot table
+    LOGGER.INFO(f"Writing the pivot table to {output_prefix}_pivot_table.html")
+    plot_pivot_table(df_bipartite, metric, f"{output_prefix}_pivot_table")
 
     # TODO: DISABLED for now. No need to plot 3 categories 
     """
@@ -467,7 +688,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
     # TODO: [DEV] BETA
     # interactive_dashboard(df_bipartite)
 
-    
+
     ## TODO: RESEARCH CODE STUDY PVALUE-CUTOFF #1
     #################################################################
     # 4. study the different statistics with different pvalue cutoffs
@@ -582,3 +803,5 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, metric, output_prefix):
     # interactive_dashboard(df_bipartite)
     
     >> --------- RESEARCH CODE --------- """
+    
+    LOGGER.SUCCESS("Done!")

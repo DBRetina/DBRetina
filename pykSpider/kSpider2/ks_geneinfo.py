@@ -85,7 +85,7 @@ def invert_json(json_file):
     return inverted_json
 
 
-@cli.command(name="query", epilog = dbretina_doc.doc_url("query"), help_priority=6)
+@cli.command(name="geneinfo", epilog = dbretina_doc.doc_url("geneinfo"), help_priority=6)
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="index file prefix")
 @click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
 @click.option('--clusters-file', "clusters_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
@@ -94,21 +94,11 @@ def invert_json(json_file):
 @click.pass_context
 def main(ctx, groups_file, clusters_file, cluster_ids, index_prefix, output_prefix):
     # sourcery skip: low-code-quality
-    """Query DBRetina index.
+    """Extract gene information of a DBRetina index.
 
 Detailed description:
 
-
-    Query a DBRetina index with a set of groups (provided as a single-column file or cluster IDs in a DBRetina cluster file). Output each feature and the associated supergroups.
-    
-
-Examples:
-
-    1- groups file                    | DBRetina query -i index_prefix -g groups_file -o output_prefix
-
-
-    2- clusters file with cluster IDs | DBRetina query -i index_prefix --clusters-file clusters_file --cluster-ids 1,2,3 -o output_prefix
-
+    Extract gene information of a DBRetina index with a set of groups (provided as a single-column file or cluster IDs in a DBRetina cluster file). Output each feature and the associated supergroups.
     
     """
     
@@ -154,20 +144,20 @@ Examples:
 
     # if all are NA
     if groups_file == "NA" and clusters_file == "NA" and not len(cluster_ids):
-        ctx.obj.ERROR("DBRetina's query command requires a groups_file or (clusters_file and cluster_ids).")
+        ctx.obj.ERROR("DBRetina's geneinfo command requires a groups_file or (clusters_file and cluster_ids).")
 
     # if clusters_file then must be cluster_id
     if clusters_file != "NA" and not len(cluster_ids):
         ctx.obj.ERROR(
-            "DBRetina's filter command requires cluster_id(s) if clusters_file is provided.")
+            "DBRetina's geneinfo command requires cluster_id(s) if clusters_file is provided.")
     elif clusters_file == "NA" and len(cluster_ids):
         ctx.obj.ERROR(
-            "DBRetina's filter command requires a clusters_file if cluster_id(s) is provided.")
+            "DBRetina's geneinfo command requires a clusters_file if cluster_id(s) is provided.")
 
     # can't filter by groups_file and clusters_file at the same time
     if groups_file != "NA" and clusters_file != "NA":
         ctx.obj.ERROR(
-            "DBRetina's filter command can't filter by groups_file and clusters_file at the same time.")
+            "DBRetina's geneinfo command can't geneinfo by groups_file and clusters_file at the same time.")
 
     # commands = inject_index_command(index_prefix) + '\n' + get_command()
     commands = get_command()
@@ -209,7 +199,7 @@ Examples:
     # counts_file = f"{output_prefix}_features_count_per_group.tsv"
     kSpider_internal.query(index_prefix, inverted_index_prefix, query_file, output_prefix, commands)
     # ctx.obj.INFO(f"writing query results to {features_to_groups_file}, and {counts_file}")
-    ctx.obj.INFO(f"writing query results to {features_to_groups_file}")
+    ctx.obj.INFO(f"writing geneinfo results to {features_to_groups_file}")
 
     # if _tmp_file exists, remove it
     if os.path.exists(_tmp_file):

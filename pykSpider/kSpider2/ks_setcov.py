@@ -106,7 +106,7 @@ class DeduplicateGroups():
         self.ochiai_community_cutoff = ochiai_community_cutoff
         # Initialize a logging DataFrame
         self.df_logging = pd.DataFrame(columns=[
-            'group', 'no_of_items', 'coverage %', 'gpi', 'CSI', 'fragmentation', 'heteroitemity', 'modularity', 'selected', 'cluster_id'
+            'group', 'no_of_items', 'coverage %', 'gpi', 'CSI', 'fragmentation', 'heterogeneity', 'modularity', 'selected', 'cluster_id'
         ])
         self.main_pairwise_file = index_prefix + "_DBRetina_pairwise.tsv"
         self.GC = GC
@@ -234,7 +234,7 @@ class DeduplicateGroups():
     
     def process_pairwise_file(self, tsv_file, max_cont_threshold):
         # Initialize a dictionary to store group metrics
-        group_metrics = defaultdict(lambda: {'fragmentation': 0, 'heteroitemity': 0})
+        group_metrics = defaultdict(lambda: {'fragmentation': 0, 'heterogeneity': 0})
         
         self.ochiai_graph = Graph()
 
@@ -276,26 +276,26 @@ class DeduplicateGroups():
                 # Large node heterogenous to small nodes
                 if group1_len < group2_len:
                     group_metrics[group1]['fragmentation'] -= 1
-                    group_metrics[group2]['heteroitemity'] += 1
+                    group_metrics[group2]['heterogeneity'] += 1
                 elif group1_len > group2_len:
-                    group_metrics[group1]['heteroitemity'] += 1
+                    group_metrics[group1]['heterogeneity'] += 1
                     group_metrics[group2]['fragmentation'] -= 1
                 # else:  # if they are equal, update both
                 #     print("ELSEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
                 #     group_metrics[group1]['fragmentation'] -= 1
-                #     group_metrics[group1]['heteroitemity'] += 1
+                #     group_metrics[group1]['heterogeneity'] += 1
                 #     group_metrics[group2]['fragmentation'] -= 1
-                #     group_metrics[group2]['heteroitemity'] += 1
+                #     group_metrics[group2]['heterogeneity'] += 1
 
         # Compute the modularity index for each group
         for metrics in group_metrics.values():
             fragmentation = metrics['fragmentation']
-            heteroitemity = metrics['heteroitemity']
-            metrics['modularity'] = abs(fragmentation + heteroitemity)
+            heterogeneity = metrics['heterogeneity']
+            metrics['modularity'] = abs(fragmentation + heterogeneity)
 
         # Convert the dictionary to a pandas DataFrame
         self.df_group_to_modularity = pd.DataFrame.from_dict(group_metrics, orient='index').reset_index()
-        self.df_group_to_modularity.columns = ['group', 'fragmentation', 'heteroitemity', 'modularity']
+        self.df_group_to_modularity.columns = ['group', 'fragmentation', 'heterogeneity', 'modularity']
         
     def build_groups_metadata(self):
         # This builds the groups metadata (gpi, CSI, frag, het, modularity, length)
@@ -311,7 +311,7 @@ class DeduplicateGroups():
 
         #4 Rename the columns
         self.df_groups_metadata['status'] = 'remained'
-        self.df_groups_metadata.columns = ['group', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity', 'no_of_items', 'status']
+        self.df_groups_metadata.columns = ['group', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity', 'no_of_items', 'status']
 
 
     def remove_exact_ochiai_matches(self):
@@ -320,7 +320,7 @@ class DeduplicateGroups():
         selected_groups = set()
         
         # create a temporary column for number of edges
-        self.df_groups_metadata['total_edges'] = abs(self.df_groups_metadata["heteroitemity"]) + abs(self.df_groups_metadata["fragmentation"])
+        self.df_groups_metadata['total_edges'] = abs(self.df_groups_metadata["heterogeneity"]) + abs(self.df_groups_metadata["fragmentation"])
 
         for component_groups in connected_components:
             if len(component_groups) == 1:
@@ -349,7 +349,7 @@ class DeduplicateGroups():
         # Save the dataframe to a CSV file
         # fill NA values with 0
         self.df_groups_metadata = self.df_groups_metadata.fillna(0)
-        self.df_groups_metadata.to_csv(file_name, index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity', 'status'])
+        self.df_groups_metadata.to_csv(file_name, index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity', 'status'])
         return file_name
 
     def cluster_to_universe_set(self, cluster_id):
@@ -417,8 +417,8 @@ class DeduplicateGroups():
     def export_split_group_metadata(self, file_name):
         remaining_groups_df = self.df_groups_metadata[self.df_groups_metadata['group'].isin(self.final_remaining_groups)]
         removed_groups_df = self.df_groups_metadata[~self.df_groups_metadata['group'].isin(self.final_remaining_groups)]
-        remaining_groups_df.to_csv(f'{file_name}_remaining_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity'])
-        removed_groups_df.to_csv(f'{file_name}_removed_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heteroitemity', 'modularity'])
+        remaining_groups_df.to_csv(f'{file_name}_remaining_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity'])
+        removed_groups_df.to_csv(f'{file_name}_removed_groups_metadata.tsv', index=False, sep='\t', columns=['group', 'no_of_items', 'average_gpi', 'average_CSI', 'fragmentation', 'heterogeneity', 'modularity'])
 
 
     def export_deduplicated_gmt(self, file_name):

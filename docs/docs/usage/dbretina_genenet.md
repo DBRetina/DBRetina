@@ -1,4 +1,4 @@
-# Interactome
+# Gene Network
 
 ```
 Usage: DBRetina interactome [OPTIONS]

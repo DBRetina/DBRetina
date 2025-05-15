@@ -47,7 +47,7 @@ def plot_histogram(json_path, outout_file_path, use_log = False):
     # Set x-axis tick labels and legend
     ax.set_xticks(x + (num_metrics - 1) * bar_width / 2)
     ax.set_xticklabels(x_labels, rotation=45)
-    ax.legend()
+    ax.legend(loc = "upper right")
 
     # Set axis labels and title
     ax.set_xlabel("Similarity Range")

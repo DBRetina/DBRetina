@@ -626,7 +626,7 @@ namespace kSpider {
             int k_shared_kmers = shared_kmers;  // Number of successes
             int s_source_1_kmers = source_1_kmers;  // Sample size
             int M_source_2_kmers = source_2_kmers;  // Number of successes in the population
-            int N_population_size = population_size;  // Population size
+            int N_population_size = population_size;  // Population size is the total number of successes in the population which is in our case the total number of genes ()
 
 
             // Odds ratio

@@ -5,14 +5,17 @@ The Bipartite command will create a bipartite graph from a pairwise TSV file bet
 ```
 Usage: DBRetina bipartite [OPTIONS]
 
-  Create a bipartite connections between two group files
+  Create a bipartite connections between two group files.
 
 Options:
   -p, --pairwise PATH  the pairwise TSV file  [required]
-  --group1 PATH        group1 single-column supergroups file  [required]
-  --group2 PATH        group2 single-column supergroups file  [required]
+  --group1 PATH        group1 single-column supergroups file
+  --group2 PATH        group2 single-column supergroups file
+  --gmt1 PATH          GMT file 1
+  --gmt2 PATH          GMT file 2
   -m, --metric TEXT    select from ['containment', 'ochiai', 'jaccard',
                        'pvalue']  [required]
+  --no-plot            do not plot the bipartite graph
   -o, --output TEXT    output file prefix  [required]
   --help               Show this message and exit.
 ```
@@ -23,17 +26,34 @@ Options:
 
 The original or a filtered pairwise TSV file.
 
-<span class="cmd"> --group1 PATH        group1 single-column supergroups file  [required] </span>
+<span class="cmd"> --group1 PATH        group1 single-column supergroups file </span>
 
 A single-column file with the group1 supergroups.
 
-<span class="cmd"> --group2 PATH        group2 single-column supergroups file  [required] </span>
+<span class="cmd"> --group2 PATH        group2 single-column supergroups file </span>
 
 A single-column file with the group2 supergroups.
 
+<span class="cmd"> --gmt1 PATH          GMT file 1 </span>
+
+A GMT file with the group1 supergroups.
+
+<span class="cmd"> --gmt2 PATH          GMT file 2 </span>
+
+A GMT file with the group2 supergroups.
+
+
+!!! warning
+      <b>You can't use combination of gmt files and single-column group files, the command accepts only one type of input.</b>
+
 <span class="cmd"> -m, --metric TEXT    select from ['containment', 'ochiai', 'jaccard', 'pvalue']  [required] </span>
 
-The similarity metric that will be used to create the bipartite graph.
+The similarity metric that will be used to color the bipartite graph.
+
+<span class="cmd"> --no-plot            do not plot the bipartite graph </span>
+
+Sometimes graphs are very large, better not to plot them.
+
 
 <span class="cmd"> -o, --output TEXT    output prefix  [required] </span>
 
@@ -57,12 +77,21 @@ An interactive bipartite graph in HTML format.
 
 A bipartite graph in PNG format.
 
+<span class="cmd"> {output_prefix}_similarity_metrics_histogram.json </span>
+
+A histogram json file with the frequency distribution of the three similarity metrics - containment, ochiai, and jaccard - over different similarity ranges between the two groups.
+
+<span class="cmd"> {output_prefix}_similarity_metrics_histogram_log.png </span>
+
+The clustered bar chart shows the logarithmic frequency distribution of the three similarity metrics - containment, ochiai, and jaccard - over different similarity ranges between the two groups.
+
+<span class="cmd"> {output_prefix}_similarity_metrics_histogram.png </span>
+
+Same as above, but without logarithmic scale.
+
 <span class="cmd"> {output_prefix}_missing_groups.txt </span>
 
 If there are missing groups in the group files, they will be reported in this file.
-
-
-
 
 
 
@@ -70,8 +99,16 @@ If there are missing groups in the group files, they will be reported in this fi
 
     <iframe src="../../assets/images/dbretina_bipartite/bipartite_output_prefix_bipartite.html" width="700" height="450" frameBorder="0">Browser not compatible.</iframe>
 
-
-
 === "Bipartite PNG plot"
 
     ![Image title](../assets/images/dbretina_bipartite/bipartite_output_prefix_bipartite.png){ align=left }
+---
+
+=== "Similarities distribution (Logarithmic scale)"
+
+    ![Image title](../assets/images/dbretina_bipartite/bipartite_output_prefix_similarity_metrics_histogram_log.png){ align=left }
+
+
+=== "Similarities distribution"
+
+    ![Image title](../assets/images/dbretina_bipartite/bipartite_output_prefix_similarity_metrics_histogram.png){ align=left }
