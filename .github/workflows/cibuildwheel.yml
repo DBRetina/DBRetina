@@ -13,7 +13,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
       
@@ -22,7 +22,7 @@ jobs:
         run: echo ${GITHUB_REF##*/} > branch_name.tmp
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.13.1
+        uses: pypa/cibuildwheel@v2.23.0
 
         env:
           CIBW_ENVIRONMENT: "BRANCH_NAME=$(cat branch_name.tmp)"
@@ -48,7 +48,7 @@ jobs:
             cmake --build kSpider_BUILD_DIR -j4
             python setup.py sdist --dist-dir wheelhouse
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v4
         with:
           path: ./wheelhouse/*
 
@@ -57,9 +57,9 @@ jobs:
     if: contains(github.event.head_commit.message, 'pypi_test')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v4
         id: fetch_artifacts
         with:
           path: "wheels/"
@@ -79,9 +79,9 @@ jobs:
     runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, 'pypi_release')
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v4
         id: fetch_artifacts
         with:
           path: "wheels/"
