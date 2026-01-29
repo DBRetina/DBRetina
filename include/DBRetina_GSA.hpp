@@ -1,4 +1,4 @@
-#include "kDataFrame.hpp"
+#include "DBRetina_kf.hpp"
 #include "parallel_hashmap/phmap.h"
 #include <cstdint>
 #include <unordered_set>
@@ -16,7 +16,7 @@ using str_hashed_set_map = parallel_flat_hash_map<string, flat_hash_set<uint64_t
 
 class GeneSets {
 private:
-    kDataFrame* gene_to_color;
+    DBRetina_PHMAP* gene_to_color;
     int_vec_map color_to_ids;
     flat_hash_map<uint64_t, double> gene_to_PSI;
     // TODO: rename later [pathway-cluster-specificity-index]

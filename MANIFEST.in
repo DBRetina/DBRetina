@@ -6,26 +6,15 @@ include LICENSE
 
 # Include the headers files
 recursive-include include *
-recursive-include lib/kProcessor/include/kProcessor *
-recursive-include lib/kProcessor/ThirdParty/MQF/include *
-recursive-include lib/kProcessor/ThirdParty/MQF/include *
-recursive-include lib/kProcessor/ThirdParty/json *
-recursive-include lib/kProcessor/ThirdParty/sdsl-lite/include *
-recursive-include lib/kProcessor/ThirdParty/kmerDecoder/include *
-recursive-include lib/kProcessor/ThirdParty/ntCard/include *
-recursive-include lib/kProcessor/ThirdParty/kmerDecoder/lib/parallel-hashmap *
 recursive-include lib/parallel-hashmap *
 recursive-include lib/argh *
-recursive-include lib/kProcessor/ThirdParty/kmerDecoder/lib/kseq/include *
+recursive-include lib/json_parser *
+recursive-include lib/zstr *
 
 recursive-include kSpider_BUILD_DIR lib*a
-recursive-include lib/kProcessor/ThirdParty lib*a
 
 # Include static libs
 include kSpider_BUILD_DIR/libkSpider.a
-include kSpider_BUILD_DIR/lib/kProcessor/ThirdParty/kmerDecoder/libkmerDecoder.a
-include kSpider_BUILD_DIR/lib/kProcessor/ThirdParty/MQF/src/libMQF.a
-include kSpider_BUILD_DIR/lib/kProcessor/ThirdParty/sdsl-lite/lib/libsdsl.a
 
 # Include SWIG interfaces
 recursive-include src/swig_interfaces *

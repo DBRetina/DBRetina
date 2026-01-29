@@ -29,7 +29,7 @@ cleanup
 # Build the project if not already built
 BUILD_DIR="build"
 if [[ ! -f ${BUILD_DIR}/Makefile ]]; then
-    cmake -B${BUILD_DIR} -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DPHMAP_BUILD_TESTS=OFF -DPHMAP_BUILD_EXAMPLES=OFF -DCMAKE_INCLUDE_PATH="${CONDA_PREFIX}/include" -DCMAKE_LIBRARY_PATH="${CONDA_PREFIX}/lib"
+    cmake -B${BUILD_DIR} -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INCLUDE_PATH="${CONDA_PREFIX}/include" -DCMAKE_LIBRARY_PATH="${CONDA_PREFIX}/lib"
 fi
 cmake --build ${BUILD_DIR} --target kSpider -j 16
 

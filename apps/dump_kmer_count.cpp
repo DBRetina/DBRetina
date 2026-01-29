@@ -1,5 +1,4 @@
-#include "kDataFrame.hpp"
-#include "algorithms.hpp"
+#include "DBRetina_kf.hpp"
 #include <iostream>
 #include <fstream>
 using namespace std;
@@ -29,14 +28,12 @@ int main(int args, char** argv) {
     std::string extension = "";
     string basefile = getFileName(kf_prefix);
 
-    auto* loaded_kf = kDataFrame::load(kf_prefix);
+    auto* loaded_kf = DBRetina_PHMAP::load(kf_prefix);
 
     ofstream COUNT(basefile + ".count");
 
-    auto it = loaded_kf->begin();
-    while (it != loaded_kf->end()) {
-        COUNT << it.getCount() << endl;
-        it++;
+    for (auto it = loaded_kf->begin(); it != loaded_kf->end(); ++it) {
+        COUNT << it->second << endl;
     }
 
     // Close the file

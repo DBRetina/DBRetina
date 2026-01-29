@@ -1,9 +1,8 @@
 #include "DBRetina.hpp"
 #include "DBRetina_GSA.hpp"
-#include <kDataFrame.hpp>
-#include <colored_kDataFrame.hpp>
 #include <cstdlib>
 #include <filesystem>
+#include <random>
 
 inline void set_to_vector(const phmap::flat_hash_set<uint32_t>& set, vector<uint32_t>& vec) {
     vec.clear();
@@ -116,7 +115,7 @@ GeneSets::GeneSets(string associations_file) {
 void GeneSets::build_from_index(string index_prefix) {
     this->index_prefix = index_prefix;
     cerr << "[DEBUG] Loading index from: " << index_prefix << endl;
-    gene_to_color = kDataFrame::load(index_prefix);
+    gene_to_color = DBRetina_PHMAP::load(index_prefix);
     string colors_map_file = index_prefix + "_color_to_sources.bin";
     cerr << "[DEBUG] Loading colors map from: " << colors_map_file << endl;
     // We need this to find out how many pathways are associated with each gene
@@ -780,10 +779,9 @@ void GeneSets::calculate_mean_pathway_length() {
 
 void GeneSets::build_gene_to_PSI() {
     cerr << "[DEBUG] Building gene to PSI map" << endl;
-    auto it = gene_to_color->begin();
-    while (it != gene_to_color->end()) {
-        uint64_t gene = it.getHashedKmer();
-        uint64_t color = it.getCount();
+    for (auto it = gene_to_color->begin(); it != gene_to_color->end(); ++it) {
+        uint64_t gene = it->first;
+        uint64_t color = it->second;
         uint64_t pathwayCount = color_to_ids[color].size();
         gene_to_associated_pathways[gene] = pathwayCount;
 
@@ -792,7 +790,6 @@ void GeneSets::build_gene_to_PSI() {
         psi *= 100;
 
         gene_to_PSI[gene] = psi;
-        it++;
     }
 }
 
