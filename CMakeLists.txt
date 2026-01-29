@@ -77,4 +77,3 @@ target_include_directories(_kSpider_internal PRIVATE
 target_compile_options(_kSpider_internal PRIVATE -fopenmp -O3 -Ofast -w)
 
 install(TARGETS _kSpider_internal LIBRARY DESTINATION .)
-
