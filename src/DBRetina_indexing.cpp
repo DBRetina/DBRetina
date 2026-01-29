@@ -2,10 +2,8 @@
 #include <iostream>
 #include <cstdint>
 #include <chrono>
-#include "colored_kDataFrame.hpp"
+#include "DBRetina_kf.hpp"
 #include "parallel_hashmap/phmap.h"
-#include "kDataFrame.hpp"
-#include "algorithms.hpp"
 #include <glob.h>
 #include <vector>
 #include <stdexcept>
@@ -24,7 +22,7 @@ namespace kSpider {
 
     void dbretina_indexing(string json_file, string user_index_prefix) {
 
-        kDataFrame* frame;
+        DBRetina_PHMAP* frame;
         while (json_file.size() > 0 && json_file[json_file.size() - 1] == '/') json_file.erase(json_file.size() - 1, 1);
 
         std::string json_prefix = json_file.substr(json_file.find_last_of("/\\") + 1);
@@ -52,7 +50,7 @@ namespace kSpider {
         int detected_kSize = 0;
 
         int total_groups_number = 0;
-        frame = new kDataFramePHMAP(selective_kSize, mumur_hasher);
+        frame = new DBRetina_PHMAP(selective_kSize);
 
         flat_hash_map<string, uint32_t> groupName_to_kmerCount;
 
@@ -354,9 +352,9 @@ namespace kSpider {
         // Write extra info
         ofstream file(output_prefix + ".extra");
         file << selective_kSize << endl;
-        file << frame->KD->hash_mode << endl;
-        file << frame->KD->slicing_mode << endl;
-        file << frame->KD->params_to_string() << endl;
+        file << 0 << endl;                          // hash_mode (mumur_hasher)
+        file << 1 << endl;                          // slicing_mode
+        file << frame->getkSize() << ":0" << endl;  // params_to_string
         file << "features:" << frame->getkSize() << endl;
         file.close();
 

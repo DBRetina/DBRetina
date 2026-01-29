@@ -1,7 +1,7 @@
-#include <kDataFrame.hpp>
-#include <colored_kDataFrame.hpp>
+#include "DBRetina_kf.hpp"
 #include <kSpider.hpp>
 #include <DBRetina.hpp>
+#include <numeric>
 
 
 using int_vec_map = parallel_flat_hash_map<uint32_t, vector<uint32_t>, std::hash<uint32_t>, std::equal_to<uint32_t>, std::allocator<std::pair<const uint32_t, vector<uint32_t>>>, 1>;
@@ -89,7 +89,7 @@ inline std::string join(std::vector<std::string>& strings, std::string delim)
 void query(string index_prefix, string inverted_index_prefix, string query_file, string output_prefix, string commands) {
 
     // load kDataFrame
-    auto* inverted_kf = kDataFramePHMAP::load(inverted_index_prefix);
+    auto* inverted_kf = DBRetina_PHMAP::load(inverted_index_prefix);
     int_vec_map inverted_color_to_ids;
     string inverted_colors_map_file = inverted_index_prefix + "_color_to_sources.bin";
     load_colors_to_matched_supergroups(inverted_colors_map_file, &inverted_color_to_ids);
@@ -160,7 +160,7 @@ void query(string index_prefix, string inverted_index_prefix, string query_file,
 
 
     // load kDataFrame
-    auto* kf = kDataFramePHMAP::load(index_prefix);
+    auto* kf = DBRetina_PHMAP::load(index_prefix);
     int_vec_map color_to_ids;
     string colors_map_file = index_prefix + "_color_to_sources.bin";
     load_colors_to_matched_supergroups(colors_map_file, &color_to_ids);

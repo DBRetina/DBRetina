@@ -14,10 +14,7 @@ function cleanup() {
     rm -rf build/lib.linux*
     rm -rf dist/*
     rm -rf __pycache__/
-    rm -rf *cxx
     rm -rf *pyc
-    rm -rf src/swig_interfaces/kSpider_internal_wrap.cpp
-    # rm -rf pykSpider/kSpider_internal.py
     rm -rf *so
     rm -rf pykSpider/DBRetina.egg-info/
     rm -rf build/bdist.linux-x86_64
@@ -26,26 +23,7 @@ function cleanup() {
 trap cleanup EXIT
 cleanup
 
-# Build the project if not already built
-BUILD_DIR="build"
-[[ -d ${BUILD_DIR} ]] || cmake -Bbuild && cmake --build build -j 16
+$(which python) -m pip uninstall DBRetina -y || true
+$(which python) -m pip install .
 
-
-echo "BDIST WHEEL"
-$(which python) setup.py bdist_wheel # sdist
-
-cd dist/
-
-$(which python) -m pip uninstall DBRetina -y
-
-$(which python) -m pip install DBRetina*cp*.whl``
-
-rm -rf build/temp
-rm -rf build/lib.linux*
-rm -rf __pycache__/
-rm -rf *cxx
-rm -rf *pyc
-rm -rf src/swig_interfaces/kSpider_internal_wrap.cpp
-rm -rf *so
-rm -rf pykSpider/DBRetina.egg-info/
-rm -rf build/bdist.linux-x86_64
+echo "BUILD COMPLETE"
