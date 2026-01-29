@@ -1,7 +1,6 @@
 #include <iostream>
 #include <cstdint>
 #include <string>
-#include "argh.h"
 #include <chrono>
 #include "parallel_hashmap/phmap.h"
 #include <queue>

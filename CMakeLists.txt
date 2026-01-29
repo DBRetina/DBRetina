@@ -38,7 +38,6 @@ if(DEFINED ENV{CONDA_PREFIX})
     include_directories("$ENV{CONDA_PREFIX}/include")
     link_directories("$ENV{CONDA_PREFIX}/lib")
 endif()
-include_directories("${PROJECT_SOURCE_DIR}/lib/argh")
 include_directories("${PROJECT_SOURCE_DIR}/lib/json_parser/lib/include/")
 add_subdirectory("lib/zstr")
 
@@ -73,16 +72,9 @@ target_include_directories(_kSpider_internal PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${PHMAP_INCLUDE_DIRS}
     ${PROJECT_SOURCE_DIR}/lib/json_parser/lib/include
-    ${PROJECT_SOURCE_DIR}/lib/argh
     ${PROJECT_SOURCE_DIR}/lib/zstr/src
 )
 target_compile_options(_kSpider_internal PRIVATE -fopenmp -O3 -Ofast -w)
 
 install(TARGETS _kSpider_internal LIBRARY DESTINATION .)
 
-# ----------------------------------------------------------------------------
-# Utilities
-# ----------------------------------------------------------------------------
-
-add_executable(dump_colors apps/dump_kmer_count.cpp)
-target_link_libraries(dump_colors kSpider z zstr::zstr)

@@ -7,7 +7,6 @@ include LICENSE
 # Include the headers files
 recursive-include include *
 recursive-include lib/parallel-hashmap *
-recursive-include lib/argh *
 recursive-include lib/json_parser *
 recursive-include lib/zstr *
 
