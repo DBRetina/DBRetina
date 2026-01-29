@@ -32,18 +32,9 @@ jobs:
           CIBW_ARCHS_LINUX: x86_64
           CIBW_MANYLINUX_X86_64_IMAGE: quay.io/pypa/manylinux2014_x86_64:latest
           CIBW_BEFORE_ALL: |
-            yum install bzip2 -y
-            python -m pip install --upgrade pip
-            python -m pip install cmake
-            python -m pip install requests
-            yum install python-requests -y
-            yum install zlib-devel -y
-            yum install centos-release-scl-rh -y
-            yum install doxygen -y
-            yum install devtoolset-7-toolchain -y
-            yum groupinstall -y "development tools"
-            yum install boost-devel -y
-            yum install -y zlib-devel bzip2-devel openssl-devel ncurses-devel sqlite-devel readline-devel tk-devel gdbm-devel db4-devel libpcap-devel xz-devel expat-devel
+            yum install -y bzip2 bzip2-devel zlib-devel
+            python -m pip install --upgrade pip setuptools
+            python -m pip install cmake requests
             cmake -BkSpider_BUILD_DIR
             cmake --build kSpider_BUILD_DIR -j4
             python setup.py sdist --dist-dir wheelhouse
