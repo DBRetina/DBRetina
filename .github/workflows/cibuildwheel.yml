@@ -27,7 +27,7 @@ jobs:
           CIBW_ARCHS_LINUX: x86_64
           CIBW_MANYLINUX_X86_64_IMAGE: quay.io/pypa/manylinux2014_x86_64:latest
           CIBW_BEFORE_ALL: |
-            yum install -y bzip2 bzip2-devel zlib-devel
+            yum install -y bzip2 bzip2-devel zlib-devel boost-devel
 
       - uses: actions/upload-artifact@v4
         with:
