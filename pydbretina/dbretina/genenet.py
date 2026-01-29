@@ -3,7 +3,7 @@
 from __future__ import division
 import sys
 import click
-from kSpider2.click_context import cli
+from dbretina.click_context import cli
 import matplotlib.pyplot as plt
 import json
 import os
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
 import pandas as pd
-import kSpider2.dbretina_doc_url as dbretina_doc
+import dbretina.dbretina_doc_url as dbretina_doc
 
 class GeneNet:
     def __init__(self, output_prefix):

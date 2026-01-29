@@ -1,7 +1,7 @@
 from __future__ import division
 import os
 import click
-from kSpider2.click_context import cli
+from dbretina.click_context import cli
 import rustworkx as rx
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -10,7 +10,7 @@ import math
 import sys
 import igraph as ig
 import leidenalg as la
-import kSpider2.dbretina_doc_url as dbretina_doc
+import dbretina.dbretina_doc_url as dbretina_doc
 
 def check_if_there_is_a_pvalue(pairwise_file):
     with open(pairwise_file) as F:

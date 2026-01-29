@@ -2,15 +2,15 @@
 # -*- coding: utf-8 -*-
 from __future__ import division
 import sys
-import _kSpider_internal as kSpider_internal
+import _dbretina_internal as dbretina_internal
 import click
-from kSpider2.click_context import cli
+from dbretina.click_context import cli
 import json
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import os
-import kSpider2.dbretina_doc_url as dbretina_doc
+import dbretina.dbretina_doc_url as dbretina_doc
 
 def plot_histogram(json_path, outout_file_path, use_log = False):
     # Load data from JSON file
@@ -106,7 +106,7 @@ def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pva
     
     ctx.obj.INFO(
         f"Constructing the pairwise matrix using {user_threads} cores.")
-    kSpider_internal.pairwise(index_prefix, user_threads, similarity_type, cutoff, commands, calculate_pvalue)
+    dbretina_internal.pairwise(index_prefix, user_threads, similarity_type, cutoff, commands, calculate_pvalue)
     stats_json_path = f"{index_prefix}_DBRetina_pairwise_stats.json"
     linear_histo = f"{index_prefix}_DBRetina_similarity_metrics_plot_linear.png"
     log_histo = f"{index_prefix}_DBRetina_similarity_metrics_plot_log.png"

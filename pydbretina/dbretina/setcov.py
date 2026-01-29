@@ -9,11 +9,11 @@ import networkx as nx
 import math
 from click.decorators import option
 import click
-from kSpider2.click_context import cli
-import kSpider2.dbretina_doc_url as dbretina_doc
+from dbretina.click_context import cli
+import dbretina.dbretina_doc_url as dbretina_doc
 import json
 import os
-from kSpider2.ks_clustering import main as ks_clustering
+from dbretina.clustering import main as clustering_main
 
 
 class Graph:
@@ -473,7 +473,7 @@ class DeduplicateGroups():
     
     def perform_cli_community_detection(self, pairwise_file, cutoff, output_prefix):
         self.LOGGER.ACTIVE = False
-        self.ctx.invoke(ks_clustering, 
+        self.ctx.invoke(clustering_main, 
                 pairwise_file = pairwise_file, 
                 cutoff = cutoff,
                 metric = 'ochiai',

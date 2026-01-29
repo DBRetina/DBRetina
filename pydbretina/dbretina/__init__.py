@@ -1,0 +1,1 @@
+from dbretina.main import cli

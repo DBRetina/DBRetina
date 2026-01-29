@@ -3,15 +3,15 @@
 from __future__ import division
 
 from click.decorators import option
-import _kSpider_internal as kSpider_internal
+import _dbretina_internal as dbretina_internal
 import click
-from kSpider2.click_context import cli
+from dbretina.click_context import cli
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 from collections import defaultdict
 import csv
-import kSpider2.dbretina_doc_url as dbretina_doc
+import dbretina.dbretina_doc_url as dbretina_doc
 import json
 
 class Graph:

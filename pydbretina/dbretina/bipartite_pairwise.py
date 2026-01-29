@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import division
 import sys
-import _kSpider_internal as kSpider_internal
+import _dbretina_internal as dbretina_internal
 import click
 import contextlib
-from kSpider2.click_context import cli
+from dbretina.click_context import cli
 import subprocess
 import os
 import pandas as pd
@@ -19,7 +19,7 @@ from dash import html
 from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 import plotly.express as px
-import kSpider2.dbretina_doc_url as dbretina_doc
+import dbretina.dbretina_doc_url as dbretina_doc
 from sklearn.preprocessing import MinMaxScaler
 from plotly.graph_objects import Figure, Parcats
 import numpy as np

@@ -235,7 +235,7 @@ inline uint64_t get_population_size(string filename) {
 }
 
 
-namespace kSpider {
+namespace dbretina {
 
     void set_to_vector(const phmap::flat_hash_set<uint32_t>& set, vector<uint32_t>& vec) {
         vec.clear();

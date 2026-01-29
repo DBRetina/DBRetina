@@ -1,6 +1,6 @@
 import click
-from kSpider2.customLogger import Logger
-from kSpider2.kSpider_version import get_version
+from dbretina.customLogger import Logger
+from dbretina.version import get_version
 
 
 class SpecialHelpOrder(click.Group):

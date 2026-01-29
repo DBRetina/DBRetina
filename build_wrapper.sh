@@ -16,7 +16,7 @@ function cleanup() {
     rm -rf __pycache__/
     rm -rf *pyc
     rm -rf *so
-    rm -rf pykSpider/DBRetina.egg-info/
+    rm -rf pydbretina/DBRetina.egg-info/
     rm -rf build/bdist.linux-x86_64
 }
 

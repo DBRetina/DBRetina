@@ -2,17 +2,17 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/unordered_map.h>
 
-#include "kSpider.hpp"
+#include "dbretina_core.hpp"
 #include "DBRetina.hpp"
 #include "DBRetina_GSA.hpp"
 
 namespace nb = nanobind;
 
-NB_MODULE(_kSpider_internal, m) {
+NB_MODULE(_dbretina_internal, m) {
     m.doc() = "DBRetina C++ bindings";
 
-    // kSpider namespace functions
-    m.def("pairwise", &kSpider::pairwise,
+    // dbretina namespace functions
+    m.def("pairwise", &dbretina::pairwise,
           nb::arg("index_prefix"),
           nb::arg("user_threads"),
           nb::arg("cutoff_distance_type"),
@@ -20,7 +20,7 @@ NB_MODULE(_kSpider_internal, m) {
           nb::arg("full_command"),
           nb::arg("calculate_pvalue"));
 
-    m.def("dbretina_indexing", &kSpider::dbretina_indexing,
+    m.def("dbretina_indexing", &dbretina::dbretina_indexing,
           nb::arg("json_file"),
           nb::arg("user_index_prefix"));
 

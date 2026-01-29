@@ -18,4 +18,4 @@ recursive-include src *.cpp *.hpp
 recursive-include apps *.cpp
 
 # Include Python packages
-recursive-include pykSpider/ *
+recursive-include pydbretina/ *

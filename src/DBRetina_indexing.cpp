@@ -1,4 +1,4 @@
-#include "kSpider.hpp"
+#include "dbretina_core.hpp"
 #include <iostream>
 #include <cstdint>
 #include <chrono>
@@ -18,7 +18,7 @@
 
 
 
-namespace kSpider {
+namespace dbretina {
 
     void dbretina_indexing(string json_file, string user_index_prefix) {
 

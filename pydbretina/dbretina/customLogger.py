@@ -4,7 +4,7 @@ import sys
 
 class Logger:
     """
-    custom logging for kSpider, shared by click context in the click_context:cli.
+    custom logging for DBRetina, shared by click context in the click_context:cli.
     """
 
     RED = "red"

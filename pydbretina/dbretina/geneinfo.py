@@ -3,16 +3,16 @@
 from __future__ import division
 
 from click.decorators import option
-import _kSpider_internal as kSpider_internal
+import _dbretina_internal as dbretina_internal
 import click
-from kSpider2.click_context import cli
+from dbretina.click_context import cli
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 import sys
 import json
 import hashlib
-import kSpider2.dbretina_doc_url as dbretina_doc
+import dbretina.dbretina_doc_url as dbretina_doc
 
 def hash_string_to_unsigned_int64(input_string):
     hash_object = hashlib.sha256(input_string.encode())
@@ -139,7 +139,7 @@ Detailed description:
             
         # Create the inverted index
         ctx.obj.INFO("Creating inverted index. Please wait...")
-        kSpider_internal.dbretina_indexing(new_json_raw_file, inverted_index_prefix)
+        dbretina_internal.dbretina_indexing(new_json_raw_file, inverted_index_prefix)
         # index_prefix = inverted_index_prefix
 
     # if all are NA
@@ -197,7 +197,7 @@ Detailed description:
 
     features_to_groups_file = f"{output_prefix}_feature_to_groups.tsv"
     # counts_file = f"{output_prefix}_features_count_per_group.tsv"
-    kSpider_internal.query(index_prefix, inverted_index_prefix, query_file, output_prefix, commands)
+    dbretina_internal.query(index_prefix, inverted_index_prefix, query_file, output_prefix, commands)
     # ctx.obj.INFO(f"writing query results to {features_to_groups_file}, and {counts_file}")
     ctx.obj.INFO(f"writing geneinfo results to {features_to_groups_file}")
 

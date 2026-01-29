@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import division
 import sys
-import _kSpider_internal as kSpider_internal
+import _dbretina_internal as dbretina_internal
 import click
-from kSpider2.click_context import cli
+from dbretina.click_context import cli
 import subprocess
 import os
-import kSpider2.dbretina_doc_url as dbretina_doc
+import dbretina.dbretina_doc_url as dbretina_doc
 
 
 def is_awk_available():

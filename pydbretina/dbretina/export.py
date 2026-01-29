@@ -5,7 +5,7 @@ from __future__ import division
 import os
 import click
 import pandas as pd
-from kSpider2.click_context import cli
+from dbretina.click_context import cli
 from scipy.cluster.hierarchy import linkage, to_tree, ClusterWarning
 from warnings import simplefilter
 import seaborn as sns
@@ -22,7 +22,7 @@ import plotly.io as pio
 from pycirclize import Circos
 from io import StringIO
 from Bio import Phylo
-import kSpider2.dbretina_doc_url as dbretina_doc
+import dbretina.dbretina_doc_url as dbretina_doc
 
 def newick_str_escape(name):
     # Remove special characters

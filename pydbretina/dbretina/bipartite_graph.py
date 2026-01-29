@@ -2,18 +2,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import division
 import sys
-import _kSpider_internal as kSpider_internal
+import _dbretina_internal as dbretina_internal
 import click
 import contextlib
-from kSpider2.click_context import cli
+from dbretina.click_context import cli
 import subprocess
 import os
 import pandas as pd
 import networkx as nx
 import plotly.graph_objects as go
 import plotly.express as px
-import kSpider2.dbretina_doc_url as dbretina_doc
-from kSpider2.ks_setcov import main as setcov_main
+import dbretina.dbretina_doc_url as dbretina_doc
+from dbretina.setcov import main as setcov_main
 import networkx as nx
 from collections import defaultdict
 
@@ -331,7 +331,7 @@ def main(ctx, index_prefix, pairwise_file, intra_targets, inter_targets, metric,
     db_graph.export_node_attributes(include_isolates)
     
     if visualize:
-        from kSpider2.dbretina_viz import DBRetinaViz
+        from dbretina.dbretina_viz import DBRetinaViz
 
         edge_df = pd.read_csv(f"{output_prefix}_edges.tsv", sep='\t')
         node_df = pd.read_csv(f"{output_prefix}_nodes.tsv", sep='\t')

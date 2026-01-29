@@ -2,15 +2,15 @@
 # -*- coding: utf-8 -*-
 from __future__ import division
 
-import _kSpider_internal as kSpider_internal
+import _dbretina_internal as dbretina_internal
 import click
-from kSpider2.click_context import cli
+from dbretina.click_context import cli
 import os
 import sys
 import pandas as pd
 from collections import defaultdict
 import json
-import kSpider2.dbretina_doc_url as dbretina_doc
+import dbretina.dbretina_doc_url as dbretina_doc
 
 class StringHasher:
     FNV_prime = 1099511628211
@@ -161,7 +161,7 @@ def main(ctx, asc_file, output_prefix, gmt_file):
 
 
     ctx.obj.INFO("Sketching in progress, please wait...")
-    # kSpider_internal.sketch_dbretina(asc_file, names_file, output_prefix)
+    # dbretina_internal.sketch_dbretina(asc_file, names_file, output_prefix)
     # sketch(asc_file, output_prefix)
     multi_sketch(asc_file, output_prefix)
     
@@ -171,6 +171,6 @@ def main(ctx, asc_file, output_prefix, gmt_file):
     json_file = f"{output_prefix}_hashes.json"
     ctx.obj.SUCCESS("File(s) has been sketched.")
     ctx.obj.INFO("Indexing in progress, please wait...")
-    kSpider_internal.dbretina_indexing(json_file, output_prefix)
+    dbretina_internal.dbretina_indexing(json_file, output_prefix)
     append_line_to_file(f"command:{get_command()}", f"{output_prefix}.extra")
     ctx.obj.SUCCESS("DONE!")

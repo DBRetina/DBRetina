@@ -42,7 +42,7 @@ dependencies = [
 ]
 
 [project.scripts]
-DBRetina = "kSpider2:cli"
+DBRetina = "dbretina:cli"
 
 [project.urls]
 "Bug Reports" = "https://github.com/DBRetina/DBRetina/issues"
@@ -50,5 +50,5 @@ DBRetina = "kSpider2:cli"
 
 [tool.scikit-build]
 cmake.build-type = "Release"
-wheel.packages = ["pykSpider/kSpider2"]
+wheel.packages = ["pydbretina/dbretina"]
 wheel.install-dir = "."
