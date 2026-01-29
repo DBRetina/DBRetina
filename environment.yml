@@ -1,0 +1,16 @@
+name: dbretina
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Build dependencies
+  - python>=3.8
+  - cmake>=3.14
+  - swig
+  - boost-cpp
+  - bzip2
+  - zlib
+  # Python runtime dependencies
+  - pip
+  - pip:
+      - -r requirements.txt

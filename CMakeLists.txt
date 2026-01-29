@@ -32,6 +32,10 @@ include_directories(${kProcessor_INCLUDE_PATH})
 # ----------------------------------------------------------------------------
 
 include_directories("${PROJECT_SOURCE_DIR}/include")
+if(DEFINED ENV{CONDA_PREFIX})
+    include_directories("$ENV{CONDA_PREFIX}/include")
+    link_directories("$ENV{CONDA_PREFIX}/lib")
+endif()
 include_directories("${PROJECT_SOURCE_DIR}/lib/argh")
 include_directories("${PROJECT_SOURCE_DIR}/lib/json_parser/lib/include/")
 add_subdirectory("lib/zstr")

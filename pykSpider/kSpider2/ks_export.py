@@ -19,7 +19,6 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.distance import pdist, squareform
 import plotly.io as pio
-import dash_bio
 from pycirclize import Circos
 from io import StringIO
 from Bio import Phylo

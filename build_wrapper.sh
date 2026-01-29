@@ -28,7 +28,10 @@ cleanup
 
 # Build the project if not already built
 BUILD_DIR="build"
-[[ -d ${BUILD_DIR} ]] || cmake -Bbuild && cmake --build build -j 16
+if [[ ! -f ${BUILD_DIR}/Makefile ]]; then
+    cmake -B${BUILD_DIR} -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DPHMAP_BUILD_TESTS=OFF -DPHMAP_BUILD_EXAMPLES=OFF -DCMAKE_INCLUDE_PATH="${CONDA_PREFIX}/include" -DCMAKE_LIBRARY_PATH="${CONDA_PREFIX}/lib"
+fi
+cmake --build ${BUILD_DIR} --target kSpider -j 16
 
 
 echo "BDIST WHEEL"
@@ -38,7 +41,7 @@ cd dist/
 
 $(which python) -m pip uninstall DBRetina -y
 
-$(which python) -m pip install DBRetina*cp*.whl``
+$(which python) -m pip install dbretina*cp*.whl
 
 rm -rf build/temp
 rm -rf build/lib.linux*
