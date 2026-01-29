@@ -16,16 +16,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      
-      # Sure there's a better way to do this, but I doncare.
-      - name: write_branchName_to_file
-        run: echo ${GITHUB_REF##*/} > branch_name.tmp
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.23.0
 
         env:
-          CIBW_ENVIRONMENT: "BRANCH_NAME=$(cat branch_name.tmp)"
           CIBW_BUILD_VERBOSITY: 3
           CIBW_BUILD: cp38-manylinux_x86_64 cp39-manylinux_x86_64 cp310-manylinux_x86_64 cp311-manylinux_x86_64
           CIBW_SKIP: pp* *-manylinux_{aarch64,ppc64le,s390x}
@@ -33,11 +28,6 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: quay.io/pypa/manylinux2014_x86_64:latest
           CIBW_BEFORE_ALL: |
             yum install -y bzip2 bzip2-devel zlib-devel
-            python -m pip install --upgrade pip setuptools
-            python -m pip install cmake requests
-            cmake -BkSpider_BUILD_DIR
-            cmake --build kSpider_BUILD_DIR -j4
-            python setup.py sdist --dist-dir wheelhouse
 
       - uses: actions/upload-artifact@v4
         with:

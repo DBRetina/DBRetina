@@ -2,18 +2,32 @@
 # DBRetina project
 # ----------------------------------------------------------------------------
 
-# Minimum cmake version
-cmake_minimum_required (VERSION 3.14...3.20)
-# Name of project and that it is C/C++.
-project (
+cmake_minimum_required(VERSION 3.15...3.27)
+project(
         kSpider
         LANGUAGES CXX C
         VERSION 2.0.0
 )
 
-set(default_build_type "RELEASE")
-set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -lstdc++fs -fPIC -lgomp -lrt -fopenmp -Ofast")
-add_definitions(-w)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# ----------------------------------------------------------------------------
+# Python + nanobind
+# ----------------------------------------------------------------------------
+
+find_package(Python 3.8 COMPONENTS Interpreter Development.Module REQUIRED)
+
+include(FetchContent)
+FetchContent_Declare(
+    nanobind
+    GIT_REPOSITORY https://github.com/wjakob/nanobind.git
+    GIT_TAG        v2.4.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(nanobind)
+find_package(nanobind CONFIG REQUIRED PATHS ${nanobind_SOURCE_DIR}/cmake)
 
 # ----------------------------------------------------------------------------
 # Includes
@@ -31,6 +45,10 @@ add_subdirectory("lib/zstr")
 set(PHMAP_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/lib/parallel-hashmap")
 include_directories("${PHMAP_INCLUDE_DIRS}")
 
+# ----------------------------------------------------------------------------
+# Static library
+# ----------------------------------------------------------------------------
+
 add_library(
         kSpider STATIC
         src/pairwise.cpp
@@ -40,9 +58,31 @@ add_library(
         src/DBRetina_GSA.cpp
         )
 
-set_target_properties(kSpider PROPERTIES POSITION_INDEPENDENT_CODE 1 CXX_STANDARD 17)
-target_link_libraries (kSpider z zstr::zstr)
+set_target_properties(kSpider PROPERTIES CXX_STANDARD 17)
+target_compile_options(kSpider PRIVATE -fopenmp -O3 -Ofast -w)
+target_link_libraries(kSpider z zstr::zstr)
 target_include_directories(kSpider INTERFACE ${PHMAP_INCLUDE_DIRS})
+
+# ----------------------------------------------------------------------------
+# nanobind Python module
+# ----------------------------------------------------------------------------
+
+nanobind_add_module(_kSpider_internal src/python_bindings.cpp)
+target_link_libraries(_kSpider_internal PRIVATE kSpider z bz2 gomp dl)
+target_include_directories(_kSpider_internal PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PHMAP_INCLUDE_DIRS}
+    ${PROJECT_SOURCE_DIR}/lib/json_parser/lib/include
+    ${PROJECT_SOURCE_DIR}/lib/argh
+    ${PROJECT_SOURCE_DIR}/lib/zstr/src
+)
+target_compile_options(_kSpider_internal PRIVATE -fopenmp -O3 -Ofast -w)
+
+install(TARGETS _kSpider_internal LIBRARY DESTINATION .)
+
+# ----------------------------------------------------------------------------
+# Utilities
+# ----------------------------------------------------------------------------
 
 add_executable(dump_colors apps/dump_kmer_count.cpp)
 target_link_libraries(dump_colors kSpider z zstr::zstr)

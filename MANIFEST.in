@@ -11,11 +11,12 @@ recursive-include lib/argh *
 recursive-include lib/json_parser *
 recursive-include lib/zstr *
 
-recursive-include kSpider_BUILD_DIR lib*a
+# Include nanobind bindings source
+include src/python_bindings.cpp
 
-# Include static libs
-include kSpider_BUILD_DIR/libkSpider.a
+# Include C++ source files
+recursive-include src *.cpp *.hpp
+recursive-include apps *.cpp
 
-# Include SWIG interfaces
-recursive-include src/swig_interfaces *
+# Include Python packages
 recursive-include pykSpider/ *
