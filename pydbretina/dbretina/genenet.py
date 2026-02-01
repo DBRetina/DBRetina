@@ -90,15 +90,16 @@ class GeneNet:
         plt.savefig(f"{self.output_prefix}_genenet_scatter.png", dpi=500)
     
     def graph_export(self, graphml, gexf, ctx):
-        if graphml or gexf:
-            self.G = nx.Graph()
-            for node1, edges in self.graph.items():
-                for node2, weight in edges.items():
-                    self.G.add_edge(node1, node2, weight=weight)
+        if not graphml and not gexf:
+            return
+
+        self.G = nx.Graph()
+        for node1, edges in self.graph.items():
+            for node2, weight in edges.items():
+                self.G.add_edge(node1, node2, weight=weight)
 
         # uppercase graph nodes
         self.G = nx.relabel_nodes(self.G, lambda x: x.upper())
-
 
         if graphml:
             ctx.obj.INFO("Exporting genenet as graphml file")
@@ -183,9 +184,15 @@ def main(ctx, index_prefix, pairwise_file, output_prefix, graphml, gexf):
     ##############################################
     ctx.obj.INFO(f"Mapping gene sets to features")
 
-    raw_json_file = f"{index_prefix}_raw.json"
-    with open(raw_json_file, "r") as f:
-        supergroups_to_features = json.loads(f.read())["data"]
+    dbri_path = f"{index_prefix}.dbri"
+    if os.path.exists(dbri_path):
+        import _dbretina_internal as dbretina_internal
+        raw_json_str = dbretina_internal.dbri_load_raw_gene_sets(dbri_path)
+        supergroups_to_features = json.loads(raw_json_str)["data"]
+    else:
+        raw_json_file = f"{index_prefix}_raw.json"
+        with open(raw_json_file, "r") as f:
+            supergroups_to_features = json.loads(f.read())["data"]
     
     ##############################################
     #3. Build the genenet

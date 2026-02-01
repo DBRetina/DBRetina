@@ -15,27 +15,32 @@ import dbretina.dbretina_doc_url as dbretina_doc
 import json
 
 class Graph:
-    
-    # node_to_edges dict with default = 0
-    node_to_edges = defaultdict(lambda: 0)
-    node_to_size = {}
-    all_groups = set()
-    
+
     def __init__(self, index_prefix):
+        self.node_to_edges = defaultdict(lambda: 0)
+        self.node_to_size = {}
+        self.all_groups = set()
         self.parent = {}
         self.components = None
         self.index_prefix = index_prefix
         self.load_raw_json()
-        
+
 
     def load_raw_json(self):
-        raw_json_file = f"{self.index_prefix}_raw.json"
-        with open(raw_json_file) as f:
-            group_to_items = json.load(f)["data"]
-        
-        for group, items in group_to_items.items():
-            self.node_to_size[group] = len(items)
-            self.all_groups.add(group)
+        dbri_path = f"{self.index_prefix}.dbri"
+        if os.path.exists(dbri_path):
+            import _dbretina_internal as dbretina_internal
+            group_feature_counts = dbretina_internal.dbri_load_group_feature_counts(dbri_path)
+            for group, count in group_feature_counts.items():
+                self.node_to_size[group] = count
+                self.all_groups.add(group)
+        else:
+            raw_json_file = f"{self.index_prefix}_raw.json"
+            with open(raw_json_file) as f:
+                group_to_items = json.load(f)["data"]
+            for group, items in group_to_items.items():
+                self.node_to_size[group] = len(items)
+                self.all_groups.add(group)
     
     def get_all_groups_set(self):
         return self.all_groups
@@ -110,35 +115,53 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
-        "odds_ratio": 8,
-        "pvalue": 9,
+        "csi": 8,
+        "dice": 9,
+        "odds_ratio": 10,
+        "pvalue": 11,
     }
 
     METRIC_COL = metric_to_col["ochiai"]
 
 
     LOGGER.INFO(f"parsing the pairwise file: {pairwise_file}")
-    with open(pairwise_file, 'r') as f:
-        # Skip comment lines
-        while True:
-            pos = f.tell()  # remember the position
-            line = f.readline()
-            if not line.startswith("#"):
-                f.seek(pos)  # rewind to the position before the line
-                break
 
-        # skip the header
-        next(f)
+    # Check for .dbrp binary pairwise file first
+    dbrp_path = os.path.splitext(pairwise_file)[0] + ".dbrp"
+    if not os.path.exists(dbrp_path):
+        # Also try replacing _pairwise.tsv with _pairwise.dbrp
+        dbrp_path = pairwise_file.replace("_pairwise.tsv", "_pairwise.dbrp")
 
-        reader = csv.reader(f, delimiter="\t")
-        for row in reader:
-            ochiai_similarity = float(row[METRIC_COL])
-            if ochiai_similarity >= cutoff:
-                # Extract the gene_set names from columns 3 and 4
-                gene_set1 = row[2]
-                gene_set2 = row[3]
+    if os.path.exists(dbrp_path):
+        LOGGER.INFO(f"found .dbrp file: {dbrp_path}, using binary pairwise reader")
+        # ochiai metric_id = 1
+        records = dbretina_internal.dbrp_filter_pairs(dbrp_path, 1, cutoff)
+        for rec in records:
+            gene_set1 = rec['group_1_name']
+            gene_set2 = rec['group_2_name']
+            ochiai_graph.add_edge(gene_set1, gene_set2)
+    else:
+        with open(pairwise_file, 'r') as f:
+            # Skip comment lines
+            while True:
+                pos = f.tell()  # remember the position
+                line = f.readline()
+                if not line.startswith("#"):
+                    f.seek(pos)  # rewind to the position before the line
+                    break
 
-                ochiai_graph.add_edge(gene_set1, gene_set2)
+            # skip the header
+            next(f)
+
+            reader = csv.reader(f, delimiter="\t")
+            for row in reader:
+                ochiai_similarity = float(row[METRIC_COL])
+                if ochiai_similarity >= cutoff:
+                    # Extract the gene_set names from columns 3 and 4
+                    gene_set1 = row[2]
+                    gene_set2 = row[3]
+
+                    ochiai_graph.add_edge(gene_set1, gene_set2)
 
     # Get the connected components
     LOGGER.INFO("extracting the connected components")

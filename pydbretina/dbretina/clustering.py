@@ -11,6 +11,7 @@ import sys
 import igraph as ig
 import leidenalg as la
 import dbretina.dbretina_doc_url as dbretina_doc
+import _dbretina_internal as dbretina_internal
 
 def check_if_there_is_a_pvalue(pairwise_file):
     with open(pairwise_file) as F:
@@ -35,11 +36,23 @@ class Clusters:
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
-        "odds_ratio": 8,
-        "pvalue": 9,
+        "csi": 8,
+        "dice": 9,
+        "odds_ratio": 10,
+        "pvalue": 11,
     }
 
-    seq_to_kmers = dict()
+    metric_name_to_id = {
+        "containment": 0,
+        "ochiai": 1,
+        "jaccard": 2,
+        "csi": 3,
+        "dice": 4,
+        "odds_ratio": 5,
+        "pvalue": 6,
+    }
+
+    group_to_features = dict()
     names_map = dict()
     
     def add_edges(self, edges_tuples):
@@ -89,7 +102,7 @@ class Clusters:
         self.metric = metric
         self.cut_off_threshold = cut_off_threshold
         self.pairwise_file = pairwise_file
-        self.shared_kmers_threshold = 200
+        self.shared_features_threshold = 200
         self.original_nodes = {}
         self.metadata = []
         self.community = community
@@ -105,9 +118,13 @@ class Clusters:
         self.graph = ig.Graph() if community else rx.PyGraph()
         self.add_edges = self._add_igraph_edges if community else self._add_rx_edges
         self.add_nodes = self._add_igraph_nodes if community else self._add_rx_nodes
-        
-        total_nodes_no = int(
-            next(open(pairwise_file, 'r')).strip().split(':')[-1])
+
+        self.dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
+        if os.path.exists(self.dbrp_path):
+            total_nodes_no = dbretina_internal.dbrp_get_num_groups(self.dbrp_path)
+        else:
+            total_nodes_no = int(
+                next(open(pairwise_file, 'r')).strip().split(':')[-1])
         nodes_range = range(1, total_nodes_no + 1)
         self.nodes_indeces = self.add_nodes(list(nodes_range))
     
@@ -117,35 +134,19 @@ class Clusters:
         batch_counter = 0
         edges_tuples = []
 
-        with open(self.pairwise_file, 'r') as pairwise_tsv:
-
-            # skip comments
-            while True:
-                pos = pairwise_tsv.tell()
-                line = pairwise_tsv.readline()
-                if not line.startswith('#'):
-                    pairwise_tsv.seek(pos)
-                    break
-                else:
-                    self.metadata.append(line)            
+        if os.path.exists(self.dbrp_path):
             self.metadata.append(f"#command: {get_command()}\n")
-
-            next(pairwise_tsv)  # Skip header
-            for row in pairwise_tsv:
-                row = row.strip().split('\t')
-                similarity = float(row[self.metric_col])
-                self.original_nodes[int(row[0])] = row[2]
-                self.original_nodes[int(row[1])] = row[3]
-
-                # don't make graph edge
-                if similarity < self.cut_off_threshold:
-                    continue
+            metric_id = self.metric_name_to_id[self.metric]
+            records = dbretina_internal.dbrp_filter_pairs(self.dbrp_path, metric_id, self.cut_off_threshold)
+            for record in records:
+                self.original_nodes[record["group_1_id"]] = record["group_1_name"]
+                self.original_nodes[record["group_2_id"]] = record["group_2_name"]
+                similarity = record[self.metric]
+                seq1 = record["group_1_id"] - 1
+                seq2 = record["group_2_id"] - 1
 
                 if batch_counter < self.edges_batch_number:
                     batch_counter += 1
-                    seq1 = int(row[0]) - 1
-                    seq2 = int(row[1]) - 1
-
                     edges_tuples.append((seq1, seq2, similarity))
                 else:
                     self.add_edges(edges_tuples)
@@ -154,6 +155,44 @@ class Clusters:
 
             if len(edges_tuples):
                 self.add_edges(edges_tuples)
+        else:
+            with open(self.pairwise_file, 'r') as pairwise_tsv:
+
+                # skip comments
+                while True:
+                    pos = pairwise_tsv.tell()
+                    line = pairwise_tsv.readline()
+                    if not line.startswith('#'):
+                        pairwise_tsv.seek(pos)
+                        break
+                    else:
+                        self.metadata.append(line)
+                self.metadata.append(f"#command: {get_command()}\n")
+
+                next(pairwise_tsv)  # Skip header
+                for row in pairwise_tsv:
+                    row = row.strip().split('\t')
+                    similarity = float(row[self.metric_col])
+                    self.original_nodes[int(row[0])] = row[2]
+                    self.original_nodes[int(row[1])] = row[3]
+
+                    # don't make graph edge
+                    if similarity < self.cut_off_threshold:
+                        continue
+
+                    if batch_counter < self.edges_batch_number:
+                        batch_counter += 1
+                        seq1 = int(row[0]) - 1
+                        seq2 = int(row[1]) - 1
+
+                        edges_tuples.append((seq1, seq2, similarity))
+                    else:
+                        self.add_edges(edges_tuples)
+                        batch_counter = 0
+                        edges_tuples.clear()
+
+                if len(edges_tuples):
+                    self.add_edges(edges_tuples)
 
 
     def construct_igraph(self):
@@ -161,34 +200,19 @@ class Clusters:
         edges_tuples = []
 
         print("[i] constructing graph")
-        with open(self.pairwise_file, 'r') as pairwise_tsv:
-            # skip comments
-            while True:
-                pos = pairwise_tsv.tell()
-                line = pairwise_tsv.readline()
-                if not line.startswith('#'):
-                    pairwise_tsv.seek(pos)
-                    break
-                else:
-                    self.metadata.append(line)            
+        if os.path.exists(self.dbrp_path):
             self.metadata.append(f"#command: {get_command()}\n")
-
-            next(pairwise_tsv)  # Skip header
-            for row in pairwise_tsv:
-                row = row.strip().split('\t')
-                similarity = float(row[self.metric_col])
-                self.original_nodes[int(row[0])] = row[2]
-                self.original_nodes[int(row[1])] = row[3]
-
-                # don't make graph edge
-                if similarity < self.cut_off_threshold:
-                    continue
+            metric_id = self.metric_name_to_id[self.metric]
+            records = dbretina_internal.dbrp_filter_pairs(self.dbrp_path, metric_id, self.cut_off_threshold)
+            for record in records:
+                self.original_nodes[record["group_1_id"]] = record["group_1_name"]
+                self.original_nodes[record["group_2_id"]] = record["group_2_name"]
+                similarity = record[self.metric]
+                seq1 = record["group_1_id"] - 1
+                seq2 = record["group_2_id"] - 1
 
                 if batch_counter < self.edges_batch_number:
                     batch_counter += 1
-                    seq1 = int(row[0]) - 1
-                    seq2 = int(row[1]) - 1
-
                     edges_tuples.append((seq1, seq2, similarity))
                 else:
                     self.add_edges(edges_tuples)
@@ -196,7 +220,44 @@ class Clusters:
                     edges_tuples.clear()
 
             if len(edges_tuples):
-                self.add_edges(edges_tuples)        
+                self.add_edges(edges_tuples)
+        else:
+            with open(self.pairwise_file, 'r') as pairwise_tsv:
+                # skip comments
+                while True:
+                    pos = pairwise_tsv.tell()
+                    line = pairwise_tsv.readline()
+                    if not line.startswith('#'):
+                        pairwise_tsv.seek(pos)
+                        break
+                    else:
+                        self.metadata.append(line)
+                self.metadata.append(f"#command: {get_command()}\n")
+
+                next(pairwise_tsv)  # Skip header
+                for row in pairwise_tsv:
+                    row = row.strip().split('\t')
+                    similarity = float(row[self.metric_col])
+                    self.original_nodes[int(row[0])] = row[2]
+                    self.original_nodes[int(row[1])] = row[3]
+
+                    # don't make graph edge
+                    if similarity < self.cut_off_threshold:
+                        continue
+
+                    if batch_counter < self.edges_batch_number:
+                        batch_counter += 1
+                        seq1 = int(row[0]) - 1
+                        seq2 = int(row[1]) - 1
+
+                        edges_tuples.append((seq1, seq2, similarity))
+                    else:
+                        self.add_edges(edges_tuples)
+                        batch_counter = 0
+                        edges_tuples.clear()
+
+                if len(edges_tuples):
+                    self.add_edges(edges_tuples)        
     
     def plot_histogram(self, cluster_sizes, filename):
         # Create a figure and a set of subplots
@@ -346,7 +407,7 @@ class Clusters:
 
             CLUSTERS.write(f"cluster_id\tcluster_size\tcluster_members\n")
             for component in self.connected_components:
-                # uncomment to exclude single genome clusters from exporting
+                # uncomment to exclude single-group clusters from exporting
                 if len(component) == 1 and list(component)[0] + 1 not in self.original_nodes:
                     continue                
                 # if len(component) == 1: continue
@@ -382,9 +443,9 @@ def main(ctx, pairwise_file, cutoff, metric, output_prefix, community):
     """Graph-based clustering of the pairwise TSV file."""
     
     cutoff = float(cutoff)
-    kCl = Clusters(logger_obj=ctx.obj, pairwise_file=pairwise_file,
+    clusters = Clusters(logger_obj=ctx.obj, pairwise_file=pairwise_file,
                    cut_off_threshold=cutoff, metric=metric, output_prefix=output_prefix, community=community)
     ctx.obj.INFO("Building the main graph...")
-    kCl.construct_graph()
+    clusters.construct_graph()
     ctx.obj.INFO("Clustering...")
-    kCl.cluster_graph()
+    clusters.cluster_graph()

@@ -185,8 +185,10 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
-        "odds_ratio": 8,
-        "pvalue": 9,
+        "csi": 8,
+        "dice": 9,
+        "odds_ratio": 10,
+        "pvalue": 11,
     }
 
     if metric not in metric_to_col:
@@ -210,7 +212,21 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
     if labels_selection == "ids": src1_label_col = 0; src2_label_col = 1
     else: src1_label_col = 2; src2_label_col = 3
     
-    df = pd.read_csv(pairwise_file, sep='\t', usecols=[src1_label_col, src2_label_col, dist_col], comment='#')
+    dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
+    if os.path.exists(dbrp_path):
+        import _dbretina_internal as dbretina_internal
+        records = dbretina_internal.dbrp_iterate_all(dbrp_path)
+        rows = []
+        for rec in records:
+            if labels_selection == "ids":
+                rows.append((str(rec['group_1_id']), str(rec['group_2_id']), float(rec[metric])))
+            else:
+                rows.append((rec['group_1_name'], rec['group_2_name'], float(rec[metric])))
+        col1 = 'group_1_ID' if labels_selection == 'ids' else 'group_1_name'
+        col2 = 'group_2_ID' if labels_selection == 'ids' else 'group_2_name'
+        df = pd.DataFrame(rows, columns=[col1, col2, metric])
+    else:
+        df = pd.read_csv(pairwise_file, sep='\t', usecols=[src1_label_col, src2_label_col, dist_col], comment='#')
     
     if labels_selection == "ids":    
         df[df.columns[0]] = df[df.columns[0]].astype(str)

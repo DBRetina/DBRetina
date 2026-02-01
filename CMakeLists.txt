@@ -17,7 +17,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Python + nanobind
 # ----------------------------------------------------------------------------
 
-find_package(Python 3.12 COMPONENTS Interpreter Development.Module REQUIRED)
+find_package(Python 3.11 COMPONENTS Interpreter Development.Module REQUIRED)
 
 include(FetchContent)
 FetchContent_Declare(
@@ -55,6 +55,10 @@ add_library(
         src/query.cpp
         src/DBRetina_indexing.cpp
         src/DBRetina_GSA.cpp
+        src/DBRetinaIndex.cpp
+        src/DBRetina_append.cpp
+        src/DBRetina_merge.cpp
+        src/DBRetinaPairwise.cpp
         )
 
 set_target_properties(dbretina_core PROPERTIES CXX_STANDARD 17)

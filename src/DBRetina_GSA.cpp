@@ -170,8 +170,8 @@ void GeneSets::build_from_clusters_file(string clusters_file) {
 
 
 void GeneSets::load_group_sizes(string bin_file) {
-    phmap::BinaryInputArchive ar_in_kmer_count(bin_file.c_str());
-    this->_group_id_to_size.phmap_load(ar_in_kmer_count);
+    phmap::BinaryInputArchive ar_in_feature_count(bin_file.c_str());
+    this->_group_id_to_size.phmap_load(ar_in_feature_count);
     assert(this->_group_id_to_size.size());
 }
 

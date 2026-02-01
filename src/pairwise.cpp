@@ -12,6 +12,8 @@
 #include "parallel_hashmap/phmap_dump.h"
 #include <cassert>
 #include <math.h>
+#include "DBRetinaIndex.hpp"
+#include "DBRetinaPairwise.hpp"
 
 using boost::adaptors::transformed;
 using boost::algorithm::join;
@@ -29,7 +31,7 @@ using PAIRS_COUNTER = phmap::parallel_flat_hash_map<
     std::equal_to<std::pair<uint32_t, uint32_t>>,
     std::allocator<std::pair<const std::pair<uint32_t, uint32_t>, uint64_t>>, 12, std::mutex>;
 
-using BINS_KMER_COUNT = phmap::parallel_flat_hash_map<
+using BINS_FEATURE_COUNT = phmap::parallel_flat_hash_map<
     std::string, uint32_t,
     phmap::priv::hash_default_hash<std::string>,
     phmap::priv::hash_default_eq<std::string>,
@@ -81,7 +83,7 @@ public:
     double min_odds_ratio = 1.0;
     double max_odds_ratio = 1.0;
     Stats() {
-        vector<string> distances = { "containment", "ochiai", "jaccard" };
+        vector<string> distances = { "containment", "ochiai", "jaccard", "csi", "dice" };
         for (string& distance : distances) {
             stats[distance] = flat_hash_map<string, uint64_t>();
             for (int value = 0; value < 100; value += 5) {
@@ -330,11 +332,11 @@ namespace dbretina {
 
     // Disabled for now
     /*
-    double fisher_exact(int k_shared_kmers, int source_1_kmers, int source_2_kmers, int population_size) {
-        int a = k_shared_kmers;
-        int b = source_1_kmers - k_shared_kmers;
-        int c = source_2_kmers - k_shared_kmers;
-        int d = population_size - source_1_kmers - c;
+    double fisher_exact(int k_shared_features, int source_1_features, int source_2_features, int population_size) {
+        int a = k_shared_features;
+        int b = source_1_features - k_shared_features;
+        int c = source_2_features - k_shared_features;
+        int d = population_size - source_1_features - c;
 
         int minval = std::min(a + b, a + c);
         int maxval = std::max(0, a - d);
@@ -417,91 +419,46 @@ namespace dbretina {
             throw std::invalid_argument("cutoff_distance_type must be in " + string("{containment, ochiai, jaccard}"));
         }
 
-        // Read colors
-        int_vec_map color_to_ids; // = new phmap::flat_hash_map<uint64_t, phmap::flat_hash_set<uint32_t>>;
-        string colors_map_file = index_prefix + "_color_to_sources.bin";
-        string extra_file = index_prefix + ".extra";
-        uint64_t population_size = get_population_size(extra_file);
-        cout << "population_size: " << population_size << endl;
-        load_colors_to_sources(colors_map_file, &color_to_ids);
-
-        // [DEBUG CODE] dump color to ids in a file
-        // ofstream myfile222;
-        // myfile222.open(index_prefix + "_color_to_sources.txt");
-        // for (auto& color_to_ids_pair : color_to_ids) {
-        //     uint64_t color = color_to_ids_pair.first;
-        //     vector<uint32_t> ids = color_to_ids_pair.second;
-        //     myfile222 << color << ":" << ids.size() << endl;
-        // }
-        // myfile222.close();
-
-        flat_hash_map<int, std::string> namesMap;
-        load_namesMap(index_prefix + ".namesMap", namesMap);
-        assert(namesMap.size());
+        // Load from .dbri unified index
+        std::string dbri_path = index_prefix + ".dbri";
+        auto dbri = DBRetinaIndex::open(dbri_path);
 
         auto begin_time = Time::now();
 
+        // Load population size from metadata (fixes hardcoded 44260 bug)
+        uint64_t population_size = dbri.get_population_size();
+        cout << "population_size: " << population_size << endl;
+
+        // Load color_to_sources
+        int_vec_map color_to_ids;
+        dbri.load_color_to_sources(color_to_ids);
         cout << "[dev] mapping colors to groups: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
+        // Load namesMap
+        flat_hash_map<int, std::string> namesMap;
+        dbri.load_names_map(namesMap);
+        assert(namesMap.size());
+
+        // Load colorsCount
         begin_time = Time::now();
         int_int_map colorsCount;
-        load_colors_count(index_prefix + "_color_count.bin", colorsCount);
-
-        // DEBUG
-        // dump colors count to file 
-        /*
-        ofstream myfile3;
-        myfile3.open(index_prefix + "_color_count.txt");
-        for (auto& color_count_pair : colorsCount) {
-            uint64_t color = color_count_pair.first;
-            uint64_t count = color_count_pair.second;
-            myfile3 << color << ":" << count << endl;
-        }
-        myfile3.close();
-
-
-        // TODO: should be csv, rename later.
-        std::ifstream data(index_prefix + "_DBRetina_colorCount.tsv");
-        if (!data.is_open()) std::exit(EXIT_FAILURE);
-        std::string str;
-        std::getline(data, str); // skip the first line
-        while (std::getline(data, str))
-        {
-            std::istringstream iss(str);
-            std::string token;
-            vector<uint32_t> tmp;
-            while (std::getline(iss, token, ','))
-                tmp.push_back(stoi(token));
-            colorsCount.insert(make_pair(tmp[0], tmp[1]));
-        }
-        */
-
+        dbri.load_color_count(colorsCount);
         cout << "[dev] parsing index colors: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+
+        // Load feature counts
         begin_time = Time::now();
+        flat_hash_map<uint32_t, uint32_t> groupID_to_featureCount;
+        dbri.load_group_feature_count(groupID_to_featureCount);
+        assert(groupID_to_featureCount.size());
 
-        // for (const auto& record : color_to_ids) {
-        //     uint32_t colorCount = colorsCount[record.first];
-        //     for (auto group_id : record.second) {
-        //         groupID_to_kmerCount[group_id] += colorCount;
-        //     }
-        // }
-
-        // Loading kmer counts
-        flat_hash_map<uint32_t, uint32_t> groupID_to_kmerCount;
-        string _file_id_to_kmer_count = index_prefix + "_groupID_to_featureCount.bin";
-        phmap::BinaryInputArchive ar_in_kmer_count(_file_id_to_kmer_count.c_str());
-        groupID_to_kmerCount.phmap_load(ar_in_kmer_count);
-        assert(groupID_to_kmerCount.size());
-
-
-        std::ofstream fstream_kmerCount;
-        fstream_kmerCount.open(index_prefix + "_DBRetina_featuresNo.tsv");
-        fstream_kmerCount << "ID\tgroup\tfeatures\n";
+        std::ofstream fstream_featureCount;
+        fstream_featureCount.open(index_prefix + "_DBRetina_featuresNo.tsv");
+        fstream_featureCount << "ID\tgroup\tfeatures\n";
         uint64_t counter = 0;
-        for (const auto& item : groupID_to_kmerCount) {
-            fstream_kmerCount << ++counter << '\t' << item.first << '\t' << item.second << '\n';
+        for (const auto& item : groupID_to_featureCount) {
+            fstream_featureCount << ++counter << '\t' << item.first << '\t' << item.second << '\n';
         }
-        fstream_kmerCount.close();
+        fstream_featureCount.close();
         cout << "[dev] features counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
         // Loading done
@@ -573,6 +530,7 @@ namespace dbretina {
             return std::string(buffer);
             };
 
+        // --- TSV output (kept for migration) ---
         std::ofstream myfile;
         myfile.open(index_prefix + "_DBRetina_pairwise.tsv");
         myfile << "#nodes:" << namesMap.size() << '\n';
@@ -587,12 +545,40 @@ namespace dbretina {
             << "\tcontainment"
             << "\tochiai"
             << "\tjaccard"
+            << "\tcsi"
+            << "\tdice"
             << "\todds_ratio";
         if (calculate_pvalue) { myfile << "\tpvalue"; }
-        // << "\texpected_successes"
-        // << "\tfold_change"
 
         myfile << '\n';
+
+        // --- .dbrp binary output ---
+        DBRetinaPairwise pw;
+        uint8_t dbrp_flags = 0x3F;  // all metrics except pvalue
+        if (calculate_pvalue) dbrp_flags |= 0x40;
+
+        // Build metadata JSON for .dbrp
+        std::string dbrp_metadata = "{\"population_size\":" + std::to_string(population_size)
+            + ",\"cutoff_metric\":\"" + cutoff_distance_type + "\""
+            + ",\"cutoff_threshold\":" + std::to_string(cutoff_threshold)
+            + ",\"command\":\"" + full_command + "\""
+            + ",\"num_groups\":" + std::to_string(namesMap.size())
+            + "}";
+
+        pw.begin_write(index_prefix + "_DBRetina_pairwise.dbrp", dbrp_flags, namesMap, dbrp_metadata);
+
+        // Stats tracking for .dbrp
+        PairwiseStatistics dbrp_stats;
+        dbrp_stats.min_odds_ratio = 1.0;
+        dbrp_stats.max_odds_ratio = 1.0;
+        // Initialize histograms for 5 metrics (containment, ochiai, jaccard, csi, dice)
+        for (uint8_t mid = 0; mid < 5; mid++) {
+            MetricHistogram hist;
+            hist.metric_id = mid;
+            hist.bucket_counts.resize(21, 0);
+            dbrp_stats.histograms.push_back(hist);
+        }
+
         uint64_t line_count = 0;
 
 
@@ -600,42 +586,41 @@ namespace dbretina {
 
             flat_hash_map<string, double> distance_metrics;
 
-            uint64_t shared_kmers = edge.second;
+            uint64_t shared_features = edge.second;
             uint32_t source_1 = edge.first.first;
             uint32_t source_2 = edge.first.second;
-            uint32_t source_1_kmers = groupID_to_kmerCount[source_1];
-            uint32_t source_2_kmers = groupID_to_kmerCount[source_2];
-            uint32_t minimum_source_kmers = min(source_1_kmers, source_2_kmers);
+            uint32_t source_1_features = groupID_to_featureCount[source_1];
+            uint32_t source_2_features = groupID_to_featureCount[source_2];
+            uint32_t minimum_source_features = min(source_1_features, source_2_features);
 
             // containment
-            distance_metrics["containment"] = ((double)shared_kmers / minimum_source_kmers) * 100;
+            distance_metrics["containment"] = ((double)shared_features / minimum_source_features) * 100;
 
 
             // Ochiai distance
-            distance_metrics["ochiai"] = 100 * ((double)shared_kmers / sqrt((double)source_1_kmers * (double)source_2_kmers));
+            distance_metrics["ochiai"] = 100 * ((double)shared_features / sqrt((double)source_1_features * (double)source_2_features));
 
 
             // Jaccard distance (if size of samples is roughly similar)
             // J(A, B) = 1 - |A ∩ B| / (|A| + |B| - |A ∩ B|) <- this is distance not similarity
-            distance_metrics["jaccard"] = 100 * ((double)shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers));
+            distance_metrics["jaccard"] = 100 * ((double)shared_features / (source_1_features + source_2_features - shared_features));
 
-            // Kulczynski distance needs abundance of each sample
-            // double kulczynski = (double)shared_kmers / (source_1_kmers + source_2_kmers) * 2;
+            // CSI (Containment Similarity Index): shared^2 / (|A| * |B|) * 100
+            distance_metrics["csi"] = 100 * ((double)shared_features * shared_features / ((double)source_1_features * source_2_features));
+
+            // Dice coefficient: 2 * shared / (|A| + |B|) * 100
+            distance_metrics["dice"] = 100 * (2.0 * shared_features / (source_1_features + source_2_features));
 
             // p-value using hypergeometric CDF
-            int k_shared_kmers = shared_kmers;  // Number of successes
-            int s_source_1_kmers = source_1_kmers;  // Sample size
-            int M_source_2_kmers = source_2_kmers;  // Number of successes in the population
+            int k_shared_features = shared_features;  // Number of successes
+            int s_source_1_features = source_1_features;  // Sample size
+            int M_source_2_features = source_2_features;  // Number of successes in the population
             int N_population_size = population_size;  // Population size is the total number of successes in the population which is in our case the total number of genes ()
 
 
             // Odds ratio
-            distance_metrics["odds_ratio"] = odds_ratio(k_shared_kmers, s_source_1_kmers, M_source_2_kmers, N_population_size);
+            distance_metrics["odds_ratio"] = odds_ratio(k_shared_features, s_source_1_features, M_source_2_features, N_population_size);
 
-
-            // auto [pvalue, expectedSuccesses, fold_change] = enrichmentAnalysis(shared_kmers, source_1_kmers, source_2_kmers, population_size, true);
-            // distance_metrics["expected_successes"] = expectedSuccesses;
-            // distance_metrics["fold_change"] = fold_change;
 
             if (distance_metrics[cutoff_distance_type] < cutoff_threshold) continue;
 
@@ -643,22 +628,58 @@ namespace dbretina {
             distances_stats.add_stat("containment", distance_metrics["containment"]);
             distances_stats.add_stat("ochiai", distance_metrics["ochiai"]);
             distances_stats.add_stat("jaccard", distance_metrics["jaccard"]);
+            distances_stats.add_stat("csi", distance_metrics["csi"]);
+            distances_stats.add_stat("dice", distance_metrics["dice"]);
             distances_stats.update_odds_ratio_stats(distance_metrics["odds_ratio"]);
 
+            // Update .dbrp stats
+            auto map_to_bucket = [](double value) -> int {
+                int lower = static_cast<int>(std::floor(value / 5)) * 5;
+                int idx = lower / 5;
+                if (idx >= 20) idx = 20;  // 100-100 bucket
+                return idx;
+            };
+            dbrp_stats.histograms[0].bucket_counts[map_to_bucket(distance_metrics["containment"])]++;
+            dbrp_stats.histograms[1].bucket_counts[map_to_bucket(distance_metrics["ochiai"])]++;
+            dbrp_stats.histograms[2].bucket_counts[map_to_bucket(distance_metrics["jaccard"])]++;
+            dbrp_stats.histograms[3].bucket_counts[map_to_bucket(distance_metrics["csi"])]++;
+            dbrp_stats.histograms[4].bucket_counts[map_to_bucket(distance_metrics["dice"])]++;
 
+            double or_val = distance_metrics["odds_ratio"];
+            if (or_val < dbrp_stats.min_odds_ratio) dbrp_stats.min_odds_ratio = or_val;
+            if (or_val > dbrp_stats.max_odds_ratio) dbrp_stats.max_odds_ratio = or_val;
 
+            // Write .dbrp record
+            PairRecord rec;
+            rec.group_1_id = source_1;
+            rec.group_2_id = source_2;
+            rec.shared_features = shared_features;
+            rec.containment = static_cast<float>(distance_metrics["containment"]);
+            rec.ochiai = static_cast<float>(distance_metrics["ochiai"]);
+            rec.jaccard = static_cast<float>(distance_metrics["jaccard"]);
+            rec.csi = static_cast<float>(distance_metrics["csi"]);
+            rec.dice = static_cast<float>(distance_metrics["dice"]);
+            rec.odds_ratio = static_cast<float>(distance_metrics["odds_ratio"]);
+            if (calculate_pvalue) {
+                rec.pvalue = fastHyperPValue(shared_features, source_1_features, source_2_features, population_size);
+            }
+            pw.write_record(rec);
+
+            // Write TSV line
             myfile << source_1
                 << '\t' << source_2
                 << '\t' << namesMap[source_1]
                 << '\t' << namesMap[source_2]
-                << '\t' << shared_kmers
+                << '\t' << shared_features
                 << '\t' << formatDouble(distance_metrics["containment"])
                 << '\t' << formatDouble(distance_metrics["ochiai"])
                 << '\t' << formatDouble(distance_metrics["jaccard"])
+                << '\t' << formatDouble(distance_metrics["csi"])
+                << '\t' << formatDouble(distance_metrics["dice"])
                 << '\t' << formatDouble(distance_metrics["odds_ratio"]);
 
             if (calculate_pvalue) {
-                myfile << '\t' << fastHyperPValue(shared_kmers, source_1_kmers, source_2_kmers, population_size);
+                myfile << '\t' << fastHyperPValue(shared_features, source_1_features, source_2_features, population_size);
             }
 
             myfile << '\n';
@@ -667,5 +688,9 @@ namespace dbretina {
 
         myfile.close();
         distances_stats.stats_to_json_file(index_prefix + "_DBRetina_pairwise_stats.json");
+
+        // Finalize .dbrp
+        pw.finalize_write(dbrp_stats, dbrp_metadata);
+        cout << "[dev] wrote .dbrp binary pairwise file: " << index_prefix << "_DBRetina_pairwise.dbrp" << endl;
     }
 }

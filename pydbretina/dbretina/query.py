@@ -150,8 +150,10 @@ Detailed description:
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
-        "odds_ratio": 8,
-        "pvalue": 9,
+        "csi": 8,
+        "dice": 9,
+        "odds_ratio": 10,
+        "pvalue": 11,
     }
     
      # check if pvalue
@@ -238,8 +240,28 @@ Detailed description:
     elif cutoff != -1:
         ctx.obj.INFO(
             f"Querying the pairwise matrix on the {metric} column with a cutoff of {cutoff}.")
-        command = f"grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"
-        result = execute_bash_command(command)
+        dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
+        metric_name_to_id = {
+            "containment": 0, "ochiai": 1, "jaccard": 2, "csi": 3,
+            "dice": 4, "odds_ratio": 5, "pvalue": 6,
+        }
+        if os.path.exists(dbrp_path) and metric in metric_name_to_id:
+            mid = metric_name_to_id[metric]
+            records = dbretina_internal.dbrp_filter_pairs(dbrp_path, mid, cutoff)
+            with open(output_file, 'a') as out:
+                for rec in records:
+                    fields = [str(rec['group_1_id']), str(rec['group_2_id']),
+                             rec['group_1_name'], rec['group_2_name'],
+                             str(rec['shared_features']),
+                             f"{rec['containment']:.1f}", f"{rec['ochiai']:.1f}",
+                             f"{rec['jaccard']:.1f}", f"{rec['csi']:.1f}",
+                             f"{rec['dice']:.1f}", f"{rec['odds_ratio']:.1f}"]
+                    if 'pvalue' in rec:
+                        fields.append(str(rec['pvalue']))
+                    out.write('\t'.join(fields) + '\n')
+        else:
+            command = f"grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"
+            result = execute_bash_command(command)
 
     elif groups_file != "NA":
         ctx.obj.INFO(f"Querying by groups file {groups_file}\nPlease wait...")

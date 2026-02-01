@@ -17,9 +17,9 @@ using DBRETINA_PHMAP = phmap::parallel_flat_hash_map<uint64_t, uint64_t,
 struct DBRetina_PHMAP {
 
     DBRETINA_PHMAP MAP;
-    uint64_t kSize;
+    uint64_t hashSize;
 
-    DBRetina_PHMAP(uint64_t kSize) : kSize(kSize) {}
+    DBRetina_PHMAP(uint64_t hashSize) : hashSize(hashSize) {}
 
     void setCount(uint64_t key, uint64_t value) {
         MAP[key] = value;
@@ -31,7 +31,7 @@ struct DBRetina_PHMAP {
         return 0;
     }
 
-    uint64_t getkSize() { return kSize; }
+    uint64_t getHashSize() { return hashSize; }
 
     uint64_t size() { return MAP.size(); }
 
@@ -41,11 +41,11 @@ struct DBRetina_PHMAP {
     void save(const std::string& prefix) {
         // Write .extra metadata
         std::ofstream extra(prefix + ".extra");
-        extra << kSize << "\n";
+        extra << hashSize << "\n";
         extra << 0 << "\n";         // hash_mode  (mumur_hasher)
         extra << 1 << "\n";         // slicing_mode
-        extra << kSize << ":0\n";   // params_to_string
-        extra << "features:" << kSize << "\n";
+        extra << hashSize << ":0\n";   // params_to_string
+        extra << "features:" << hashSize << "\n";
         extra.close();
 
         // Write .phmap binary dump
@@ -62,10 +62,10 @@ struct DBRetina_PHMAP {
         }
         std::string line;
         std::getline(extra, line);
-        uint64_t kSize = std::stoull(line);
+        uint64_t hashSize = std::stoull(line);
         extra.close();
 
-        auto* frame = new DBRetina_PHMAP(kSize);
+        auto* frame = new DBRetina_PHMAP(hashSize);
 
         // Read .phmap binary dump
         phmap::BinaryInputArchive ar_in((prefix + ".phmap").c_str());

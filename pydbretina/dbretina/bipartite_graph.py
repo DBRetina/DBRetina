@@ -94,8 +94,10 @@ class DBRetinaGraph:
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
-        "odds_ratio": 8,
-        "pvalue": 9,
+        "csi": 8,
+        "dice": 9,
+        "odds_ratio": 10,
+        "pvalue": 11,
     }
     
     metric_col : int = None
@@ -116,7 +118,13 @@ class DBRetinaGraph:
 
         
     def load_all_pairwise(self):
-        self.pairwise_df = pd.read_csv(self.pairwise_file, sep='\t', comment='#', usecols=['group_1_name','group_2_name', self.metric])
+        dbrp_path = self.pairwise_file.replace(".tsv", ".dbrp")
+        if os.path.exists(dbrp_path):
+            records = dbretina_internal.dbrp_iterate_all(dbrp_path)
+            rows = [(rec['group_1_name'], rec['group_2_name'], float(rec[self.metric])) for rec in records]
+            self.pairwise_df = pd.DataFrame(rows, columns=['group_1_name', 'group_2_name', self.metric])
+        else:
+            self.pairwise_df = pd.read_csv(self.pairwise_file, sep='\t', comment='#', usecols=['group_1_name','group_2_name', self.metric])
 
     def filter_by_cutoff(self):
         self.pairwise_df = self.pairwise_df[self.pairwise_df[self.metric] >= self.cutoff]
@@ -190,11 +198,16 @@ class DBRetinaGraph:
     
     def parse_node_size(self, index_prefix):
         self.node_to_size = {}
-        with open(f"{index_prefix}_groupID_to_featureCount.tsv") as F:
-            next(F)
-            for line in F:
-                node, size = line.strip().split('\t')
-                self.node_to_size[node] = int(size)
+        dbri_path = f"{index_prefix}.dbri"
+        if os.path.exists(dbri_path):
+            import _dbretina_internal as dbretina_internal
+            self.node_to_size = dbretina_internal.dbri_load_group_feature_counts(dbri_path)
+        else:
+            with open(f"{index_prefix}_groupID_to_featureCount.tsv") as F:
+                next(F)
+                for line in F:
+                    node, size = line.strip().split('\t')
+                    self.node_to_size[node] = int(size)
 
 
     def export_node_attributes(self, include_isolates):
@@ -215,28 +228,39 @@ class DBRetinaGraph:
 
 
     def pairwise_file_iterator(self, output_prefix):
-        with open(self.pairwise_file) as pairwise_tsv:
-            while True:
-                pos = pairwise_tsv.tell()
-                line = pairwise_tsv.readline()
-                if line.startswith('#'):
-                    continue
-                pairwise_tsv.seek(pos)
-                break
-            
-            next(pairwise_tsv)  # Skip header
-            for row in pairwise_tsv:
-                row = row.strip().split('\t')
-                similarity = float(row[self.metric_col])
+        metric_name_to_id = {
+            "containment": 0, "ochiai": 1, "jaccard": 2, "csi": 3,
+            "dice": 4, "odds_ratio": 5, "pvalue": 6,
+        }
+        dbrp_path = self.pairwise_file.replace(".tsv", ".dbrp")
+        if os.path.exists(dbrp_path) and self.metric in metric_name_to_id:
+            mid = metric_name_to_id[self.metric]
+            records = dbretina_internal.dbrp_filter_pairs(dbrp_path, mid, self.cutoff)
+            for rec in records:
+                yield rec['group_1_name'], rec['group_2_name'], float(rec[self.metric])
+        else:
+            with open(self.pairwise_file) as pairwise_tsv:
+                while True:
+                    pos = pairwise_tsv.tell()
+                    line = pairwise_tsv.readline()
+                    if line.startswith('#'):
+                        continue
+                    pairwise_tsv.seek(pos)
+                    break
 
-                # first skip similarity
-                if similarity < self.cutoff:
-                    continue
+                next(pairwise_tsv)  # Skip header
+                for row in pairwise_tsv:
+                    row = row.strip().split('\t')
+                    similarity = float(row[self.metric_col])
 
-                node_1 = row[2]
-                node_2 = row[3]
+                    # first skip similarity
+                    if similarity < self.cutoff:
+                        continue
 
-                yield node_1, node_2, similarity
+                    node_1 = row[2]
+                    node_2 = row[3]
+
+                    yield node_1, node_2, similarity
                 
 
     def build_graph(self):

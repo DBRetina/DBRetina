@@ -500,8 +500,10 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
         "containment": 5,
         "ochiai": 6,
         "jaccard": 7,
-        "odds_ratio": 8,
-        "pvalue": 9,
+        "csi": 8,
+        "dice": 9,
+        "odds_ratio": 10,
+        "pvalue": 11,
     }
 
     df_bipartite = pd.DataFrame(columns=["group_1", "group_2", "containment", "ochiai", "jaccard"])
@@ -512,26 +514,23 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
         df_bipartite["pvalue"] = None
 
     metadata = []
-    with open(pairwise_file, 'r') as pairwise_tsv:
-        while True:
-            pos = pairwise_tsv.tell()
-            line = pairwise_tsv.readline()
-            if not line.startswith('#'):
-                pairwise_tsv.seek(pos)
-                break
-            else:
-                metadata.append(line)
+    dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
+    metric_name_to_id = {
+        "containment": 0, "ochiai": 1, "jaccard": 2, "csi": 3,
+        "dice": 4, "odds_ratio": 5, "pvalue": 6,
+    }
+
+    if os.path.exists(dbrp_path):
+        LOGGER.INFO(f"found .dbrp file: {dbrp_path}, using binary pairwise reader")
+        mid = metric_name_to_id.get(metric, 0)
+        records = dbretina_internal.dbrp_filter_pairs(dbrp_path, mid, cutoff)
+        has_pvalue = len(records) > 0 and 'pvalue' in records[0]
+        if has_pvalue:
+            df_bipartite["pvalue"] = None
         metadata.append(f"#command: {get_command()}\n")
-
-        next(pairwise_tsv)
-        for row in pairwise_tsv:
-            row = row.strip().split('\t')
-
-            _source_1 = row[2]
-            _source_2 = row[3]
-            
-            if float(row[metric_to_col[metric]]) < cutoff:
-                continue
+        for rec in records:
+            _source_1 = rec['group_1_name']
+            _source_2 = rec['group_2_name']
 
             if _source_1 in group1_dict and _source_2 in group2_dict:
                 group1 = _source_1
@@ -542,25 +541,66 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
             else:
                 continue
 
-            if "pvalue" in df_bipartite.columns:
-                df_row = {
-                    "group_1": group1,
-                    "group_2": group2,
-                    "containment": float(row[metric_to_col["containment"]]),
-                    "ochiai": float(row[metric_to_col["ochiai"]]),
-                    "jaccard": float(row[metric_to_col["jaccard"]]),
-                    "pvalue": float(row[metric_to_col["pvalue"]]),
-                }
-            else:
-                df_row = {
-                    "group_1": group1,
-                    "group_2": group2,
-                    "containment": float(row[metric_to_col["containment"]]),
-                    "ochiai": float(row[metric_to_col["ochiai"]]),
-                    "jaccard": float(row[metric_to_col["jaccard"]]),
-                }
-
+            df_row = {
+                "group_1": group1,
+                "group_2": group2,
+                "containment": float(rec['containment']),
+                "ochiai": float(rec['ochiai']),
+                "jaccard": float(rec['jaccard']),
+            }
+            if has_pvalue:
+                df_row["pvalue"] = float(rec['pvalue'])
             df_rows.append(df_row)
+    else:
+        with open(pairwise_file, 'r') as pairwise_tsv:
+            while True:
+                pos = pairwise_tsv.tell()
+                line = pairwise_tsv.readline()
+                if not line.startswith('#'):
+                    pairwise_tsv.seek(pos)
+                    break
+                else:
+                    metadata.append(line)
+            metadata.append(f"#command: {get_command()}\n")
+
+            next(pairwise_tsv)
+            for row in pairwise_tsv:
+                row = row.strip().split('\t')
+
+                _source_1 = row[2]
+                _source_2 = row[3]
+
+                if float(row[metric_to_col[metric]]) < cutoff:
+                    continue
+
+                if _source_1 in group1_dict and _source_2 in group2_dict:
+                    group1 = _source_1
+                    group2 = _source_2
+                elif _source_1 in group2_dict and _source_2 in group1_dict:
+                    group1 = _source_2
+                    group2 = _source_1
+                else:
+                    continue
+
+                if "pvalue" in df_bipartite.columns:
+                    df_row = {
+                        "group_1": group1,
+                        "group_2": group2,
+                        "containment": float(row[metric_to_col["containment"]]),
+                        "ochiai": float(row[metric_to_col["ochiai"]]),
+                        "jaccard": float(row[metric_to_col["jaccard"]]),
+                        "pvalue": float(row[metric_to_col["pvalue"]]),
+                    }
+                else:
+                    df_row = {
+                        "group_1": group1,
+                        "group_2": group2,
+                        "containment": float(row[metric_to_col["containment"]]),
+                        "ochiai": float(row[metric_to_col["ochiai"]]),
+                        "jaccard": float(row[metric_to_col["jaccard"]]),
+                    }
+
+                df_rows.append(df_row)
 
     LOGGER.INFO(f"Writing the bipartite TSV file to {output_prefix}_bipartite_pairwise.tsv")
     df_bipartite = pd.DataFrame(df_rows)

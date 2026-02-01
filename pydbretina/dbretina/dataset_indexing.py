@@ -54,9 +54,18 @@ def gmts_to_association(ctx, gmt_paths, tsv_path):
                     if len(split_line) < 3:
                         raise ValueError(f"Line '{line.strip()}' in file '{gmt_path}' doesn't adhere to GMT format")
                     
-                    set_name = split_line[0]
+                    set_name = split_line[0].replace('"', '')
+                    if '|' in set_name:
+                        raise ValueError(
+                            f"Pipe character '|' is not allowed in group names: '{split_line[0]}'"
+                        )
                     genes = split_line[2:]
                     for gene in genes:
+                        gene = gene.replace('"', '')
+                        if '|' in gene:
+                            raise ValueError(
+                                f"Pipe character '|' is not allowed in gene names: '{gene}'"
+                            )
                         writer.write(f"{set_name}\t{gene}\n")
                         
 def fnv1a_64(s: str) -> str:
@@ -71,7 +80,7 @@ def fnv1a_64(s: str) -> str:
 
 
 # TODO: do the opposite of this (gmt to json, not gmt->asc->json)
-def multi_sketch(association_files, output_prefix):
+def build_gene_set_json(association_files, output_prefix):
     # default dictionary string to list of 
     gene_set_to_genes = defaultdict(list)
     for asc in association_files:
@@ -79,7 +88,13 @@ def multi_sketch(association_files, output_prefix):
             next(asc_reader)
             for line in asc_reader:
                 line = line.strip().lower().split('\t')
-                gene_set_to_genes[line[0]].append(line[1])
+                group = line[0].replace('"', '')
+                gene = line[1].replace('"', '')
+                if '|' in group or '|' in gene:
+                    raise ValueError(
+                        f"Pipe character '|' is not allowed in group or gene names: '{line[0]}\t{line[1]}'"
+                    )
+                gene_set_to_genes[group].append(gene)
                 
     # create dataframe
     association_df = pd.DataFrame(dict([(k,pd.Series(v)) for k,v in gene_set_to_genes.items()]))
@@ -160,17 +175,16 @@ def main(ctx, asc_file, output_prefix, gmt_file):
         asc_from_gmt = True
 
 
-    ctx.obj.INFO("Sketching in progress, please wait...")
+    ctx.obj.INFO("Indexing in progress, please wait...")
     # dbretina_internal.sketch_dbretina(asc_file, names_file, output_prefix)
     # sketch(asc_file, output_prefix)
-    multi_sketch(asc_file, output_prefix)
+    build_gene_set_json(asc_file, output_prefix)
     
     if asc_from_gmt:
         os.remove(asc_file[0])
 
     json_file = f"{output_prefix}_hashes.json"
-    ctx.obj.SUCCESS("File(s) has been sketched.")
+    ctx.obj.SUCCESS("File(s) have been indexed.")
     ctx.obj.INFO("Indexing in progress, please wait...")
     dbretina_internal.dbretina_indexing(json_file, output_prefix)
-    append_line_to_file(f"command:{get_command()}", f"{output_prefix}.extra")
-    ctx.obj.SUCCESS("DONE!")
+    ctx.obj.SUCCESS(f"Index written to {output_prefix}.dbri")

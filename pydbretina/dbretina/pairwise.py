@@ -24,10 +24,13 @@ def plot_histogram(json_path, outout_file_path, use_log = False):
     fig, ax = plt.subplots(figsize=(14, 8))
 
     # Colors for each metric
+    palette = sns.color_palette("husl", 7)
     colors = {
-        "ochiai": sns.color_palette("husl", 5)[1],
-        "containment": sns.color_palette("husl", 5)[2],
-        "jaccard": sns.color_palette("husl", 5)[3],
+        "ochiai": palette[0],
+        "containment": palette[1],
+        "jaccard": palette[2],
+        "csi": palette[3],
+        "dice": palette[4],
     }
 
     # Number of metrics and similarity ranges
@@ -69,15 +72,7 @@ def plot_histogram(json_path, outout_file_path, use_log = False):
     plt.savefig(outout_file_path, dpi=600)
 
 def inject_index_command(index_prefix):
-    extra_file = f"{index_prefix}.extra"
-    if not os.path.exists(extra_file):
-        return ""
-    with open(extra_file, "r") as f:
-        for line in f:
-            line = line.strip().split(":")
-            if line[0] == "command":
-                return line[1]
-        return ""
+    return ""
 
 
 def get_command():
@@ -108,10 +103,18 @@ def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pva
         f"Constructing the pairwise matrix using {user_threads} cores.")
     dbretina_internal.pairwise(index_prefix, user_threads, similarity_type, cutoff, commands, calculate_pvalue)
     stats_json_path = f"{index_prefix}_DBRetina_pairwise_stats.json"
+    dbrp_path = f"{index_prefix}_DBRetina_pairwise.dbrp"
     linear_histo = f"{index_prefix}_DBRetina_similarity_metrics_plot_linear.png"
     log_histo = f"{index_prefix}_DBRetina_similarity_metrics_plot_log.png"
     ctx.obj.INFO(f"Plotting similarity metrics distribution to {linear_histo} and {log_histo}")
-    
+
+    if os.path.exists(dbrp_path) and not os.path.exists(stats_json_path):
+        # Read statistics from .dbrp binary file
+        stats_json_str = dbretina_internal.dbrp_load_statistics(dbrp_path)
+        stats_data = json.loads(stats_json_str)
+        with open(stats_json_path, 'w') as f:
+            json.dump(stats_data, f, indent=2)
+
     plot_histogram(stats_json_path, linear_histo, use_log=False)
     plot_histogram(stats_json_path, log_histo, use_log=True)
 

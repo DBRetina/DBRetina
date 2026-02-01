@@ -8,7 +8,7 @@ version = "2.2.11"
 description = "DBRetina Python Package"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Development Status :: 3 - Alpha",
@@ -43,6 +43,7 @@ dependencies = [
 
 [project.scripts]
 DBRetina = "dbretina:cli"
+dbretina = "dbretina:cli"
 
 [project.urls]
 "Bug Reports" = "https://github.com/DBRetina/DBRetina/issues"

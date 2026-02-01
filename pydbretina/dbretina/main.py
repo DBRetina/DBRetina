@@ -13,6 +13,8 @@ from dbretina.genenet import main as interactome_main
 from dbretina.modularity_scan import main as modularity_main
 from dbretina.setcov import main as setcov_main
 from dbretina.bipartite_graph import main as grph_main
+from dbretina.append import main as append_main
+from dbretina.merge import main as merge_main
 
 cli.add_command(index_datasets, name="index")
 cli.add_command(pairwise_main, name="pairwise")
@@ -26,6 +28,8 @@ cli.add_command(interactome_main, name="interactome")
 cli.add_command(modularity_main, name="modularity")
 cli.add_command(setcov_main, name="setcov")
 cli.add_command(grph_main, name="graph")
+cli.add_command(append_main, name="append")
+cli.add_command(merge_main, name="merge")
 
 if __name__ == '__main__':
     cli()

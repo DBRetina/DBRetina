@@ -55,15 +55,7 @@ def path_to_absolute_path(ctx, param, value):
 
 
 def inject_index_command(index_prefix):
-    extra_file = f"{index_prefix}.extra"
-    if not os.path.exists(extra_file):
-        return ""
-    with open(extra_file, "r") as f:
-        for line in f:
-            line = line.strip().split(":")
-            if line[0] == "command":
-                return line[1]
-        return ""
+    return ""
 
 
 def get_command():
@@ -111,10 +103,15 @@ Detailed description:
     phmap_file = f"{inverted_index_prefix}.phmap"
     if not os.path.exists(phmap_file):
         # inverted index not found
-        raw_json_file = f"{index_prefix}_raw.json"
-        # load json in a dictionary:
-        with open(raw_json_file, "r") as f:
-            supergroups_to_features = json.loads(f.read())["data"]
+        dbri_path = f"{index_prefix}.dbri"
+        if os.path.exists(dbri_path):
+            import _dbretina_internal as dbretina_internal
+            raw_json_str = dbretina_internal.dbri_load_raw_gene_sets(dbri_path)
+            supergroups_to_features = json.loads(raw_json_str)["data"]
+        else:
+            raw_json_file = f"{index_prefix}_raw.json"
+            with open(raw_json_file, "r") as f:
+                supergroups_to_features = json.loads(f.read())["data"]
 
         inverted_supergroups_to_features = invert_json(supergroups_to_features)
 
