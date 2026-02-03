@@ -31,14 +31,22 @@ dependencies = [
     "leidenalg>=0.10.0",
     "igraph>=0.10.5",
     "plotly>=5.15.0",
-    "dash_bio>=1.0.2",
     "pycirclize>=0.4.0",
     "networkx>=3.1",
-    "dash>=1.19.0",
-    "visdcc>=0.0.40",
-    "dash_core_components>=1.15.0",
-    "dash_html_components>=1.1.2",
-    "dash_bootstrap_components>1.4.0",
+]
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "kuzu>=0.4.0",
+    "duckdb>=0.10.0",
+]
+neo4j = [
+    "neo4j>=5.0.0",
+]
+all = [
+    "DBRetina[server,neo4j]",
 ]
 
 [project.scripts]
