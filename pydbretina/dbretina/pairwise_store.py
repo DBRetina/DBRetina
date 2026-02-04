@@ -248,6 +248,23 @@ class PairwiseStore:
         gene_index = self._get_gene_index()
         return sorted(gene_index.get(feature_name.lower(), set()))
 
+    def get_group_genes(self, group_name: str) -> set[str]:
+        """Return all genes/features associated with a specific group.
+
+        Requires ``dbri_path`` to have been set at construction time.
+
+        Args:
+            group_name: Name of the group (case-insensitive).
+
+        Returns:
+            Set of gene/feature names belonging to this group.
+        """
+        gene_sets = self._load_gene_sets()
+        key = group_name.lower()
+        if key not in gene_sets:
+            raise KeyError(f"Group not found in gene sets: {group_name}")
+        return set(gene_sets[key])
+
     def iterate_all(
         self, columns: Optional[list[str]] = None
     ) -> pa.RecordBatchReader:

@@ -1,9 +1,12 @@
 """FastAPI REST server for DBRetina pairwise data + graph dashboard."""
 
+import asyncio
 import pathlib
 import threading
+import time
 from collections import OrderedDict
-from typing import Optional
+from functools import wraps
+from typing import Any, Callable, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -11,6 +14,21 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .pairwise_store import PairwiseStore
+from .api_errors import (
+    DBRetinaAPIError,
+    DataNotFoundError,
+    ValidationError,
+    QueryTimeoutError,
+    DataTooLargeError,
+    QuerySyntaxError,
+    UnsafeQueryError,
+    FeatureNotAvailableError,
+    AlgorithmError,
+    validate_sql_safety,
+    validate_cypher_safety,
+    validate_metric as _validate_metric,
+    validate_cutoff as _validate_cutoff,
+)
 
 
 # ── Graph cache ─────────────────────────────────────────────────
@@ -93,6 +111,31 @@ def create_app(
         allow_headers=["*"],
     )
 
+    # ── Exception handlers ────────────────────────────────────────
+
+    @app.exception_handler(DBRetinaAPIError)
+    async def dbretina_error_handler(request: Request, exc: DBRetinaAPIError):
+        """Handle all custom DBRetina exceptions."""
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.to_dict(),
+        )
+
+    @app.exception_handler(Exception)
+    async def general_error_handler(request: Request, exc: Exception):
+        """Handle unexpected exceptions with a generic error response."""
+        # Log the error for debugging (in production, use proper logging)
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": True,
+                "error_code": "INTERNAL_ERROR",
+                "detail": "An unexpected error occurred. Please try again.",
+            },
+        )
+
     # ── Auth middleware ──────────────────────────────────────────
 
     if api_key:
@@ -109,18 +152,81 @@ def create_app(
     # ── Helpers ──────────────────────────────────────────────────
 
     VALID_METRICS = ("containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio", "pvalue")
+    DEFAULT_TIMEOUT = 30.0  # seconds
+    MAX_PAIRS_RESPONSE = 100000
+    MAX_GRAPH_NODES = 50000
+
+    # Metric-specific cutoff ranges
+    METRIC_CUTOFF_RANGES = {
+        "containment": (0.0, 100.0),
+        "ochiai": (0.0, 100.0),
+        "jaccard": (0.0, 100.0),
+        "csi": (0.0, 100.0),
+        "dice": (0.0, 100.0),
+        "odds_ratio": (0.0, float("inf")),  # odds ratio can be very large
+        "pvalue": (0.0, 1.0),
+    }
 
     def validate_metric(metric: str):
-        if metric not in VALID_METRICS:
-            raise HTTPException(400, f"Unknown metric '{metric}'. Valid: {VALID_METRICS}")
+        """Validate metric name using structured error."""
+        _validate_metric(metric, VALID_METRICS)
+
+    def validate_cutoff(cutoff: float, metric: str = "ochiai"):
+        """Validate cutoff value based on metric type."""
+        min_val, max_val = METRIC_CUTOFF_RANGES.get(metric, (0.0, 100.0))
+        # For infinity max, just check minimum
+        if max_val == float("inf"):
+            if cutoff < min_val:
+                raise ValidationError(
+                    detail=f"Cutoff for {metric} must be >= {min_val}",
+                    field="cutoff",
+                    value=cutoff,
+                )
+        else:
+            _validate_cutoff(cutoff, min_val, max_val)
+
+    def check_data_size(size: int, max_size: int, resource: str = "data"):
+        """Check if requested data size is within limits."""
+        if size > max_size:
+            raise DataTooLargeError(
+                detail=f"Requested {resource} ({size:,} items) exceeds limit ({max_size:,})",
+                requested_size=size,
+                max_size=max_size,
+                suggestion=f"Use pagination or filters to reduce result size",
+            )
 
     def get_graph(metric: Optional[str] = None, cutoff: Optional[float] = None):
         m = metric or app.state.default_metric
         c = cutoff if cutoff is not None else app.state.default_cutoff
         validate_metric(m)
+        validate_cutoff(c, m)
         return app.state.graph_cache.get(m, c), m, c
 
     # ── Existing endpoints ──────────────────────────────────────
+
+    # ── Health & Info endpoints ────────────────────────────────
+
+    @app.get("/api/v1/health")
+    def health_check():
+        """Health check endpoint for monitoring."""
+        try:
+            # Quick connectivity check
+            _ = store.num_pairs
+            status = "healthy"
+            details = {
+                "store": "connected",
+                "cache_size": len(app.state.graph_cache._cache),
+            }
+        except Exception as e:
+            status = "unhealthy"
+            details = {"error": str(e)}
+
+        return {
+            "status": status,
+            "timestamp": time.time(),
+            "version": "2.0",
+            "details": details,
+        }
 
     @app.get("/api/v1/info")
     def get_info():
@@ -160,6 +266,7 @@ def create_app(
     ):
         """Query pairs filtered by metric and cutoff, with pagination."""
         validate_metric(metric)
+        validate_cutoff(cutoff, metric)
         df = store.to_pandas(metric=metric, cutoff=cutoff, limit=offset + limit)
         if offset > 0:
             df = df.iloc[offset:]
@@ -187,7 +294,11 @@ def create_app(
         try:
             reader = store.query_group(group_name, metric=metric, cutoff=cutoff)
         except KeyError:
-            raise HTTPException(404, f"Group not found: {group_name}")
+            raise DataNotFoundError(
+                detail=f"Group not found: {group_name}",
+                resource_type="group",
+                resource_id=group_name,
+            )
 
         rows = []
         names = store.get_names_map()
@@ -205,6 +316,31 @@ def create_app(
 
         return {"group": group_name, "count": len(rows), "pairs": rows}
 
+    @app.get("/api/v1/groups/{group_name}/genes")
+    def get_group_genes(
+        group_name: str,
+        limit: int = Query(50, ge=1, le=500),
+    ):
+        """Get all genes/features associated with a specific group."""
+        if not store._dbri_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Gene data not available. Server was started without -i/--index-prefix.",
+            )
+        try:
+            genes = store.get_group_genes(group_name)
+            return {
+                "group": group_name,
+                "count": len(genes),
+                "genes": sorted(genes)[:limit],
+            }
+        except KeyError:
+            raise DataNotFoundError(
+                detail=f"Group not found: {group_name}",
+                resource_type="group",
+                resource_id=group_name,
+            )
+
     @app.get("/api/v1/statistics")
     def get_statistics():
         """Metric distribution statistics."""
@@ -219,19 +355,139 @@ def create_app(
     class SQLQuery(BaseModel):
         query: str
 
+    # ── Advanced Filtering ─────────────────────────────────────────
+
+    class FilterCondition(BaseModel):
+        """A single filter condition."""
+        metric: str
+        operator: str  # ">=", "<=", ">", "<", "==", "!=", "between"
+        value: float | list[float]  # single value or [min, max] for "between"
+
+    class FilterRequest(BaseModel):
+        """Multi-metric filter request."""
+        filters: list[FilterCondition]
+        logic: str = "AND"  # "AND" or "OR"
+        limit: int = 5000
+        offset: int = 0
+
+    @app.post("/api/v1/pairs/filter")
+    def filter_pairs(body: FilterRequest):
+        """Filter pairs using multiple metric conditions.
+
+        Allows combining multiple filter conditions with AND/OR logic.
+        This is more powerful than the simple GET /pairs endpoint which
+        only supports a single metric/cutoff filter.
+
+        Example:
+            {
+                "filters": [
+                    {"metric": "ochiai", "operator": ">=", "value": 50},
+                    {"metric": "pvalue", "operator": "<=", "value": 0.05}
+                ],
+                "logic": "AND",
+                "limit": 1000
+            }
+        """
+        if not body.filters:
+            raise ValidationError(detail="At least one filter condition is required")
+
+        if body.logic not in ("AND", "OR"):
+            raise ValidationError(
+                detail="Logic must be 'AND' or 'OR'",
+                field="logic",
+                value=body.logic,
+                allowed_values=["AND", "OR"],
+            )
+
+        # Validate all metrics and operators
+        valid_operators = {">=", "<=", ">", "<", "==", "!=", "between"}
+        for filt in body.filters:
+            validate_metric(filt.metric)
+            if filt.operator not in valid_operators:
+                raise ValidationError(
+                    detail=f"Invalid operator '{filt.operator}'",
+                    field="operator",
+                    value=filt.operator,
+                    allowed_values=list(valid_operators),
+                )
+            if filt.operator == "between":
+                if not isinstance(filt.value, list) or len(filt.value) != 2:
+                    raise ValidationError(
+                        detail="'between' operator requires [min, max] value",
+                        field="value",
+                    )
+
+        # Build SQL WHERE clause
+        conditions = []
+        for filt in body.filters:
+            if filt.operator == "between":
+                min_val, max_val = filt.value
+                conditions.append(f"{filt.metric} >= {min_val} AND {filt.metric} <= {max_val}")
+            else:
+                conditions.append(f"{filt.metric} {filt.operator} {filt.value}")
+
+        connector = f" {body.logic} "
+        where_clause = connector.join(f"({c})" for c in conditions)
+
+        # Execute query
+        query = f"SELECT * FROM pairs WHERE {where_clause} LIMIT {body.limit} OFFSET {body.offset}"
+        try:
+            result = store.sql(query)
+            df = result.fetchdf()
+        except Exception as e:
+            raise QuerySyntaxError(
+                detail=f"Filter query failed: {e}",
+                query_type="sql",
+            )
+
+        # Add names
+        names = store.get_names_map()
+        if "group_1_id" in df.columns:
+            df["group_1_name"] = df["group_1_id"].map(names)
+        if "group_2_id" in df.columns:
+            df["group_2_name"] = df["group_2_id"].map(names)
+
+        return {
+            "count": len(df),
+            "filters": [f.model_dump() for f in body.filters],
+            "logic": body.logic,
+            "limit": body.limit,
+            "offset": body.offset,
+            "pairs": df.to_dict(orient="records"),
+        }
+
     @app.post("/api/v1/sql")
     def execute_sql(body: SQLQuery):
-        """Execute SQL against the pairs view."""
+        """Execute SQL against the pairs view (read-only)."""
+        # Validate query safety
+        validate_sql_safety(body.query)
+
         try:
             result = store.sql(body.query)
             df = result.fetchdf()
+
+            # Check result size
+            if len(df) > MAX_PAIRS_RESPONSE:
+                raise DataTooLargeError(
+                    detail=f"Query returned too many rows ({len(df):,})",
+                    requested_size=len(df),
+                    max_size=MAX_PAIRS_RESPONSE,
+                    suggestion="Add LIMIT clause to your query",
+                )
+
             return {
                 "columns": list(df.columns),
                 "row_count": len(df),
                 "rows": df.to_dict(orient="records"),
             }
+        except (DataTooLargeError, UnsafeQueryError):
+            raise
         except Exception as e:
-            raise HTTPException(400, f"SQL error: {e}")
+            raise QuerySyntaxError(
+                detail=f"SQL error: {e}",
+                query_type="sql",
+                query=body.query,
+            )
 
     @app.get("/api/v1/top")
     def top_pairs(
@@ -262,11 +518,19 @@ def create_app(
     ):
         """Find groups containing a gene/feature."""
         if not dbri_path:
-            raise HTTPException(400, "Gene index not available (start server with -i flag)")
+            raise FeatureNotAvailableError(
+                detail="Gene index not available",
+                feature="gene_search",
+                requirement="Start server with -i flag to specify index file",
+            )
         try:
             groups = store.search_by_feature(q)
         except Exception as e:
-            raise HTTPException(400, str(e))
+            raise DataNotFoundError(
+                detail=f"Feature search failed: {e}",
+                resource_type="feature",
+                resource_id=q,
+            )
         return {"feature": q, "count": len(groups[:limit]), "groups": groups[:limit]}
 
     @app.get("/api/v1/shared-features")
@@ -276,17 +540,300 @@ def create_app(
     ):
         """Get shared genes/features between two groups."""
         if not dbri_path:
-            raise HTTPException(400, "Gene index not available (start server with -i flag)")
+            raise FeatureNotAvailableError(
+                detail="Gene index not available",
+                feature="shared_features",
+                requirement="Start server with -i flag to specify index file",
+            )
         try:
             features = store.shared_features(group_a, group_b)
+        except KeyError as e:
+            raise DataNotFoundError(
+                detail=f"Group not found: {e}",
+                resource_type="group",
+            )
         except Exception as e:
-            raise HTTPException(400, str(e))
+            raise DBRetinaAPIError(detail=f"Failed to get shared features: {e}")
         return {
             "group_a": group_a,
             "group_b": group_b,
             "count": len(features),
             "features": sorted(features),
         }
+
+    # ── Gene Importance & Analysis ─────────────────────────────────
+
+    class HubGenesRequest(BaseModel):
+        """Request for hub genes analysis."""
+        group_name: str
+        method: str = "hypergraph"  # hypergraph, edge_weighted, projection
+        hops: int = 2
+        top_n: int = 30
+        metric: str = "ochiai"
+        cutoff: float = 20.0
+
+    class ExplainPairRequest(BaseModel):
+        """Request to explain gene connection between two groups."""
+        group_a: str
+        group_b: str
+        method: str = "hypergraph"  # hypergraph, edge_weighted, projection
+
+    class ClusterGenesRequest(BaseModel):
+        """Request for cluster gene analysis."""
+        node_names: list[str]
+        method: str = "hypergraph"
+        top_n: int = 50
+
+    def _get_gene_importance():
+        """Get or create GeneImportance instance."""
+        if not dbri_path:
+            raise FeatureNotAvailableError(
+                detail="Gene index not available",
+                feature="gene_importance",
+                requirement="Start server with -i flag to specify index file",
+            )
+        from .gene_importance import GeneImportance
+        return GeneImportance(store)
+
+    @app.post("/api/v1/genes/hub-genes")
+    def get_hub_genes(body: HubGenesRequest):
+        """Find the most important genes for a disease/group.
+
+        Uses three scoring methods:
+        - **hypergraph**: TF-IDF style (local enrichment × inverse global frequency)
+        - **edge_weighted**: Sum of edge weights per gene
+        - **projection**: PageRank on gene co-occurrence graph
+        """
+        gi = _get_gene_importance()
+        try:
+            df = gi.hub_genes(
+                group_name=body.group_name,
+                hops=body.hops,
+                method=body.method,
+                top_n=body.top_n,
+            )
+            genes = df.to_dict(orient="records")
+            return {
+                "group": body.group_name,
+                "method": body.method,
+                "hops": body.hops,
+                "genes": genes,
+            }
+        except KeyError as e:
+            raise DataNotFoundError(
+                detail=f"Group not found: {e}",
+                resource_type="group",
+                resource_id=body.group_name,
+            )
+        except Exception as e:
+            raise DBRetinaAPIError(detail=f"Hub genes analysis failed: {e}")
+
+    @app.post("/api/v1/genes/explain-pair")
+    def explain_pair(body: ExplainPairRequest):
+        """Rank shared genes between two diseases by importance.
+
+        Returns genes sorted by their contribution to the similarity
+        between the two groups, with global frequency and specificity info.
+        """
+        gi = _get_gene_importance()
+        try:
+            df = gi.explain_pair(
+                group_a=body.group_a,
+                group_b=body.group_b,
+                method=body.method,
+            )
+            genes = df.to_dict(orient="records")
+            return {
+                "group_a": body.group_a,
+                "group_b": body.group_b,
+                "method": body.method,
+                "gene_count": len(genes),
+                "genes": genes,
+            }
+        except KeyError as e:
+            raise DataNotFoundError(
+                detail=f"Group not found: {e}",
+                resource_type="group",
+            )
+        except Exception as e:
+            raise DBRetinaAPIError(detail=f"Explain pair failed: {e}")
+
+    @app.get("/api/v1/genes/{gene_name}/statistics")
+    def get_gene_statistics(gene_name: str):
+        """Get prevalence statistics for a specific gene.
+
+        Returns how many groups contain this gene and what percentage
+        of the total groups that represents.
+        """
+        if not dbri_path:
+            raise FeatureNotAvailableError(
+                detail="Gene index not available",
+                feature="gene_statistics",
+                requirement="Start server with -i flag to specify index file",
+            )
+        try:
+            gene_index = store._get_gene_index()
+            groups_with_gene = gene_index.get(gene_name, set())
+
+            if not groups_with_gene:
+                # Try case-insensitive search
+                gene_lower = gene_name.lower()
+                for g, group_set in gene_index.items():
+                    if g.lower() == gene_lower:
+                        groups_with_gene = group_set
+                        gene_name = g  # Use the actual case
+                        break
+
+            if not groups_with_gene:
+                raise DataNotFoundError(
+                    detail=f"Gene not found: {gene_name}",
+                    resource_type="gene",
+                    resource_id=gene_name,
+                )
+
+            total_groups = store.num_groups
+            group_count = len(groups_with_gene)
+            prevalence = (group_count / total_groups * 100) if total_groups > 0 else 0
+
+            return {
+                "gene": gene_name,
+                "group_count": group_count,
+                "total_groups": total_groups,
+                "prevalence_percent": round(prevalence, 2),
+            }
+        except DataNotFoundError:
+            raise
+        except Exception as e:
+            raise DBRetinaAPIError(detail=f"Gene statistics failed: {e}")
+
+    @app.get("/api/v1/genes/{gene_name}/groups")
+    def get_gene_groups(
+        gene_name: str,
+        limit: int = Query(50, ge=1, le=500),
+    ):
+        """Get all groups containing a specific gene.
+
+        Returns groups sorted by their degree (connectivity) in the
+        current graph, helping identify which diseases are most
+        connected that involve this gene.
+        """
+        if not dbri_path:
+            raise FeatureNotAvailableError(
+                detail="Gene index not available",
+                feature="gene_groups",
+                requirement="Start server with -i flag to specify index file",
+            )
+        try:
+            gene_index = store._get_gene_index()
+            groups_with_gene = gene_index.get(gene_name, set())
+
+            if not groups_with_gene:
+                # Try case-insensitive search
+                gene_lower = gene_name.lower()
+                for g, group_set in gene_index.items():
+                    if g.lower() == gene_lower:
+                        groups_with_gene = group_set
+                        gene_name = g
+                        break
+
+            if not groups_with_gene:
+                raise DataNotFoundError(
+                    detail=f"Gene not found: {gene_name}",
+                    resource_type="gene",
+                    resource_id=gene_name,
+                )
+
+            # Get group details
+            names_map = store.get_names_map()
+            groups = []
+            for group_name_lower in groups_with_gene:
+                # Find the group ID
+                for gid, name in names_map.items():
+                    if name.lower() == group_name_lower.lower():
+                        groups.append({
+                            "id": gid,
+                            "name": name,
+                        })
+                        break
+
+            # Sort by name for now (could add degree if graph is available)
+            groups.sort(key=lambda x: x["name"])
+
+            return {
+                "gene": gene_name,
+                "group_count": len(groups),
+                "groups": groups[:limit],
+            }
+        except DataNotFoundError:
+            raise
+        except Exception as e:
+            raise DBRetinaAPIError(detail=f"Gene groups failed: {e}")
+
+    @app.post("/api/v1/genes/cluster-analysis")
+    def analyze_cluster_genes(body: ClusterGenesRequest):
+        """Analyze which genes define a cluster of diseases.
+
+        Given a list of disease/group names, finds genes that are
+        enriched within this cluster compared to the global dataset.
+        """
+        if not dbri_path:
+            raise FeatureNotAvailableError(
+                detail="Gene index not available",
+                feature="cluster_analysis",
+                requirement="Start server with -i flag to specify index file",
+            )
+        try:
+            gene_sets = store._load_gene_sets()
+            gene_index = store._get_gene_index()
+            total_groups = store.num_groups
+
+            # Collect genes from cluster
+            cluster_genes: dict[str, int] = {}
+            valid_nodes = 0
+            for node_name in body.node_names:
+                node_key = node_name.lower()
+                if node_key in gene_sets:
+                    valid_nodes += 1
+                    for gene in gene_sets[node_key]:
+                        cluster_genes[gene] = cluster_genes.get(gene, 0) + 1
+
+            if valid_nodes == 0:
+                raise DataNotFoundError(
+                    detail="No valid groups found in cluster",
+                    resource_type="cluster",
+                )
+
+            # Score genes by enrichment
+            import math
+            scored_genes = []
+            for gene, in_cluster_count in cluster_genes.items():
+                global_count = len(gene_index.get(gene, set()))
+                if global_count > 0:
+                    # TF-IDF style scoring
+                    tf = in_cluster_count / valid_nodes
+                    idf = math.log(total_groups / global_count) if global_count < total_groups else 0
+                    score = tf * idf
+                    scored_genes.append({
+                        "gene": gene,
+                        "score": round(score, 6),
+                        "in_cluster_count": in_cluster_count,
+                        "cluster_size": valid_nodes,
+                        "global_count": global_count,
+                    })
+
+            # Sort by score descending
+            scored_genes.sort(key=lambda x: -x["score"])
+
+            return {
+                "cluster_size": valid_nodes,
+                "total_genes": len(scored_genes),
+                "method": body.method,
+                "genes": scored_genes[:body.top_n],
+            }
+        except DataNotFoundError:
+            raise
+        except Exception as e:
+            raise DBRetinaAPIError(detail=f"Cluster analysis failed: {e}")
 
     # ── New: Graph endpoints ────────────────────────────────────
 
@@ -402,11 +949,66 @@ def create_app(
         try:
             sub = graph.subgraph_around(group, hops=hops)
         except KeyError:
-            raise HTTPException(404, f"Group not found: {group}")
+            raise DataNotFoundError(
+                detail=f"Group not found: {group}",
+                resource_type="group",
+                resource_id=group,
+            )
         try:
             return _graph_data_response(sub, m, limit=10000)
         finally:
             sub.close()
+
+    @app.get("/api/v1/graph/shortest-path")
+    def get_shortest_path(
+        source: str = Query(..., description="Source group name"),
+        target: str = Query(..., description="Target group name"),
+        metric: Optional[str] = Query(None),
+        cutoff: Optional[float] = Query(None),
+    ):
+        """Find the shortest path between two groups in the graph.
+
+        Returns the path as a list of group names, along with path length
+        and connectivity status. If no path exists, returns connected=False.
+        """
+        graph, m, c = get_graph(metric, cutoff)
+        try:
+            result = graph.shortest_path_full(source, target)
+
+            # If connected and we have gene data, get shared genes along path
+            if result.get("connected") and dbri_path and len(result.get("path_nodes", [])) >= 2:
+                path_nodes = result["path_nodes"]
+                shared_genes_along_path = []
+
+                # Get shared genes between consecutive pairs in path
+                for i in range(len(path_nodes) - 1):
+                    try:
+                        shared = store.shared_features(path_nodes[i], path_nodes[i + 1])
+                        shared_genes_along_path.append({
+                            "from": path_nodes[i],
+                            "to": path_nodes[i + 1],
+                            "shared_count": len(shared),
+                            "genes": sorted(shared)[:20],  # Limit to top 20
+                        })
+                    except Exception:
+                        shared_genes_along_path.append({
+                            "from": path_nodes[i],
+                            "to": path_nodes[i + 1],
+                            "shared_count": 0,
+                            "genes": [],
+                        })
+
+                result["shared_genes_along_path"] = shared_genes_along_path
+
+            return result
+
+        except KeyError as e:
+            raise DataNotFoundError(
+                detail=f"Group not found: {e}",
+                resource_type="group",
+            )
+        except Exception as e:
+            raise DBRetinaAPIError(detail=f"Path finding failed: {e}")
 
     @app.get("/api/v1/graph/communities")
     def get_communities(
@@ -414,7 +1016,10 @@ def create_app(
         cutoff: Optional[float] = Query(None),
         method: str = Query("leiden"),
     ):
-        """Get community assignments for all nodes."""
+        """Get community assignments for all nodes (legacy endpoint).
+
+        For more control over clustering parameters, use POST /api/v1/graph/cluster.
+        """
         graph, m, c = get_graph(metric, cutoff)
         communities = graph.community_detection(method=method)
         from collections import Counter
@@ -423,6 +1028,178 @@ def create_app(
             "communities": communities,
             "num_communities": len(sizes),
             "sizes": sizes,
+        }
+
+    # ── Advanced Clustering Endpoints ──────────────────────────────
+
+    @app.get("/api/v1/algorithms/clustering")
+    def list_clustering_algorithms():
+        """List all available clustering algorithms with their parameters.
+
+        Returns information about each algorithm including:
+        - name: Algorithm identifier for API calls
+        - display_name: Human-readable name
+        - description: Brief explanation of the algorithm
+        - parameters: List of configurable parameters with types and defaults
+        """
+        from .algorithms import list_algorithms
+        return {"algorithms": list_algorithms()}
+
+    class ClusteringRequest(BaseModel):
+        """Request body for clustering endpoint."""
+        algorithm: str = "leiden"
+        parameters: dict = {}
+        metric: Optional[str] = None
+        cutoff: Optional[float] = None
+
+    @app.post("/api/v1/graph/cluster")
+    def run_clustering_endpoint(body: ClusteringRequest):
+        """Run a clustering algorithm with custom parameters.
+
+        Provides full control over clustering algorithm selection and parameters.
+        Use GET /api/v1/algorithms/clustering to see available algorithms and
+        their configurable parameters.
+
+        Returns:
+        - membership: dict mapping group names to cluster IDs
+        - num_clusters: number of clusters found
+        - cluster_sizes: dict mapping cluster ID to number of members
+        - modularity: quality score (higher is better)
+        - algorithm: name of algorithm used
+        - parameters: parameters used for clustering
+        """
+        from .algorithms import run_clustering, get_algorithm, ALGORITHMS
+
+        # Validate algorithm name
+        if body.algorithm not in ALGORITHMS:
+            valid = list(ALGORITHMS.keys())
+            raise ValidationError(
+                detail=f"Unknown algorithm '{body.algorithm}'",
+                field="algorithm",
+                value=body.algorithm,
+                allowed_values=valid,
+            )
+
+        graph, m, c = get_graph(body.metric, body.cutoff)
+
+        # Build igraph from PairwiseGraph
+        import igraph as ig
+
+        edges_df = graph.cypher(
+            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
+            f'RETURN a.id AS src, b.id AS dst, r.{m} AS weight'
+        )
+        names_map = graph._names_map
+        all_ids = sorted(names_map.keys())
+        id_idx = {gid: i for i, gid in enumerate(all_ids)}
+
+        g = ig.Graph(n=len(all_ids), directed=False)
+        edge_list = []
+        weights = []
+        for _, row in edges_df.iterrows():
+            src, dst = int(row["src"]), int(row["dst"])
+            if src in id_idx and dst in id_idx:
+                edge_list.append((id_idx[src], id_idx[dst]))
+                weights.append(float(row["weight"]))
+
+        if edge_list:
+            g.add_edges(edge_list)
+            g.es["weight"] = weights
+
+        try:
+            result = run_clustering(
+                g,
+                algorithm=body.algorithm,
+                weights=weights if weights else None,
+                **body.parameters,
+            )
+        except Exception as e:
+            raise AlgorithmError(
+                detail=f"Clustering failed: {e}",
+                algorithm=body.algorithm,
+                reason=str(e),
+            )
+
+        # Convert membership from node indices to group names
+        membership_by_name = {}
+        for gid in all_ids:
+            idx = id_idx[gid]
+            if idx in result.membership:
+                membership_by_name[names_map[gid]] = result.membership[idx]
+
+        return {
+            "membership": membership_by_name,
+            "num_clusters": result.num_clusters,
+            "cluster_sizes": result.cluster_sizes,
+            "modularity": result.modularity,
+            "algorithm": result.algorithm,
+            "parameters": result.parameters,
+            "metric": m,
+            "cutoff": c,
+        }
+
+    @app.get("/api/v1/graph/components")
+    def get_connected_components(
+        metric: Optional[str] = Query(None),
+        cutoff: Optional[float] = Query(None),
+        min_size: int = Query(1, ge=1, description="Minimum component size"),
+    ):
+        """Get connected components of the graph.
+
+        Returns groups organized by their connected component. Useful for
+        identifying isolated subgraphs that have no connections to the rest
+        of the network.
+        """
+        from .algorithms import run_clustering
+
+        graph, m, c = get_graph(metric, cutoff)
+
+        # Build igraph from PairwiseGraph
+        import igraph as ig
+
+        edges_df = graph.cypher(
+            'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
+            'RETURN a.id AS src, b.id AS dst'
+        )
+        names_map = graph._names_map
+        all_ids = sorted(names_map.keys())
+        id_idx = {gid: i for i, gid in enumerate(all_ids)}
+
+        g = ig.Graph(n=len(all_ids), directed=False)
+        edge_list = []
+        for _, row in edges_df.iterrows():
+            src, dst = int(row["src"]), int(row["dst"])
+            if src in id_idx and dst in id_idx:
+                edge_list.append((id_idx[src], id_idx[dst]))
+
+        if edge_list:
+            g.add_edges(edge_list)
+
+        result = run_clustering(
+            g,
+            algorithm="connected_components",
+            min_size=min_size,
+        )
+
+        # Convert membership from node indices to group names
+        membership_by_name = {}
+        for gid in all_ids:
+            idx = id_idx[gid]
+            if idx in result.membership and result.membership[idx] != -1:
+                membership_by_name[names_map[gid]] = result.membership[idx]
+
+        # Group names by component
+        components: dict[int, list[str]] = {}
+        for name, comp_id in membership_by_name.items():
+            if comp_id not in components:
+                components[comp_id] = []
+            components[comp_id].append(name)
+
+        return {
+            "num_components": len(components),
+            "components": components,
+            "membership": membership_by_name,
+            "min_size_filter": min_size,
         }
 
     @app.get("/api/v1/graph/layout")
@@ -484,17 +1261,233 @@ def create_app(
 
     @app.post("/api/v1/cypher")
     def execute_cypher(body: CypherQuery):
-        """Execute a Cypher query on the graph database."""
+        """Execute a Cypher query on the graph database (read-only)."""
+        # Validate query safety
+        validate_cypher_safety(body.query)
+
         graph, m, c = get_graph(body.metric, body.cutoff)
         try:
             df = graph.cypher(body.query)
+
+            # Check result size
+            if len(df) > MAX_PAIRS_RESPONSE:
+                raise DataTooLargeError(
+                    detail=f"Query returned too many rows ({len(df):,})",
+                    requested_size=len(df),
+                    max_size=MAX_PAIRS_RESPONSE,
+                    suggestion="Add LIMIT clause to your Cypher query",
+                )
+
             return {
                 "columns": list(df.columns),
                 "row_count": len(df),
                 "rows": df.to_dict(orient="records"),
             }
+        except (DataTooLargeError, UnsafeQueryError):
+            raise
         except Exception as e:
-            raise HTTPException(400, f"Cypher error: {e}")
+            raise QuerySyntaxError(
+                detail=f"Cypher error: {e}",
+                query_type="cypher",
+                query=body.query,
+            )
+
+    # ── Export Endpoints ───────────────────────────────────────────
+
+    from fastapi.responses import StreamingResponse
+    import io
+
+    @app.get("/api/v1/export/data/{format}")
+    def export_data(
+        format: str,
+        metric: str = Query(..., description="Metric to filter on"),
+        cutoff: float = Query(0.0, ge=0),
+        limit: int = Query(100000, ge=1, le=1000000),
+    ):
+        """Export filtered pairwise data in various formats.
+
+        Supported formats: csv, tsv, json
+
+        Returns the data as a downloadable file.
+        """
+        validate_metric(metric)
+        validate_cutoff(cutoff, metric)
+
+        if format not in ("csv", "tsv", "json"):
+            raise ValidationError(
+                detail=f"Unsupported export format: {format}",
+                field="format",
+                value=format,
+                allowed_values=["csv", "tsv", "json"],
+            )
+
+        # Get data
+        df = store.to_pandas(metric=metric, cutoff=cutoff, limit=limit)
+        names = store.get_names_map()
+        if "group_1_id" in df.columns:
+            df["group_1_name"] = df["group_1_id"].map(names)
+        if "group_2_id" in df.columns:
+            df["group_2_name"] = df["group_2_id"].map(names)
+
+        # Reorder columns for better readability
+        cols = df.columns.tolist()
+        priority = ["group_1_name", "group_2_name", "shared_features"]
+        ordered = [c for c in priority if c in cols] + [c for c in cols if c not in priority]
+        df = df[ordered]
+
+        # Generate output
+        output = io.BytesIO()
+        filename = f"dbretina_pairs_{metric}_{int(cutoff)}"
+
+        if format == "csv":
+            df.to_csv(output, index=False)
+            media_type = "text/csv"
+            filename += ".csv"
+        elif format == "tsv":
+            df.to_csv(output, index=False, sep="\t")
+            media_type = "text/tab-separated-values"
+            filename += ".tsv"
+        else:  # json
+            output.write(df.to_json(orient="records", indent=2).encode("utf-8"))
+            media_type = "application/json"
+            filename += ".json"
+
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+
+    @app.get("/api/v1/export/graph/{format}")
+    def export_graph(
+        format: str,
+        metric: Optional[str] = Query(None),
+        cutoff: Optional[float] = Query(None),
+        include_layout: bool = Query(False, description="Include node positions"),
+        include_communities: bool = Query(True, description="Include community assignments"),
+    ):
+        """Export graph in various network formats.
+
+        Supported formats: graphml, gexf, json, cytoscape
+
+        Returns the graph as a downloadable file.
+        """
+        import igraph as ig
+
+        if format not in ("graphml", "gexf", "json", "cytoscape"):
+            raise ValidationError(
+                detail=f"Unsupported graph format: {format}",
+                field="format",
+                value=format,
+                allowed_values=["graphml", "gexf", "json", "cytoscape"],
+            )
+
+        graph, m, c = get_graph(metric, cutoff)
+
+        # Build igraph
+        edges_df = graph.cypher(
+            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
+            f'RETURN a.id AS src, b.id AS dst, r.{m} AS weight, r.shared_features AS shared_features'
+        )
+        names_map = graph._names_map
+        all_ids = sorted(names_map.keys())
+        id_idx = {gid: i for i, gid in enumerate(all_ids)}
+
+        g = ig.Graph(n=len(all_ids), directed=False)
+        edge_list = []
+        weights = []
+        shared_features = []
+
+        for _, row in edges_df.iterrows():
+            src, dst = int(row["src"]), int(row["dst"])
+            if src in id_idx and dst in id_idx:
+                edge_list.append((id_idx[src], id_idx[dst]))
+                weights.append(float(row["weight"]))
+                shared_features.append(int(row["shared_features"]))
+
+        if edge_list:
+            g.add_edges(edge_list)
+            g.es["weight"] = weights
+            g.es["shared_features"] = shared_features
+
+        # Add node attributes
+        g.vs["name"] = [names_map[gid] for gid in all_ids]
+        g.vs["id"] = [str(gid) for gid in all_ids]
+
+        # Add communities if requested
+        if include_communities and edge_list:
+            try:
+                communities = g.community_leiden(weights="weight")
+                g.vs["community"] = communities.membership
+            except Exception:
+                g.vs["community"] = [0] * g.vcount()
+
+        # Add layout if requested
+        if include_layout:
+            try:
+                layout = g.layout("fr" if g.vcount() < 500 else "drl")
+                g.vs["x"] = [coord[0] for coord in layout]
+                g.vs["y"] = [coord[1] for coord in layout]
+            except Exception:
+                pass
+
+        # Generate output
+        output = io.BytesIO()
+        filename = f"dbretina_graph_{m}_{int(c)}"
+
+        if format == "graphml":
+            g.write_graphml(output)
+            media_type = "application/xml"
+            filename += ".graphml"
+        elif format == "gexf":
+            # igraph doesn't have native GEXF, use GraphML
+            g.write_graphml(output)
+            media_type = "application/xml"
+            filename += ".gexf"
+        elif format in ("json", "cytoscape"):
+            # Cytoscape.js JSON format
+            nodes = []
+            for v in g.vs:
+                node_data = {"id": v["id"], "name": v["name"]}
+                if "community" in v.attributes():
+                    node_data["community"] = v["community"]
+                if "x" in v.attributes() and "y" in v.attributes():
+                    node_data["x"] = v["x"]
+                    node_data["y"] = v["y"]
+                nodes.append({"data": node_data})
+
+            edges = []
+            for e in g.es:
+                edge_data = {
+                    "id": f"e{e.index}",
+                    "source": g.vs[e.source]["id"],
+                    "target": g.vs[e.target]["id"],
+                    "weight": e["weight"],
+                    "shared_features": e["shared_features"],
+                }
+                edges.append({"data": edge_data})
+
+            import json
+            graph_json = {
+                "elements": {"nodes": nodes, "edges": edges},
+                "meta": {
+                    "metric": m,
+                    "cutoff": c,
+                    "node_count": g.vcount(),
+                    "edge_count": g.ecount(),
+                },
+            }
+            output.write(json.dumps(graph_json, indent=2).encode("utf-8"))
+            media_type = "application/json"
+            filename += ".json"
+
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
 
     # ── Static file serving for dashboard ───────────────────────
 

@@ -40,6 +40,9 @@ export function useForceGraphData(state: DashboardState): ForceGraphData | null 
     // Compute max degree for node size normalization
     const maxDegree = Math.max(...graphData.nodes.map((n) => n.degree), 1);
 
+    // Compute max shared_features for edge width normalization
+    const maxSharedFeatures = Math.max(...graphData.edges.map((e) => e.shared_features), 1);
+
     // Transform nodes
     const nodes: ForceNode[] = graphData.nodes.map((node) => ({
       id: node.id,
@@ -62,9 +65,9 @@ export function useForceGraphData(state: DashboardState): ForceGraphData | null 
       target: edge.target,
       weight: edge.weight,
       shared_features: edge.shared_features,
-      // Visual properties
+      // Visual properties - width scales with shared_features (1-5 range)
       color: "rgba(150,150,150,0.4)",
-      width: 1,
+      width: 1 + (edge.shared_features / maxSharedFeatures) * 4,
       isOnPath: pathEdgeKeys.has(`${edge.source}-${edge.target}`),
     }));
 

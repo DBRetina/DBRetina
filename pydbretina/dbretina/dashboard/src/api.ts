@@ -131,6 +131,15 @@ export async function fetchSharedFeatures(
   );
 }
 
+export async function fetchGroupGenes(
+  groupName: string,
+  limit = 50
+): Promise<{ group: string; count: number; genes: string[] }> {
+  return fetchJSON(
+    `${BASE}/groups/${encodeURIComponent(groupName)}/genes?limit=${limit}`
+  );
+}
+
 export async function executeSql(query: string): Promise<QueryResult> {
   return fetchJSON(`${BASE}/sql`, {
     method: "POST",
