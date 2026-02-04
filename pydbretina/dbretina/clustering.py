@@ -2,6 +2,7 @@ from __future__ import division
 import os
 import click
 from dbretina.click_context import cli
+from dbretina.validators import validate_metric
 import rustworkx as rx
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -75,10 +76,10 @@ class Clusters:
         self.graph.add_edges_from(edges_tuples)
         
     def _add_igraph_nodes(self, nodes):
-        
+
         node_ids = []
         node_sizes = []
-        
+
         # replace part of the file name that shares the same prefix
         featuresCount_file = self.pairwise_file.replace("pairwise.tsv", "featuresNo.tsv")
         with open(featuresCount_file) as F:
@@ -86,16 +87,25 @@ class Clusters:
             for line in F:
                 line = line.strip().split("\t")
                 node_ids.append(line[1])
-                node_sizes.append(math.log2(int(line[2])))
-                # node_sizes.append(int(line[2]))
-                
+                size = int(line[2])
+                # Apply configurable node weight transform
+                if self.node_weight_transform == 'log2':
+                    weight = math.log2(size) if size > 1 else 1.0
+                elif self.node_weight_transform == 'sqrt':
+                    weight = math.sqrt(size)
+                elif self.node_weight_transform == 'linear':
+                    weight = float(size)
+                else:
+                    weight = math.log2(size) if size > 1 else 1.0
+                node_sizes.append(weight)
+
         self.graph.add_vertices(node_ids)
         self.graph.vs["size"] = node_sizes
     
     def _add_rx_nodes(self, nodes):
         self.graph.add_nodes_from(nodes)
 
-    def __init__(self, logger_obj, pairwise_file, cut_off_threshold, metric, output_prefix, community):
+    def __init__(self, logger_obj, pairwise_file, cut_off_threshold, metric, output_prefix, community, resolution=1.0, node_weight_transform='log2'):
         self.output_prefix = output_prefix
         self.Logger = logger_obj
         self.edges_batch_number = 10_000_000
@@ -106,6 +116,8 @@ class Clusters:
         self.original_nodes = {}
         self.metadata = []
         self.community = community
+        self.resolution = resolution
+        self.node_weight_transform = node_weight_transform
         self.Logger.INFO("Loading TSV pairwise file")
         if metric not in self.metric_to_col:
             logger_obj.ERROR("unknown metric!")
@@ -120,11 +132,21 @@ class Clusters:
         self.add_nodes = self._add_igraph_nodes if community else self._add_rx_nodes
 
         self.dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
-        if os.path.exists(self.dbrp_path):
-            total_nodes_no = dbretina_internal.dbrp_get_num_groups(self.dbrp_path)
-        else:
-            total_nodes_no = int(
-                next(open(pairwise_file, 'r')).strip().split(':')[-1])
+        # Try PairwiseStore for node count
+        try:
+            from dbretina.compat import open_pairwise
+            _store = open_pairwise(pairwise_file)
+            if _store is not None:
+                total_nodes_no = _store.num_groups
+                _store.close()
+            else:
+                raise ValueError("no store")
+        except Exception:
+            if os.path.exists(self.dbrp_path):
+                total_nodes_no = dbretina_internal.dbrp_get_num_groups(self.dbrp_path)
+            else:
+                total_nodes_no = int(
+                    next(open(pairwise_file, 'r')).strip().split(':')[-1])
         nodes_range = range(1, total_nodes_no + 1)
         self.nodes_indeces = self.add_nodes(list(nodes_range))
     
@@ -134,7 +156,41 @@ class Clusters:
         batch_counter = 0
         edges_tuples = []
 
-        if os.path.exists(self.dbrp_path):
+        # Try Parquet/PairwiseStore first
+        try:
+            from dbretina.compat import open_pairwise
+            store = open_pairwise(self.pairwise_file)
+        except Exception:
+            store = None
+
+        if store is not None:
+            self.metadata.append(f"#command: {get_command()}\n")
+            names_map = store.get_names_map()
+            df = store.to_pandas(
+                metric=self.metric, cutoff=self.cut_off_threshold,
+                columns=["group_1_id", "group_2_id", self.metric]
+            )
+            for _, row in df.iterrows():
+                gid1 = int(row["group_1_id"])
+                gid2 = int(row["group_2_id"])
+                self.original_nodes[gid1] = names_map.get(gid1, "")
+                self.original_nodes[gid2] = names_map.get(gid2, "")
+                similarity = float(row[self.metric])
+                seq1 = gid1 - 1
+                seq2 = gid2 - 1
+                if batch_counter < self.edges_batch_number:
+                    batch_counter += 1
+                    edges_tuples.append((seq1, seq2, similarity))
+                else:
+                    self.add_edges(edges_tuples)
+                    batch_counter = 0
+                    edges_tuples.clear()
+            if len(edges_tuples):
+                self.add_edges(edges_tuples)
+            store.close()
+            return
+        # Fallback: existing .dbrp / TSV code
+        elif os.path.exists(self.dbrp_path):
             self.metadata.append(f"#command: {get_command()}\n")
             metric_id = self.metric_name_to_id[self.metric]
             records = dbretina_internal.dbrp_filter_pairs(self.dbrp_path, metric_id, self.cut_off_threshold)
@@ -200,7 +256,42 @@ class Clusters:
         edges_tuples = []
 
         print("[i] constructing graph")
-        if os.path.exists(self.dbrp_path):
+
+        # Try Parquet/PairwiseStore first
+        try:
+            from dbretina.compat import open_pairwise
+            store = open_pairwise(self.pairwise_file)
+        except Exception:
+            store = None
+
+        if store is not None:
+            self.metadata.append(f"#command: {get_command()}\n")
+            names_map = store.get_names_map()
+            df = store.to_pandas(
+                metric=self.metric, cutoff=self.cut_off_threshold,
+                columns=["group_1_id", "group_2_id", self.metric]
+            )
+            for _, row in df.iterrows():
+                gid1 = int(row["group_1_id"])
+                gid2 = int(row["group_2_id"])
+                self.original_nodes[gid1] = names_map.get(gid1, "")
+                self.original_nodes[gid2] = names_map.get(gid2, "")
+                similarity = float(row[self.metric])
+                seq1 = gid1 - 1
+                seq2 = gid2 - 1
+                if batch_counter < self.edges_batch_number:
+                    batch_counter += 1
+                    edges_tuples.append((seq1, seq2, similarity))
+                else:
+                    self.add_edges(edges_tuples)
+                    batch_counter = 0
+                    edges_tuples.clear()
+            if len(edges_tuples):
+                self.add_edges(edges_tuples)
+            store.close()
+            return
+        # Fallback: existing .dbrp / TSV code
+        elif os.path.exists(self.dbrp_path):
             self.metadata.append(f"#command: {get_command()}\n")
             metric_id = self.metric_name_to_id[self.metric]
             records = dbretina_internal.dbrp_filter_pairs(self.dbrp_path, metric_id, self.cut_off_threshold)
@@ -257,7 +348,7 @@ class Clusters:
                         edges_tuples.clear()
 
                 if len(edges_tuples):
-                    self.add_edges(edges_tuples)        
+                    self.add_edges(edges_tuples)
     
     def plot_histogram(self, cluster_sizes, filename):
         # Create a figure and a set of subplots
@@ -358,47 +449,26 @@ class Clusters:
     def cluster_graph(self):
 
         cluster_sizes = []
-        
+
         if self.community:
-            self.connected_components = la.find_partition(self.graph, 
-                                                          la.CPMVertexPartition, 
-                                                          weights= self.graph.es['weight'],
-                                                          node_sizes = self.graph.vs['size'],
-                                                          seed = 42,
-                                                          )
-
-            # self.connected_components = la.CPMVertexPartition(
-            #     self.graph, 
-            #     # resolution_parameter = 0.6,
-            #     )
-
-            # optimiser = la.Optimiser()
-            
-
-            # optimiser.optimise_partition(self.connected_components)
-            # refine_partition = la.ModularityVertexPartition(self.graph)
-            # optimiser.move_nodes_constrained(refine_partition, self.connected_components)
-            # TODO either plot both igraph and rustworkx or disable both
-            # ig.plot(self.connected_components, 
-            #     f"{self.output_prefix}_graph_plot.png", 
-            #     bbox=(1500, 1500), 
-            #     vertex_label_size=5, 
-            #     edge_arrow_size=0.5, 
-            #     edge_arrow_width=0.5, 
-            #     edge_width=0.5,
-            #     edge_label_size=5,
-            #     edge_curved=False,
-            #     layout = 'auto')
-
-            # la.find_partition(self.graph, la.ModularityVertexPartition)
+            # Use Leiden algorithm with CPM (Constant Potts Model) partition
+            # Resolution parameter controls cluster granularity:
+            #   - Higher resolution = more, smaller clusters
+            #   - Lower resolution = fewer, larger clusters
+            self.connected_components = la.find_partition(
+                self.graph,
+                la.CPMVertexPartition,
+                resolution_parameter=self.resolution,
+                weights=self.graph.es['weight'],
+                node_sizes=self.graph.vs['size'],
+                seed=42,
+            )
         else:
             self.connected_components = rx.connected_components(self.graph)
         
         single_components = 0
         retworkx_export = f"{self.output_prefix}_clusters.tsv"
-        # and {self.output} ...")
         self.Logger.INFO(f"writing {retworkx_export}")
-        # rx.node_link_json(self.graph, path = retworkx_export)
         cluster_id = 1
         total_clustered_nodes = 0
         with open(retworkx_export, 'w') as CLUSTERS:
@@ -407,22 +477,15 @@ class Clusters:
 
             CLUSTERS.write(f"cluster_id\tcluster_size\tcluster_members\n")
             for component in self.connected_components:
-                # uncomment to exclude single-group clusters from exporting
+                # Skip isolated nodes that aren't in original data
                 if len(component) == 1 and list(component)[0] + 1 not in self.original_nodes:
-                    continue                
-                # if len(component) == 1: continue
-                
+                    continue
+
                 named_component = [self.original_nodes[node + 1] for node in component]
-                # CLUSTERS.write(cluster_id + '\t' + len(component) + '\t' + '|'.join(named_component) + '\n')
                 CLUSTERS.write(f"{cluster_id}\t{len(component)}\t{'|'.join(named_component)}\n")
                 cluster_sizes.append(len(component))
                 total_clustered_nodes += len(component)
                 cluster_id += 1
-        # TODO: activate only if also generated from connected components mode.
-        # if self.community:
-        #     ig.write(self.graph, f"{self.output_prefix}_clusters.gml", format="gml")
-        #     ig.write(self.graph, f"{self.output_prefix}_clusters.graphml", format="graphml")
-        
 
         self.Logger.INFO("plotting cluster sizes histogram and bubble plot")
         self.plot_histogram(cluster_sizes, f"{self.output_prefix}_clusters_histogram.png")
@@ -434,18 +497,44 @@ class Clusters:
 
 @cli.command(name="cluster", epilog = dbretina_doc.doc_url("cluster"), help_priority=4)
 @click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
-@click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option("--community", "community", is_flag=True, help="clusters as communities", default=False)
 @click.option('-c', '--cutoff', required=True, type=click.FloatRange(0, 100, clamp=False), default=0.0, help="cluster the supergroups with (similarity > cutoff)")
 @click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")
+@click.option('--resolution', 'resolution', default=1.0, type=float, show_default=True,
+              help="Resolution parameter for Leiden CPM partition (higher = more clusters)")
+@click.option('--node-weight-transform', 'node_weight_transform',
+              type=click.Choice(['log2', 'linear', 'sqrt']), default='log2', show_default=True,
+              help="Transform for node weights based on gene set size")
 @click.pass_context
-def main(ctx, pairwise_file, cutoff, metric, output_prefix, community):
-    """Graph-based clustering of the pairwise TSV file."""
-    
+def main(ctx, pairwise_file, cutoff, metric, output_prefix, community, resolution, node_weight_transform):
+    """Graph-based clustering of the pairwise TSV file.
+
+    RESOLUTION PARAMETER (--resolution):
+      Controls cluster granularity when using --community flag.
+      - Higher values (e.g., 2.0) produce more, smaller clusters.
+      - Lower values (e.g., 0.5) produce fewer, larger clusters.
+      - Default 1.0 is a reasonable starting point.
+
+    NODE WEIGHT TRANSFORM (--node-weight-transform):
+      Controls how gene set size affects node importance in community detection.
+      - log2: Logarithmic transform (default, reduces impact of very large sets)
+      - sqrt: Square root transform (moderate reduction)
+      - linear: No transform (larger sets have proportionally more influence)
+    """
+
     cutoff = float(cutoff)
-    clusters = Clusters(logger_obj=ctx.obj, pairwise_file=pairwise_file,
-                   cut_off_threshold=cutoff, metric=metric, output_prefix=output_prefix, community=community)
+    clusters = Clusters(
+        logger_obj=ctx.obj,
+        pairwise_file=pairwise_file,
+        cut_off_threshold=cutoff,
+        metric=metric,
+        output_prefix=output_prefix,
+        community=community,
+        resolution=resolution,
+        node_weight_transform=node_weight_transform
+    )
     ctx.obj.INFO("Building the main graph...")
     clusters.construct_graph()
-    ctx.obj.INFO("Clustering...")
+    ctx.obj.INFO(f"Clustering (resolution={resolution}, node_weight_transform={node_weight_transform})...")
     clusters.cluster_graph()

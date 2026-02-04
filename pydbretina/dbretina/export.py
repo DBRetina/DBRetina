@@ -6,6 +6,7 @@ import os
 import click
 import pandas as pd
 from dbretina.click_context import cli
+from dbretina.validators import validate_metric
 from scipy.cluster.hierarchy import linkage, to_tree, ClusterWarning
 from warnings import simplefilter
 import seaborn as sns
@@ -90,7 +91,10 @@ def validate_labels(ctx, param, value):
     return value
 
 def dataframe_to_newick(df):
-    np.fill_diagonal(df.values, 0)
+    # Get mutable copy to avoid pandas copy-on-write read-only views
+    arr = df.to_numpy(copy=True)
+    np.fill_diagonal(arr, 0)
+    df = pd.DataFrame(arr, index=df.index, columns=df.columns)
     condensed_matrix = squareform(df)
     Z = linkage(condensed_matrix, 'single')
     tree = to_tree(Z, rd=False)
@@ -108,8 +112,10 @@ def similarity_df_to_newick(similarity_df, method):
     # Convert similarity matrix to distance matrix
     dissimilarity_df = 100 - similarity_df
 
-    # Ensure the diagonal is zero
-    np.fill_diagonal(dissimilarity_df.values, 0)
+    # Ensure the diagonal is zero (use copy to avoid read-only views)
+    arr = dissimilarity_df.to_numpy(copy=True)
+    np.fill_diagonal(arr, 0)
+    dissimilarity_df = pd.DataFrame(arr, index=dissimilarity_df.index, columns=dissimilarity_df.columns)
 
     # Convert the distance matrix DataFrame to a condensed distance matrix for linkage
     # condensed_distance_matrix = squareform(dissimilarity_df)
@@ -166,7 +172,7 @@ def export_heatmap(df, filename):
 
 @cli.command(name="export", epilog = dbretina_doc.doc_url("export"), help_priority=5)
 @click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
-@click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('--newick', "newick", is_flag=True, help="Convert the distance matrix to newick tree format", default=False)
 @click.option('-l', '--labels', "labels_selection", callback = validate_labels, required=False, default="names", show_default=True, type=click.STRING, help="select from ['ids', 'names']")
 @click.option('--linkage', "linkage_method", required=False, default="ward", show_default=True, type=click.STRING, help="select from ['single', 'complete', 'average', 'weighted', 'centroid', 'median', 'ward']")
@@ -212,21 +218,44 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
     if labels_selection == "ids": src1_label_col = 0; src2_label_col = 1
     else: src1_label_col = 2; src2_label_col = 3
     
-    dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
-    if os.path.exists(dbrp_path):
-        import _dbretina_internal as dbretina_internal
-        records = dbretina_internal.dbrp_iterate_all(dbrp_path)
-        rows = []
-        for rec in records:
-            if labels_selection == "ids":
-                rows.append((str(rec['group_1_id']), str(rec['group_2_id']), float(rec[metric])))
-            else:
-                rows.append((rec['group_1_name'], rec['group_2_name'], float(rec[metric])))
-        col1 = 'group_1_ID' if labels_selection == 'ids' else 'group_1_name'
-        col2 = 'group_2_ID' if labels_selection == 'ids' else 'group_2_name'
-        df = pd.DataFrame(rows, columns=[col1, col2, metric])
+    # Try Parquet/PairwiseStore first
+    try:
+        from dbretina.compat import open_pairwise
+        store = open_pairwise(pairwise_file)
+    except Exception:
+        store = None
+
+    if store is not None:
+        LOGGER.INFO("using Parquet pairwise data via PairwiseStore")
+        names_map = store.get_names_map()
+        pdf = store.to_pandas(columns=["group_1_id", "group_2_id", metric])
+        if labels_selection == "ids":
+            col1, col2 = 'group_1_ID', 'group_2_ID'
+            pdf[col1] = pdf["group_1_id"].astype(str)
+            pdf[col2] = pdf["group_2_id"].astype(str)
+        else:
+            col1, col2 = 'group_1_name', 'group_2_name'
+            pdf[col1] = pdf["group_1_id"].map(names_map)
+            pdf[col2] = pdf["group_2_id"].map(names_map)
+        df = pdf[[col1, col2, metric]]
+        store.close()
     else:
-        df = pd.read_csv(pairwise_file, sep='\t', usecols=[src1_label_col, src2_label_col, dist_col], comment='#')
+        # Fallback: existing .dbrp / TSV code
+        dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
+        if os.path.exists(dbrp_path):
+            import _dbretina_internal as dbretina_internal
+            records = dbretina_internal.dbrp_iterate_all(dbrp_path)
+            rows = []
+            for rec in records:
+                if labels_selection == "ids":
+                    rows.append((str(rec['group_1_id']), str(rec['group_2_id']), float(rec[metric])))
+                else:
+                    rows.append((rec['group_1_name'], rec['group_2_name'], float(rec[metric])))
+            col1 = 'group_1_ID' if labels_selection == 'ids' else 'group_1_name'
+            col2 = 'group_2_ID' if labels_selection == 'ids' else 'group_2_name'
+            df = pd.DataFrame(rows, columns=[col1, col2, metric])
+        else:
+            df = pd.read_csv(pairwise_file, sep='\t', usecols=[src1_label_col, src2_label_col, dist_col], comment='#')
     
     if labels_selection == "ids":    
         df[df.columns[0]] = df[df.columns[0]].astype(str)
@@ -237,13 +266,26 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
         df[df.columns[1]] = df[df.columns[1]].apply(lambda x: newick_str_escape(x))
     
     # df[df.columns[2]] = df[df.columns[2]].apply(lambda x: math.log2(x) if x != 0 else 0)
-    
-    similarity_df = df.pivot(index=df.columns[0], columns=df.columns[1], values=df.columns[2])
 
-    similarity_df = similarity_df.combine_first(similarity_df.T).fillna(0)
-    # np.fill_diagonal(similarity_df.values, math.log2(100))
-    np.fill_diagonal(similarity_df.values, 100)
-    
+    # Build symmetric similarity matrix
+    # Get all unique groups from both columns
+    col1, col2, val_col = df.columns[0], df.columns[1], df.columns[2]
+    all_groups = sorted(set(df[col1]) | set(df[col2]))
+
+    # Create empty matrix with all groups
+    similarity_df = pd.DataFrame(0.0, index=all_groups, columns=all_groups)
+
+    # Fill in values for both directions (since similarity metrics are symmetric)
+    for _, row in df.iterrows():
+        g1, g2, val = row[col1], row[col2], row[val_col]
+        similarity_df.loc[g1, g2] = val
+        similarity_df.loc[g2, g1] = val
+
+    # Set diagonal to 100 (self-similarity)
+    arr = similarity_df.to_numpy(copy=True)
+    np.fill_diagonal(arr, 100)
+    similarity_df = pd.DataFrame(arr, index=similarity_df.index, columns=similarity_df.columns)
+
     # convert to distance matrix
     distance_matrix_df = 100 - similarity_df
     

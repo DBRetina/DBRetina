@@ -1,5 +1,6 @@
 import sys
 
+import click
 from dbretina.click_context import cli
 from dbretina.pairwise import main as pairwise_main
 from dbretina.dataset_indexing import main as index_datasets
@@ -16,6 +17,22 @@ from dbretina.bipartite_graph import main as grph_main
 from dbretina.append import main as append_main
 from dbretina.merge import main as merge_main
 
+
+def _safe_add_command(module_path: str, command_attr: str, cli_name: str):
+    """Safely import and register a CLI command with helpful error messages."""
+    try:
+        module = __import__(f"dbretina.{module_path}", fromlist=[command_attr])
+        cli.add_command(getattr(module, command_attr), name=cli_name)
+    except ImportError as e:
+        @cli.command(name=cli_name)
+        def _missing_cmd(err=str(e)):
+            f"""Command '{cli_name}' requires additional dependencies."""
+            raise click.ClickException(
+                f"Command '{cli_name}' is unavailable: {err}\n"
+                f"Try: pip install 'DBRetina[server]' or pip install 'DBRetina[all]'"
+            )
+
+# Core commands (always available)
 cli.add_command(index_datasets, name="index")
 cli.add_command(pairwise_main, name="pairwise")
 cli.add_command(dbretina_query, name="query")
@@ -30,6 +47,16 @@ cli.add_command(setcov_main, name="setcov")
 cli.add_command(grph_main, name="graph")
 cli.add_command(append_main, name="append")
 cli.add_command(merge_main, name="merge")
+
+# Optional commands with external dependencies
+_safe_add_command("serve", "main", "serve")
+_safe_add_command("export_neo4j", "main", "export-neo4j")
+_safe_add_command("cmd_search", "main", "search")
+_safe_add_command("cmd_neighbors", "main", "neighbors")
+_safe_add_command("cmd_shared_genes", "main", "shared-genes")
+_safe_add_command("cmd_gene_search", "main", "gene-search")
+_safe_add_command("cmd_genescore", "main", "genescore")
+
 
 if __name__ == '__main__':
     cli()

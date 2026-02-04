@@ -81,7 +81,7 @@ inline void load_colors_to_matched_supergroups(const std::string& filename, int_
 inline std::string join(std::vector<std::string>& strings, std::string delim)
 {
     return std::accumulate(strings.begin(), strings.end(), std::string(),
-        [&delim](std::string& x, std::string& y) {
+        [&delim](const std::string& x, const std::string& y) {
             return x.empty() ? y : x + delim + y;
         });
 }

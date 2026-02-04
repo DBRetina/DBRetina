@@ -146,38 +146,52 @@ def main(ctx, index_prefix, pairwise_file, output_prefix, graphml, gexf):
 
     geneSet_pairs = set()
     metadata = []
-            # iterate over the pairwise file to construct geneSet_pairs
-    with open(pairwise_file, 'r') as pairwise_tsv:
-        while True:
-            pos = pairwise_tsv.tell()
-            line = pairwise_tsv.readline()
-            if not line.startswith('#'):
-                pairwise_tsv.seek(pos)
-                break
-            else:
-                metadata.append(line)            
-        metadata.append(f"#command: {get_command()}\n")
 
-        header = next(pairwise_tsv)
-        # find the index of the columns 'group_1_ID' and 'group_2_ID'
-        header = header.strip().split('\t')
-        try:
-            group1_index = header.index('group_1_name')
-            group2_index = header.index('group_2_name')
-        # except any error
-        except:
-            group1_index = header.index('group_1')
-            group2_index = header.index('group_2')
-            
-            
-        
-        print(f"Group 1 index: {group1_index}")
-        print(f"Group 2 index: {group2_index}")
-        
-        
-        for row in pairwise_tsv:
-            row = row.strip().split('\t')
-            geneSet_pairs.add((row[group1_index], row[group2_index]))
+    # Try Parquet/PairwiseStore first
+    try:
+        from dbretina.compat import open_pairwise
+        store = open_pairwise(pairwise_file)
+    except Exception:
+        store = None
+
+    if store is not None:
+        ctx.obj.INFO("using Parquet pairwise data via PairwiseStore")
+        metadata.append(f"#command: {get_command()}\n")
+        names_map = store.get_names_map()
+        df = store.to_pandas(columns=["group_1_id", "group_2_id"])
+        for _, row in df.iterrows():
+            name1 = names_map.get(int(row["group_1_id"]), "")
+            name2 = names_map.get(int(row["group_2_id"]), "")
+            geneSet_pairs.add((name1, name2))
+        store.close()
+    else:
+        # Fallback: existing TSV code
+        with open(pairwise_file, 'r') as pairwise_tsv:
+            while True:
+                pos = pairwise_tsv.tell()
+                line = pairwise_tsv.readline()
+                if not line.startswith('#'):
+                    pairwise_tsv.seek(pos)
+                    break
+                else:
+                    metadata.append(line)
+            metadata.append(f"#command: {get_command()}\n")
+
+            header = next(pairwise_tsv)
+            header = header.strip().split('\t')
+            try:
+                group1_index = header.index('group_1_name')
+                group2_index = header.index('group_2_name')
+            except:
+                group1_index = header.index('group_1')
+                group2_index = header.index('group_2')
+
+            print(f"Group 1 index: {group1_index}")
+            print(f"Group 2 index: {group2_index}")
+
+            for row in pairwise_tsv:
+                row = row.strip().split('\t')
+                geneSet_pairs.add((row[group1_index], row[group2_index]))
             
     ##############################################
     # 2. Map gene set to genes (group to features)

@@ -241,14 +241,21 @@ class DeduplicateGroups():
 
         self.ochiai_graph = Graph()
 
-        dbrp_path = tsv_file.replace(".tsv", ".dbrp")
-        if os.path.exists(dbrp_path):
-            records = dbretina_internal.dbrp_iterate_all(dbrp_path)
-            for rec in records:
-                group1 = rec['group_1_name']
-                group2 = rec['group_2_name']
-                containment = float(rec['containment'])
-                ochiai_similarity = float(rec['ochiai'])
+        # Try Parquet/PairwiseStore first
+        try:
+            from dbretina.compat import open_pairwise
+            store = open_pairwise(tsv_file)
+        except Exception:
+            store = None
+
+        if store is not None:
+            names_map = store.get_names_map()
+            df = store.to_pandas(columns=["group_1_id", "group_2_id", "containment", "ochiai"])
+            for _, row in df.iterrows():
+                group1 = names_map.get(int(row["group_1_id"]), "")
+                group2 = names_map.get(int(row["group_2_id"]), "")
+                containment = float(row["containment"])
+                ochiai_similarity = float(row["ochiai"])
 
                 if ochiai_similarity >= self.exact_ochiai_cutoff:
                     self.ochiai_graph.add_edge(group1, group2)
@@ -256,8 +263,8 @@ class DeduplicateGroups():
                 if containment < max_cont_threshold:
                     continue
 
-                group1_len = self.groups_to_items_no[group1]
-                group2_len = self.groups_to_items_no[group2]
+                group1_len = self.groups_to_items_no.get(group1, 0)
+                group2_len = self.groups_to_items_no.get(group2, 0)
 
                 if group1_len < group2_len:
                     group_metrics[group1]['fragmentation'] -= 1
@@ -265,55 +272,81 @@ class DeduplicateGroups():
                 elif group1_len > group2_len:
                     group_metrics[group1]['heterogeneity'] += 1
                     group_metrics[group2]['fragmentation'] -= 1
+            store.close()
         else:
-            with open(tsv_file, 'r') as f:
-                # Skip comment lines
-                while True:
-                    pos = f.tell()  # remember the position
-                    line = f.readline()
-                    if not line.startswith("#"):
-                        f.seek(pos)  # rewind to the position before the line
-                        break
+            dbrp_path = tsv_file.replace(".tsv", ".dbrp")
+            if os.path.exists(dbrp_path):
+                records = dbretina_internal.dbrp_iterate_all(dbrp_path)
+                for rec in records:
+                    group1 = rec['group_1_name']
+                    group2 = rec['group_2_name']
+                    containment = float(rec['containment'])
+                    ochiai_similarity = float(rec['ochiai'])
 
-                # skip the header
-                next(f)
-
-                reader = csv.reader(f, delimiter="\t")
-                for row in reader:
-                    # Extract the group names from columns 3 and 4
-                    group1 = row[2]
-                    group2 = row[3]
-
-                    containment = float(row[self.metric_to_col["containment"]])
-                    ochiai_similarity = float(row[self.metric_to_col["ochiai"]])
-
-                    # instead of re-iterating over the file, do it here
                     if ochiai_similarity >= self.exact_ochiai_cutoff:
                         self.ochiai_graph.add_edge(group1, group2)
 
-                    # this for calculating modularity
                     if containment < max_cont_threshold:
                         continue
 
-                    # Get the lengths of the groups
                     group1_len = self.groups_to_items_no[group1]
                     group2_len = self.groups_to_items_no[group2]
 
-                    # Compute the metrics
-                    # Large node fragmented to small nodes
-                    # Large node heterogenous to small nodes
                     if group1_len < group2_len:
                         group_metrics[group1]['fragmentation'] -= 1
                         group_metrics[group2]['heterogeneity'] += 1
                     elif group1_len > group2_len:
                         group_metrics[group1]['heterogeneity'] += 1
                         group_metrics[group2]['fragmentation'] -= 1
-                    # else:  # if they are equal, update both
-                    #     print("ELSEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
-                    #     group_metrics[group1]['fragmentation'] -= 1
-                    #     group_metrics[group1]['heterogeneity'] += 1
-                    #     group_metrics[group2]['fragmentation'] -= 1
-                    #     group_metrics[group2]['heterogeneity'] += 1
+            else:
+                with open(tsv_file, 'r') as f:
+                    # Skip comment lines
+                    while True:
+                        pos = f.tell()  # remember the position
+                        line = f.readline()
+                        if not line.startswith("#"):
+                            f.seek(pos)  # rewind to the position before the line
+                            break
+
+                    # skip the header
+                    next(f)
+
+                    reader = csv.reader(f, delimiter="\t")
+                    for row in reader:
+                        # Extract the group names from columns 3 and 4
+                        group1 = row[2]
+                        group2 = row[3]
+
+                        containment = float(row[self.metric_to_col["containment"]])
+                        ochiai_similarity = float(row[self.metric_to_col["ochiai"]])
+
+                        # instead of re-iterating over the file, do it here
+                        if ochiai_similarity >= self.exact_ochiai_cutoff:
+                            self.ochiai_graph.add_edge(group1, group2)
+
+                        # this for calculating modularity
+                        if containment < max_cont_threshold:
+                            continue
+
+                        # Get the lengths of the groups
+                        group1_len = self.groups_to_items_no[group1]
+                        group2_len = self.groups_to_items_no[group2]
+
+                        # Compute the metrics
+                        # Large node fragmented to small nodes
+                        # Large node heterogenous to small nodes
+                        if group1_len < group2_len:
+                            group_metrics[group1]['fragmentation'] -= 1
+                            group_metrics[group2]['heterogeneity'] += 1
+                        elif group1_len > group2_len:
+                            group_metrics[group1]['heterogeneity'] += 1
+                            group_metrics[group2]['fragmentation'] -= 1
+                        # else:  # if they are equal, update both
+                        #     print("ELSEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE")
+                        #     group_metrics[group1]['fragmentation'] -= 1
+                        #     group_metrics[group1]['heterogeneity'] += 1
+                        #     group_metrics[group2]['fragmentation'] -= 1
+                        #     group_metrics[group2]['heterogeneity'] += 1
 
         # Compute the modularity index for each group
         for metrics in group_metrics.values():
@@ -640,13 +673,29 @@ class GraphBasedDeduplication(DeduplicateGroups):
         print(f"[DEBUG] first group name: {first_group_name}")
 
         # load pairwise file
-        dbrp_path = self.main_pairwise_file.replace(".tsv", ".dbrp")
-        if os.path.exists(dbrp_path):
-            records = dbretina_internal.dbrp_iterate_all(dbrp_path)
-            rows = [(rec['group_1_name'], rec['group_2_name'], float(rec['ochiai'])) for rec in records]
-            df_edges = pd.DataFrame(rows, columns=['group_1_name', 'group_2_name', 'ochiai'])
+        # Try Parquet/PairwiseStore first
+        try:
+            from dbretina.compat import open_pairwise
+            store2 = open_pairwise(self.main_pairwise_file)
+        except Exception:
+            store2 = None
+
+        if store2 is not None:
+            names_map = store2.get_names_map()
+            pdf = store2.to_pandas(columns=["group_1_id", "group_2_id", "ochiai"])
+            pdf["group_1_name"] = pdf["group_1_id"].map(names_map)
+            pdf["group_2_name"] = pdf["group_2_id"].map(names_map)
+            df_edges = pdf[["group_1_name", "group_2_name", "ochiai"]]
+            store2.close()
         else:
-            df_edges = pd.read_csv(self.main_pairwise_file, sep='\t', comment='#', usecols=['group_1_name', 'group_2_name', 'ochiai'])
+            # Fallback: existing .dbrp / TSV code
+            dbrp_path = self.main_pairwise_file.replace(".tsv", ".dbrp")
+            if os.path.exists(dbrp_path):
+                records = dbretina_internal.dbrp_iterate_all(dbrp_path)
+                rows = [(rec['group_1_name'], rec['group_2_name'], float(rec['ochiai'])) for rec in records]
+                df_edges = pd.DataFrame(rows, columns=['group_1_name', 'group_2_name', 'ochiai'])
+            else:
+                df_edges = pd.read_csv(self.main_pairwise_file, sep='\t', comment='#', usecols=['group_1_name', 'group_2_name', 'ochiai'])
         
 
         # keep edges that have group_1_name and group_2_name in sorted_groups_df

@@ -45,6 +45,13 @@ set(PHMAP_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/lib/parallel-hashmap")
 include_directories("${PHMAP_INCLUDE_DIRS}")
 
 # ----------------------------------------------------------------------------
+# Arrow / Parquet
+# ----------------------------------------------------------------------------
+
+find_package(Arrow REQUIRED)
+find_package(Parquet REQUIRED)
+
+# ----------------------------------------------------------------------------
 # Static library
 # ----------------------------------------------------------------------------
 
@@ -59,11 +66,12 @@ add_library(
         src/DBRetina_append.cpp
         src/DBRetina_merge.cpp
         src/DBRetinaPairwise.cpp
+        src/ParquetPairwiseWriter.cpp
         )
 
 set_target_properties(dbretina_core PROPERTIES CXX_STANDARD 17)
-target_compile_options(dbretina_core PRIVATE -fopenmp -O3 -Ofast -w)
-target_link_libraries(dbretina_core z zstr::zstr)
+target_compile_options(dbretina_core PRIVATE -fopenmp -O3 -Ofast -Wall -Wextra -Wno-unused-parameter)
+target_link_libraries(dbretina_core z zstr::zstr Arrow::arrow_shared Parquet::parquet_shared)
 target_include_directories(dbretina_core INTERFACE ${PHMAP_INCLUDE_DIRS})
 
 # ----------------------------------------------------------------------------
@@ -78,6 +86,6 @@ target_include_directories(_dbretina_internal PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/json_parser/lib/include
     ${PROJECT_SOURCE_DIR}/lib/zstr/src
 )
-target_compile_options(_dbretina_internal PRIVATE -fopenmp -O3 -Ofast -w)
+target_compile_options(_dbretina_internal PRIVATE -fopenmp -O3 -Ofast -Wall -Wextra -Wno-unused-parameter)
 
 install(TARGETS _dbretina_internal LIBRARY DESTINATION .)

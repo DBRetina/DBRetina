@@ -169,9 +169,11 @@ def main(ctx, asc_file, output_prefix, gmt_file):
 
     asc_from_gmt = False
     if gmt_file:
-        asc_file = f"generated_{output_prefix}_gmt_to_asc.tsv"
+        output_dir = os.path.dirname(os.path.abspath(output_prefix))
+        base = os.path.basename(output_prefix)
+        asc_file = os.path.join(output_dir, f"generated_{base}_gmt_to_asc.tsv")
         gmts_to_association(ctx, list(gmt_file), asc_file)
-        asc_file = [f"generated_{output_prefix}_gmt_to_asc.tsv"]
+        asc_file = [asc_file]
         asc_from_gmt = True
 
 

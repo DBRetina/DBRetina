@@ -5,6 +5,7 @@ import sys
 import _dbretina_internal as dbretina_internal
 import click
 from dbretina.click_context import cli
+from dbretina.validators import validate_metric
 import subprocess
 import os
 import dbretina.dbretina_doc_url as dbretina_doc
@@ -93,7 +94,7 @@ def check_if_there_is_a_pvalue(pairwise_file):
 @click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
 @click.option('--clusters-file', "clusters_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
 @click.option('--cluster-ids', "cluster_ids", callback=validate_numbers, required=False, default="", help="comma-separated list of cluster IDs")
-@click.option('-m', '--metric', "metric", required=False, default="NA", type=click.STRING, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('-m', '--metric', "metric", required=False, default="NA", type=click.STRING, callback=validate_metric, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('-c', '--cutoff', callback=check_cutoff_value, required=False, default=-1, type=click.FLOAT, help="filter out similarities < cutoff")
 @click.option('--extend', "extend", is_flag=True, default=False, show_default=True, help="include all supergroups that are linked to the given supergroups.")
 @click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file prefix")
@@ -240,28 +241,59 @@ Detailed description:
     elif cutoff != -1:
         ctx.obj.INFO(
             f"Querying the pairwise matrix on the {metric} column with a cutoff of {cutoff}.")
-        dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
-        metric_name_to_id = {
-            "containment": 0, "ochiai": 1, "jaccard": 2, "csi": 3,
-            "dice": 4, "odds_ratio": 5, "pvalue": 6,
-        }
-        if os.path.exists(dbrp_path) and metric in metric_name_to_id:
-            mid = metric_name_to_id[metric]
-            records = dbretina_internal.dbrp_filter_pairs(dbrp_path, mid, cutoff)
+        # Try Parquet/PairwiseStore first
+        try:
+            from dbretina.compat import open_pairwise
+            store = open_pairwise(pairwise_file)
+        except Exception:
+            store = None
+
+        if store is not None:
+            ctx.obj.INFO("using Parquet pairwise data via PairwiseStore")
+            names_map = store.get_names_map()
+            cols = ["group_1_id", "group_2_id", "shared_features",
+                    "containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio"]
+            if store.has_pvalue:
+                cols.append("pvalue")
+            df = store.to_pandas(metric=metric, cutoff=cutoff, columns=cols)
             with open(output_file, 'a') as out:
-                for rec in records:
-                    fields = [str(rec['group_1_id']), str(rec['group_2_id']),
-                             rec['group_1_name'], rec['group_2_name'],
-                             str(rec['shared_features']),
-                             f"{rec['containment']:.1f}", f"{rec['ochiai']:.1f}",
-                             f"{rec['jaccard']:.1f}", f"{rec['csi']:.1f}",
-                             f"{rec['dice']:.1f}", f"{rec['odds_ratio']:.1f}"]
-                    if 'pvalue' in rec:
-                        fields.append(str(rec['pvalue']))
+                for _, row in df.iterrows():
+                    gid1 = int(row['group_1_id'])
+                    gid2 = int(row['group_2_id'])
+                    fields = [str(gid1), str(gid2),
+                             names_map.get(gid1, ""), names_map.get(gid2, ""),
+                             str(int(row['shared_features'])),
+                             f"{row['containment']:.1f}", f"{row['ochiai']:.1f}",
+                             f"{row['jaccard']:.1f}", f"{row['csi']:.1f}",
+                             f"{row['dice']:.1f}", f"{row['odds_ratio']:.1f}"]
+                    if store.has_pvalue:
+                        fields.append(str(row['pvalue']))
                     out.write('\t'.join(fields) + '\n')
+            store.close()
         else:
-            command = f"grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"
-            result = execute_bash_command(command)
+            # Fallback: existing .dbrp / TSV code
+            dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
+            metric_name_to_id = {
+                "containment": 0, "ochiai": 1, "jaccard": 2, "csi": 3,
+                "dice": 4, "odds_ratio": 5, "pvalue": 6,
+            }
+            if os.path.exists(dbrp_path) and metric in metric_name_to_id:
+                mid = metric_name_to_id[metric]
+                records = dbretina_internal.dbrp_filter_pairs(dbrp_path, mid, cutoff)
+                with open(output_file, 'a') as out:
+                    for rec in records:
+                        fields = [str(rec['group_1_id']), str(rec['group_2_id']),
+                                 rec['group_1_name'], rec['group_2_name'],
+                                 str(rec['shared_features']),
+                                 f"{rec['containment']:.1f}", f"{rec['ochiai']:.1f}",
+                                 f"{rec['jaccard']:.1f}", f"{rec['csi']:.1f}",
+                                 f"{rec['dice']:.1f}", f"{rec['odds_ratio']:.1f}"]
+                        if 'pvalue' in rec:
+                            fields.append(str(rec['pvalue']))
+                        out.write('\t'.join(fields) + '\n')
+            else:
+                command = f"grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"
+                result = execute_bash_command(command)
 
     elif groups_file != "NA":
         ctx.obj.INFO(f"Querying by groups file {groups_file}\nPlease wait...")

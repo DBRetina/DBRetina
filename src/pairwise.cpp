@@ -14,6 +14,7 @@
 #include <math.h>
 #include "DBRetinaIndex.hpp"
 #include "DBRetinaPairwise.hpp"
+#include "ParquetPairwiseWriter.hpp"
 
 using boost::adaptors::transformed;
 using boost::algorithm::join;
@@ -212,29 +213,8 @@ inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string
     inputFile.close();
 }
 
-inline uint64_t get_population_size(string filename) {
-    return 44260; // TODO - remove this
-
-    std::ifstream inputFile(filename);
-
-    if (!inputFile.is_open()) {
-        std::cerr << "Error opening the file: " << filename << std::endl;
-        return 0;
-    }
-
-    std::string line;
-    uint64_t counter = 0;
-    while (std::getline(inputFile, line)) {
-        if (line.find("features:") != std::string::npos) {
-            std::string number = line.substr(line.find(":") + 1);
-            inputFile.close();
-            return stoi(number);
-        }
-    }
-    inputFile.close();
-    return 0;
-
-}
+// NOTE: Population size is now correctly loaded from .dbri metadata
+// via dbri.get_population_size() at runtime. See line ~430.
 
 
 namespace dbretina {
@@ -533,6 +513,10 @@ namespace dbretina {
         // --- TSV output (kept for migration) ---
         std::ofstream myfile;
         myfile.open(index_prefix + "_DBRetina_pairwise.tsv");
+        myfile << "# DBRetina pairwise output\n";
+        myfile << "# population_size: " << population_size << '\n';
+        myfile << "# NOTE: This file contains raw (uncorrected) p-values. FDR-corrected results are in *_fdr.tsv if --fdr was used.\n";
+        myfile << "# containment = shared/min(s1,s2)\n";
         myfile << "#nodes:" << namesMap.size() << '\n';
         myfile << "#command: " << full_command << '\n';
 
@@ -581,6 +565,79 @@ namespace dbretina {
 
         uint64_t line_count = 0;
 
+        // --- Parquet output (parallel) ---
+        std::string parquet_dir = index_prefix + "_DBRetina_pairwise";
+        ParquetPairwiseWriter parquet_writer(parquet_dir, calculate_pvalue, user_threads, namesMap);
+
+        // Convert edges to vector for parallel iteration
+        auto vec_edges = std::vector<std::pair<std::pair<uint32_t, uint32_t>, uint64_t>>(edges.begin(), edges.end());
+        int n_edges = vec_edges.size();
+
+        auto parquet_begin = Time::now();
+
+        // Parallel Parquet write
+        omp_set_num_threads(user_threads);
+#pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            int nthreads = omp_get_num_threads();
+            int edge_start = tid * n_edges / nthreads;
+            int edge_end = (tid + 1) * n_edges / nthreads;
+
+            for (int ei = edge_start; ei < edge_end; ei++) {
+                auto& edge = vec_edges[ei];
+                uint64_t shared_features = edge.second;
+                uint32_t source_1 = edge.first.first;
+                uint32_t source_2 = edge.first.second;
+                uint32_t source_1_features = groupID_to_featureCount[source_1];
+                uint32_t source_2_features = groupID_to_featureCount[source_2];
+                uint32_t minimum_source_features = min(source_1_features, source_2_features);
+
+                // Similarity metrics with division-by-zero protection
+                double containment_val = (minimum_source_features > 0)
+                    ? ((double)shared_features / minimum_source_features) * 100 : 0.0;
+                double ochiai_val = (source_1_features > 0 && source_2_features > 0)
+                    ? 100 * ((double)shared_features / sqrt((double)source_1_features * (double)source_2_features)) : 0.0;
+                double jaccard_val = (source_1_features + source_2_features - shared_features > 0)
+                    ? 100 * ((double)shared_features / (source_1_features + source_2_features - shared_features)) : 0.0;
+                double csi_val = (source_1_features > 0 && source_2_features > 0)
+                    ? 100 * ((double)shared_features * shared_features / ((double)source_1_features * source_2_features)) : 0.0;
+                double dice_val = (source_1_features + source_2_features > 0)
+                    ? 100 * (2.0 * shared_features / (source_1_features + source_2_features)) : 0.0;
+                double odds_ratio_val = odds_ratio(shared_features, source_1_features, source_2_features, population_size);
+
+                // Apply cutoff
+                double cutoff_val = 0;
+                if (cutoff_distance_type == "containment") cutoff_val = containment_val;
+                else if (cutoff_distance_type == "ochiai") cutoff_val = ochiai_val;
+                else if (cutoff_distance_type == "jaccard") cutoff_val = jaccard_val;
+                if (cutoff_val < cutoff_threshold) continue;
+
+                ParquetPairRecord prec;
+                prec.group_1_id = source_1;
+                prec.group_2_id = source_2;
+                prec.shared_features = shared_features;
+                prec.containment = static_cast<float>(containment_val);
+                prec.ochiai = static_cast<float>(ochiai_val);
+                prec.jaccard = static_cast<float>(jaccard_val);
+                prec.csi = static_cast<float>(csi_val);
+                prec.dice = static_cast<float>(dice_val);
+                prec.odds_ratio = static_cast<float>(odds_ratio_val);
+                prec.has_pvalue = calculate_pvalue;
+                if (calculate_pvalue) {
+                    prec.pvalue = fastHyperPValue(shared_features, source_1_features, source_2_features, population_size);
+                }
+
+                parquet_writer.write_record(tid, prec);
+            }
+        }
+
+        parquet_writer.finalize(full_command, population_size, cutoff_distance_type, cutoff_threshold);
+        cout << "[dev] parallel parquet write: " << std::chrono::duration<double, std::milli>(Time::now() - parquet_begin).count() / 1000 << " secs" << endl;
+        cout << "[dev] wrote parquet pairwise to: " << parquet_dir << "/ (" << parquet_writer.get_stats().num_pairs << " pairs)" << endl;
+
+        // --- Sequential TSV + .dbrp output (legacy, kept for compatibility) ---
+        auto legacy_begin = Time::now();
 
         for (const auto& edge : edges) {
 
@@ -592,38 +649,39 @@ namespace dbretina {
             uint32_t source_1_features = groupID_to_featureCount[source_1];
             uint32_t source_2_features = groupID_to_featureCount[source_2];
             uint32_t minimum_source_features = min(source_1_features, source_2_features);
+            uint32_t maximum_source_features = max(source_1_features, source_2_features);
 
-            // containment
-            distance_metrics["containment"] = ((double)shared_features / minimum_source_features) * 100;
+            // Warn once if any pair has >1000x size difference
+            static bool size_ratio_warned = false;
+            if (!size_ratio_warned && minimum_source_features > 0) {
+                double size_ratio = (double)maximum_source_features / minimum_source_features;
+                if (size_ratio > 1000) {
+                    cerr << "NOTE: Some pairs have >1000x size difference. "
+                         << "Containment may be more interpretable than Jaccard/Ochiai for such pairs." << endl;
+                    size_ratio_warned = true;
+                }
+            }
 
+            // Similarity metrics with division-by-zero protection
+            distance_metrics["containment"] = (minimum_source_features > 0)
+                ? ((double)shared_features / minimum_source_features) * 100 : 0.0;
+            distance_metrics["ochiai"] = (source_1_features > 0 && source_2_features > 0)
+                ? 100 * ((double)shared_features / sqrt((double)source_1_features * (double)source_2_features)) : 0.0;
+            distance_metrics["jaccard"] = (source_1_features + source_2_features - shared_features > 0)
+                ? 100 * ((double)shared_features / (source_1_features + source_2_features - shared_features)) : 0.0;
+            distance_metrics["csi"] = (source_1_features > 0 && source_2_features > 0)
+                ? 100 * ((double)shared_features * shared_features / ((double)source_1_features * source_2_features)) : 0.0;
+            distance_metrics["dice"] = (source_1_features + source_2_features > 0)
+                ? 100 * (2.0 * shared_features / (source_1_features + source_2_features)) : 0.0;
 
-            // Ochiai distance
-            distance_metrics["ochiai"] = 100 * ((double)shared_features / sqrt((double)source_1_features * (double)source_2_features));
+            int k_shared_features = shared_features;
+            int s_source_1_features = source_1_features;
+            int M_source_2_features = source_2_features;
+            int N_population_size = population_size;
 
-
-            // Jaccard distance (if size of samples is roughly similar)
-            // J(A, B) = 1 - |A ∩ B| / (|A| + |B| - |A ∩ B|) <- this is distance not similarity
-            distance_metrics["jaccard"] = 100 * ((double)shared_features / (source_1_features + source_2_features - shared_features));
-
-            // CSI (Containment Similarity Index): shared^2 / (|A| * |B|) * 100
-            distance_metrics["csi"] = 100 * ((double)shared_features * shared_features / ((double)source_1_features * source_2_features));
-
-            // Dice coefficient: 2 * shared / (|A| + |B|) * 100
-            distance_metrics["dice"] = 100 * (2.0 * shared_features / (source_1_features + source_2_features));
-
-            // p-value using hypergeometric CDF
-            int k_shared_features = shared_features;  // Number of successes
-            int s_source_1_features = source_1_features;  // Sample size
-            int M_source_2_features = source_2_features;  // Number of successes in the population
-            int N_population_size = population_size;  // Population size is the total number of successes in the population which is in our case the total number of genes ()
-
-
-            // Odds ratio
             distance_metrics["odds_ratio"] = odds_ratio(k_shared_features, s_source_1_features, M_source_2_features, N_population_size);
 
-
             if (distance_metrics[cutoff_distance_type] < cutoff_threshold) continue;
-
 
             distances_stats.add_stat("containment", distance_metrics["containment"]);
             distances_stats.add_stat("ochiai", distance_metrics["ochiai"]);
@@ -636,7 +694,7 @@ namespace dbretina {
             auto map_to_bucket = [](double value) -> int {
                 int lower = static_cast<int>(std::floor(value / 5)) * 5;
                 int idx = lower / 5;
-                if (idx >= 20) idx = 20;  // 100-100 bucket
+                if (idx >= 20) idx = 20;
                 return idx;
             };
             dbrp_stats.histograms[0].bucket_counts[map_to_bucket(distance_metrics["containment"])]++;
@@ -685,12 +743,12 @@ namespace dbretina {
             myfile << '\n';
         }
 
-
         myfile.close();
         distances_stats.stats_to_json_file(index_prefix + "_DBRetina_pairwise_stats.json");
 
         // Finalize .dbrp
         pw.finalize_write(dbrp_stats, dbrp_metadata);
+        cout << "[dev] legacy TSV + .dbrp write: " << std::chrono::duration<double, std::milli>(Time::now() - legacy_begin).count() / 1000 << " secs" << endl;
         cout << "[dev] wrote .dbrp binary pairwise file: " << index_prefix << "_DBRetina_pairwise.dbrp" << endl;
     }
 }

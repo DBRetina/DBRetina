@@ -79,21 +79,25 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
 
     LOGGER.INFO(f"parsing the pairwise file: {pairwise_file}")
 
-    # Check for .dbrp binary pairwise file first
-    dbrp_path = os.path.splitext(pairwise_file)[0] + ".dbrp"
-    if not os.path.exists(dbrp_path):
-        # Also try replacing _pairwise.tsv with _pairwise.dbrp
-        dbrp_path = pairwise_file.replace("_pairwise.tsv", "_pairwise.dbrp")
+    # Try Parquet/PairwiseStore first
+    try:
+        from dbretina.compat import open_pairwise
+        store = open_pairwise(pairwise_file)
+    except Exception:
+        store = None
 
-    if os.path.exists(dbrp_path):
-        LOGGER.INFO(f"found .dbrp file: {dbrp_path}, using binary pairwise reader")
-        # containment metric_id = 0
-        records = dbretina_internal.dbrp_filter_pairs(dbrp_path, 0, cutoff)
-        for rec in records:
-            gene_set1 = rec['group_1_name']
-            gene_set2 = rec['group_2_name']
-            gene_set1_len = gene_set_to_length[gene_set1]
-            gene_set2_len = gene_set_to_length[gene_set2]
+    if store is not None:
+        LOGGER.INFO("using Parquet pairwise data via PairwiseStore")
+        names_map = store.get_names_map()
+        df = store.to_pandas(
+            metric="containment", cutoff=cutoff,
+            columns=["group_1_id", "group_2_id", "containment"]
+        )
+        for _, row in df.iterrows():
+            gene_set1 = names_map.get(int(row["group_1_id"]), "")
+            gene_set2 = names_map.get(int(row["group_2_id"]), "")
+            gene_set1_len = gene_set_to_length.get(gene_set1, 0)
+            gene_set2_len = gene_set_to_length.get(gene_set2, 0)
 
             if gene_set1_len < gene_set2_len:
                 gene_sets_nodes_data[gene_set1]['fragmentation'] -= 1
@@ -101,35 +105,52 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
             elif gene_set1_len > gene_set2_len:
                 gene_sets_nodes_data[gene_set1]['heterogeneity'] += 1
                 gene_sets_nodes_data[gene_set2]['fragmentation'] -= 1
+        store.close()
     else:
-        with open(pairwise_file, 'r') as f:
-            # Skip comment lines
-            while True:
-                pos = f.tell()  # remember the position
-                line = f.readline()
-                if not line.startswith("#"):
-                    f.seek(pos)  # rewind to the position before the line
-                    break
+        # Fallback: existing .dbrp / TSV code
+        dbrp_path = os.path.splitext(pairwise_file)[0] + ".dbrp"
+        if not os.path.exists(dbrp_path):
+            dbrp_path = pairwise_file.replace("_pairwise.tsv", "_pairwise.dbrp")
 
-            # skip the header
-            next(f)
+        if os.path.exists(dbrp_path):
+            LOGGER.INFO(f"found .dbrp file: {dbrp_path}, using binary pairwise reader")
+            records = dbretina_internal.dbrp_filter_pairs(dbrp_path, 0, cutoff)
+            for rec in records:
+                gene_set1 = rec['group_1_name']
+                gene_set2 = rec['group_2_name']
+                gene_set1_len = gene_set_to_length[gene_set1]
+                gene_set2_len = gene_set_to_length[gene_set2]
 
-            reader = csv.reader(f, delimiter="\t")
-            for row in reader:
-                _containment = float(row[DISTANCE_COL])
-                if _containment >= cutoff:
-                    # Extract the gene_set names from columns 3 and 4
-                    gene_set1 = row[2]
-                    gene_set2 = row[3]
-                    gene_set1_len = gene_set_to_length[gene_set1]
-                    gene_set2_len = gene_set_to_length[gene_set2]
+                if gene_set1_len < gene_set2_len:
+                    gene_sets_nodes_data[gene_set1]['fragmentation'] -= 1
+                    gene_sets_nodes_data[gene_set2]['heterogeneity'] += 1
+                elif gene_set1_len > gene_set2_len:
+                    gene_sets_nodes_data[gene_set1]['heterogeneity'] += 1
+                    gene_sets_nodes_data[gene_set2]['fragmentation'] -= 1
+        else:
+            with open(pairwise_file, 'r') as f:
+                while True:
+                    pos = f.tell()
+                    line = f.readline()
+                    if not line.startswith("#"):
+                        f.seek(pos)
+                        break
+                next(f)
+                reader = csv.reader(f, delimiter="\t")
+                for row in reader:
+                    _containment = float(row[DISTANCE_COL])
+                    if _containment >= cutoff:
+                        gene_set1 = row[2]
+                        gene_set2 = row[3]
+                        gene_set1_len = gene_set_to_length[gene_set1]
+                        gene_set2_len = gene_set_to_length[gene_set2]
 
-                    if gene_set1_len < gene_set2_len:
-                        gene_sets_nodes_data[gene_set1]['fragmentation'] -= 1
-                        gene_sets_nodes_data[gene_set2]['heterogeneity'] += 1
-                    elif gene_set1_len > gene_set2_len:
-                        gene_sets_nodes_data[gene_set1]['heterogeneity'] += 1
-                        gene_sets_nodes_data[gene_set2]['fragmentation'] -= 1
+                        if gene_set1_len < gene_set2_len:
+                            gene_sets_nodes_data[gene_set1]['fragmentation'] -= 1
+                            gene_sets_nodes_data[gene_set2]['heterogeneity'] += 1
+                        elif gene_set1_len > gene_set2_len:
+                            gene_sets_nodes_data[gene_set1]['heterogeneity'] += 1
+                            gene_sets_nodes_data[gene_set2]['fragmentation'] -= 1
 
 
     # convert to dataframe

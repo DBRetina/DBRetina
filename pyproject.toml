@@ -45,8 +45,11 @@ server = [
 neo4j = [
     "neo4j>=5.0.0",
 ]
+stats = [
+    "statsmodels>=0.14.0",
+]
 all = [
-    "DBRetina[server,neo4j]",
+    "DBRetina[server,neo4j,stats]",
 ]
 
 [project.scripts]

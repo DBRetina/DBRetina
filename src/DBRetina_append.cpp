@@ -27,6 +27,9 @@ namespace dbretina {
 
         cerr << "[append] Loading existing index from " << existing_dbri_path << endl;
 
+        // Get old population size for comparison later
+        uint64_t old_population_size = dbri.get_population_size();
+
         // Load PHMAP
         DBRetina_PHMAP* frame = dbri.load_phmap();
 
@@ -316,6 +319,14 @@ namespace dbretina {
         cerr << "[append] Wrote updated index to " << output_dbri_path << endl;
         cerr << "[append] Total groups: " << total_groups
              << " (" << total_existing_groups << " existing + " << new_groups_count << " new)" << endl;
+
+        // Warn if population size changed (affects p-value comparability)
+        uint64_t new_population_size = frame->size();
+        if (new_population_size != old_population_size) {
+            cerr << "[append] NOTE: Population size changed from " << old_population_size
+                 << " to " << new_population_size << " after append." << endl;
+            cerr << "[append] Previously computed p-values are NOT directly comparable to new pairwise results." << endl;
+        }
 
         delete legend;
         delete frame;
