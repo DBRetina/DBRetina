@@ -7,7 +7,6 @@
 :root {
   --sidebar-width: 300px;
   --toolbar-height: 44px;
-  --query-panel-height: 280px;
   --bg-primary: #f8f9fa;
   --bg-sidebar: #ffffff;
   --bg-card: #ffffff;
@@ -102,6 +101,7 @@ input, select, textarea {
 
 .main-panel {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -153,8 +153,16 @@ input, select, textarea {
 
 .content-area {
   flex: 1;
+  min-width: 0;
   display: flex;
   overflow: hidden;
+  position: relative;
+}
+
+/* All direct children except panels must shrink to fit */
+.content-area > *:not(.detail-panel-wrapper):not(.query-panel-wrapper) {
+  flex: 1;
+  min-width: 0;
 }
 
 .content-area .graph-container {
@@ -268,41 +276,99 @@ input, select, textarea {
   flex-shrink: 0;
 }
 
-/* Query panel */
-.query-panel {
-  border-top: 1px solid var(--border-color);
+/* Query panel — collapsible side panel (left edge of content-area) */
+.query-panel-wrapper {
+  display: flex;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+.query-panel-toggle {
+  width: 24px;
+  min-width: 24px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-color);
+  border-left: none;
+  border-top: none;
+  border-bottom: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 0;
+  position: relative;
+  transition: color 0.15s, background 0.15s;
+}
+
+.query-panel-toggle:hover {
+  color: var(--accent);
+  background: var(--bg-primary);
+}
+
+.query-panel-badge {
+  position: absolute;
+  top: 12px;
+  left: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.query-panel {
+  width: 420px;
+  height: 100%;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.2s ease, min-width 0.2s ease, opacity 0.15s ease;
+}
+
+.query-panel-wrapper.collapsed .query-panel {
+  width: 0;
+  min-width: 0;
+  opacity: 0;
+  border-right: none;
+  overflow: hidden;
+}
+
+.query-panel-wrapper.open .query-panel {
+  min-width: 420px;
 }
 
 .query-panel-header {
   display: flex;
   align-items: center;
-  padding: 6px 12px;
-  cursor: pointer;
-  user-select: none;
+  padding: 8px 12px;
   gap: 8px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
-.query-panel-header span {
-  font-size: 12px;
+.query-panel-header > span {
+  font-size: 13px;
   font-weight: 600;
 }
 
 .query-panel-body {
   display: flex;
   flex-direction: column;
-  height: var(--query-panel-height);
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .query-tabs {
   display: flex;
   gap: 0;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border-color);
 }
 
 .query-tab {
-  padding: 6px 16px;
+  padding: 5px 12px;
   border: none;
   background: transparent;
   font-size: 12px;
@@ -317,7 +383,6 @@ input, select, textarea {
 }
 
 .query-editor {
-  flex: 1;
   display: flex;
   flex-direction: column;
   padding: 8px 12px;
@@ -325,7 +390,6 @@ input, select, textarea {
 }
 
 .query-editor textarea {
-  flex: 1;
   min-height: 60px;
   padding: 8px;
   border: 1px solid var(--border-color);
@@ -358,10 +422,12 @@ input, select, textarea {
 }
 
 .query-results {
-  max-height: 120px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   border: 1px solid var(--border-color);
   border-radius: 4px;
+  margin: 0 12px 8px;
 }
 
 .query-results table {
@@ -387,15 +453,96 @@ input, select, textarea {
   white-space: nowrap;
 }
 
-/* Detail panel */
+@media (max-width: 1200px) {
+  .query-panel-wrapper {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 60;
+  }
+
+  .query-panel-wrapper.open .query-panel {
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.15);
+  }
+}
+
+/* Detail panel wrapper — toggle tab + panel in normal flex flow */
+.detail-panel-wrapper {
+  display: flex;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+/* Toggle tab — always visible, part of normal flow */
+.detail-panel-toggle {
+  width: 24px;
+  min-width: 24px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-sidebar);
+  border-left: 1px solid var(--border-color);
+  border-right: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 0;
+  position: relative;
+  transition: color 0.15s, background 0.15s;
+}
+
+.detail-panel-toggle:hover {
+  color: var(--accent);
+  background: var(--bg-primary);
+}
+
+/* Blue dot badge when panel is collapsed but has content */
+.detail-panel-badge {
+  position: absolute;
+  top: 12px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* The panel itself */
 .detail-panel {
   width: 340px;
-  min-width: 340px;
   height: 100%;
   background: var(--bg-sidebar);
   border-left: 1px solid var(--border-color);
   overflow-y: auto;
-  flex-shrink: 0;
+  overflow-x: hidden;
+  transition: width 0.2s ease, min-width 0.2s ease, opacity 0.15s ease;
+}
+
+.detail-panel-wrapper.collapsed .detail-panel {
+  width: 0;
+  min-width: 0;
+  opacity: 0;
+  border-left: none;
+  overflow: hidden;
+}
+
+.detail-panel-wrapper.open .detail-panel {
+  min-width: 340px;
+}
+
+@media (max-width: 1200px) {
+  .detail-panel-wrapper {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 60;
+  }
+
+  .detail-panel-wrapper.open .detail-panel {
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.15);
+  }
 }
 
 .detail-panel-header {
@@ -648,5 +795,22 @@ input, select, textarea {
   to {
     opacity: 1;
     transform: translateX(0);
+  }
+}
+
+/* Responsive: narrower sidebar on medium screens */
+@media (max-width: 1400px) {
+  :root {
+    --sidebar-width: 260px;
+  }
+}
+
+/* Responsive: collapse sidebar on small screens */
+@media (max-width: 900px) {
+  :root {
+    --sidebar-width: 220px;
+  }
+  .sidebar-header h1 {
+    font-size: 14px;
   }
 }

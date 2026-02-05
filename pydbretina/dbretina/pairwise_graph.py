@@ -267,6 +267,132 @@ class PairwiseGraph:
             parameters={"src": src_id, "tgt": tgt_id},
         )
 
+    def shortest_path_full(self, source: str, target: str) -> dict:
+        """Find the shortest path with full node and edge information.
+
+        Args:
+            source: Source group name.
+            target: Target group name.
+
+        Returns:
+            Dict with path_nodes (list of names), path_length, and edge info.
+        """
+        src_id = self._resolve_id(source)
+        tgt_id = self._resolve_id(target)
+
+        if src_id is None:
+            raise KeyError(f"Source group not found: {source}")
+        if tgt_id is None:
+            raise KeyError(f"Target group not found: {target}")
+
+        # KuzuDB uses different syntax for path queries
+        # We need to get the path nodes using recursive pattern
+        try:
+            # First get the path length
+            length_df = self.cypher(
+                f'MATCH (a:`Group`)-[r:SIMILAR_TO* SHORTEST 1..30]-(b:`Group`) '
+                f"WHERE a.id = $src AND b.id = $tgt "
+                f"RETURN length(r) AS path_length",
+                parameters={"src": src_id, "tgt": tgt_id},
+            )
+
+            if length_df.empty:
+                return {
+                    "source": source,
+                    "target": target,
+                    "path_length": -1,
+                    "path_nodes": [],
+                    "connected": False,
+                }
+
+            path_length = int(length_df.iloc[0]["path_length"])
+
+            # For short paths, we can reconstruct by finding intermediate nodes
+            # This is a workaround since KuzuDB path extraction can be limited
+            if path_length == 1:
+                # Direct connection
+                return {
+                    "source": source,
+                    "target": target,
+                    "path_length": 1,
+                    "path_nodes": [source, target],
+                    "connected": True,
+                }
+
+            # For longer paths, use BFS to reconstruct
+            path_nodes = self._reconstruct_path_bfs(src_id, tgt_id, path_length)
+
+            return {
+                "source": source,
+                "target": target,
+                "path_length": path_length,
+                "path_nodes": path_nodes,
+                "connected": True,
+            }
+
+        except Exception as e:
+            # If path finding fails, return not connected
+            return {
+                "source": source,
+                "target": target,
+                "path_length": -1,
+                "path_nodes": [],
+                "connected": False,
+                "error": str(e),
+            }
+
+    def _reconstruct_path_bfs(self, src_id: int, tgt_id: int, max_depth: int) -> list[str]:
+        """Reconstruct shortest path using BFS.
+
+        Args:
+            src_id: Source group ID.
+            tgt_id: Target group ID.
+            max_depth: Maximum path length to search.
+
+        Returns:
+            List of group names along the path.
+        """
+        from collections import deque
+
+        # Get all edges
+        edges_df = self.cypher(
+            'MATCH (a:`Group`)-[r:SIMILAR_TO]-(b:`Group`) '
+            'RETURN a.id AS src, b.id AS dst'
+        )
+
+        # Build adjacency list
+        adj: dict[int, set[int]] = {}
+        for _, row in edges_df.iterrows():
+            s, d = int(row["src"]), int(row["dst"])
+            if s not in adj:
+                adj[s] = set()
+            if d not in adj:
+                adj[d] = set()
+            adj[s].add(d)
+            adj[d].add(s)
+
+        # BFS to find path
+        queue = deque([(src_id, [src_id])])
+        visited = {src_id}
+
+        while queue:
+            current, path = queue.popleft()
+
+            if current == tgt_id:
+                # Convert IDs to names
+                return [self._names_map.get(nid, str(nid)) for nid in path]
+
+            if len(path) > max_depth:
+                continue
+
+            for neighbor in adj.get(current, []):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, path + [neighbor]))
+
+        # No path found
+        return [self._names_map.get(src_id, str(src_id))]
+
     def degree_distribution(self) -> pd.DataFrame:
         """Compute degree distribution of the graph."""
         return self.cypher(

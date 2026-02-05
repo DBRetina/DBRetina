@@ -16,7 +16,7 @@ interface Props {
 }
 
 const CYPHER_PLACEHOLDER = `// Example: Find neighbors of a disease
-MATCH (a:Group)-[r:SIMILAR_TO]->(b:Group)
+MATCH (a:\`Group\`)-[r:SIMILAR_TO]->(b:\`Group\`)
 WHERE a.name = "alzheimer's disease"
 RETURN b.name, r.ochiai
 ORDER BY r.ochiai DESC
@@ -49,7 +49,7 @@ export default function CypherEditor({ onResult, onError, onLoading }: Props) {
 
   const handleRun = useCallback(async () => {
     const q = query.trim();
-    if (!q || q === CYPHER_PLACEHOLDER) return;
+    if (!q) return;
 
     // Frontend validation
     const validation = validateCypherSafety(q);

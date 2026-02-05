@@ -91,7 +91,23 @@ export function validateSearchQuery(query: string): ValidationResult {
 }
 
 /**
- * Validate SQL query for dangerous patterns
+ * Strip string literal contents so values like "gene_set_1" don't
+ * trigger keyword checks for SET.
+ */
+function stripStringLiterals(query: string): string {
+  return query.replace(/'[^']*'|"[^"]*"/g, "''");
+}
+
+/**
+ * Escape a string for use in a RegExp constructor
+ */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Validate SQL query for dangerous patterns.
+ * Uses word-boundary matching on the query after stripping string literals.
  */
 const DANGEROUS_SQL_PATTERNS = [
   "DROP",
@@ -105,9 +121,6 @@ const DANGEROUS_SQL_PATTERNS = [
   "EXECUTE",
   "GRANT",
   "REVOKE",
-  "--",
-  "/*",
-  "*/",
 ];
 
 export function validateSQLSafety(query: string): ValidationResult {
@@ -115,9 +128,10 @@ export function validateSQLSafety(query: string): ValidationResult {
     return { valid: false, error: "Query is required" };
   }
 
-  const upper = query.toUpperCase();
+  const stripped = stripStringLiterals(query);
   for (const pattern of DANGEROUS_SQL_PATTERNS) {
-    if (upper.includes(pattern)) {
+    const regex = new RegExp("\\b" + escapeRegExp(pattern) + "\\b", "i");
+    if (regex.test(stripped)) {
       return {
         valid: false,
         error: `Query contains blocked operation: ${pattern}`,
@@ -129,19 +143,17 @@ export function validateSQLSafety(query: string): ValidationResult {
 }
 
 /**
- * Validate Cypher query for dangerous patterns
+ * Validate Cypher query for dangerous patterns.
+ * Uses word-boundary matching on the query after stripping string literals.
  */
 const DANGEROUS_CYPHER_PATTERNS = [
-  "DELETE",
   "DETACH DELETE",
+  "DELETE",
   "CREATE",
   "MERGE",
   "SET",
   "REMOVE",
   "DROP",
-  "CALL",
-  "LOAD",
-  "//",
 ];
 
 export function validateCypherSafety(query: string): ValidationResult {
@@ -149,9 +161,10 @@ export function validateCypherSafety(query: string): ValidationResult {
     return { valid: false, error: "Query is required" };
   }
 
-  const upper = query.toUpperCase();
+  const stripped = stripStringLiterals(query);
   for (const pattern of DANGEROUS_CYPHER_PATTERNS) {
-    if (upper.includes(pattern)) {
+    const regex = new RegExp("\\b" + escapeRegExp(pattern) + "\\b", "i");
+    if (regex.test(stripped)) {
       return {
         valid: false,
         error: `Query contains blocked operation: ${pattern}`,

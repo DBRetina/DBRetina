@@ -13,7 +13,7 @@ export const initialState: DashboardState = {
   highlightNodes: new Set(),
 
   // Layout settings
-  layoutAlgorithm: "fr",
+  layoutAlgorithm: "force",
   layoutPositions: null,
 
   // Renderer settings
@@ -50,6 +50,19 @@ export const initialState: DashboardState = {
   geneStatistics: null,
   geneGroups: null,
 
+  // Compare mode
+  compareState: {
+    active: false,
+    nodeA: null,
+    nodeB: null,
+  },
+
+  // Detail panel starts collapsed
+  detailPanelOpen: false,
+
+  // Node filter
+  nodeFilter: null,
+
   // Legacy fields
   loading: {},
   error: null,
@@ -72,13 +85,31 @@ export function dashboardReducer(
     case "SET_CUTOFF":
       return { ...state, cutoff: action.cutoff, graphData: null };
     case "SET_GRAPH_DATA":
-      return { ...state, graphData: action.data };
+      return {
+        ...state,
+        graphData: action.data,
+        // Exit compare mode and clear node filter when graph data changes
+        compareState: { active: false, nodeA: null, nodeB: null },
+        nodeFilter: null,
+      };
     case "SET_ACTIVE_VIEW":
       return { ...state, activeView: action.view };
     case "SELECT_NODE":
-      return { ...state, selectedNode: action.node, selectedEdge: null };
+      return {
+        ...state,
+        selectedNode: action.node,
+        selectedEdge: null,
+        // Auto-open detail panel when selecting a node
+        detailPanelOpen: action.node ? true : state.detailPanelOpen,
+      };
     case "SELECT_EDGE":
-      return { ...state, selectedEdge: action.edge, selectedNode: null };
+      return {
+        ...state,
+        selectedEdge: action.edge,
+        selectedNode: null,
+        // Auto-open detail panel when selecting an edge
+        detailPanelOpen: action.edge ? true : state.detailPanelOpen,
+      };
     case "TOGGLE_QUERY_PANEL":
       return { ...state, queryPanelOpen: !state.queryPanelOpen };
     case "SET_FOCUS_GROUP":
@@ -249,6 +280,38 @@ export function dashboardReducer(
         geneStatistics: null,
         geneGroups: null,
       };
+
+    // Compare mode actions
+    case "ENTER_COMPARE_MODE":
+      return {
+        ...state,
+        compareState: { active: true, nodeA: action.nodeA, nodeB: null },
+        selectedNode: null,
+        selectedEdge: null,
+        detailPanelOpen: true,
+      };
+    case "SET_COMPARE_NODE_B":
+      return {
+        ...state,
+        compareState: { ...state.compareState, nodeB: action.nodeB },
+      };
+    case "EXIT_COMPARE_MODE":
+      return {
+        ...state,
+        compareState: { active: false, nodeA: null, nodeB: null },
+      };
+
+    // Detail panel actions
+    case "TOGGLE_DETAIL_PANEL":
+      return { ...state, detailPanelOpen: !state.detailPanelOpen };
+    case "SET_DETAIL_PANEL_OPEN":
+      return { ...state, detailPanelOpen: action.open };
+
+    // Node filter actions
+    case "SET_NODE_FILTER":
+      return { ...state, nodeFilter: action.nodes };
+    case "CLEAR_NODE_FILTER":
+      return { ...state, nodeFilter: null };
 
     default:
       return state;

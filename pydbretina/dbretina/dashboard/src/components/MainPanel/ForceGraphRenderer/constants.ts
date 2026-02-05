@@ -21,13 +21,25 @@ export const THRESHOLDS = {
 
 export const PHYSICS = {
   /** Alpha decay rate (higher = faster stabilization) */
-  ALPHA_DECAY: 0.02,
+  ALPHA_DECAY: 0.035,
   /** Velocity decay (higher = more friction) */
-  VELOCITY_DECAY: 0.3,
+  VELOCITY_DECAY: 0.4,
   /** Warmup ticks before rendering */
   WARMUP_TICKS: 100,
   /** Cooldown ticks after interaction */
   COOLDOWN_TICKS: 200,
+  /** Charge (repulsion) strength - more negative = stronger push */
+  CHARGE_STRENGTH: -80,
+  /** Max distance for charge interaction */
+  CHARGE_DISTANCE_MAX: 500,
+  /** Link distance (ideal spring length) */
+  LINK_DISTANCE: 50,
+  /** Link strength */
+  LINK_STRENGTH: 0.3,
+  /** Center gravity strength */
+  CENTER_STRENGTH: 0.05,
+  /** Collision radius multiplier */
+  COLLIDE_RADIUS_MULT: 1.2,
 };
 
 export const COLORS = {

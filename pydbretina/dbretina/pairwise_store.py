@@ -248,6 +248,31 @@ class PairwiseStore:
         gene_index = self._get_gene_index()
         return sorted(gene_index.get(feature_name.lower(), set()))
 
+    def search_gene_names(self, query: str, limit: int = 20) -> list[dict]:
+        """Search gene names by prefix/substring match.
+
+        Args:
+            query: Search string (case-insensitive).
+            limit: Max results to return.
+
+        Returns:
+            List of dicts with gene name and group count, sorted by
+            exact-prefix first then substring, each sub-sorted by group count.
+        """
+        gene_index = self._get_gene_index()
+        q = query.lower()
+        prefix_matches = []
+        substring_matches = []
+        for gene_name, groups in gene_index.items():
+            if gene_name.startswith(q):
+                prefix_matches.append({"gene": gene_name, "group_count": len(groups)})
+            elif q in gene_name:
+                substring_matches.append({"gene": gene_name, "group_count": len(groups)})
+        # Sort each bucket by group count descending (most prevalent first)
+        prefix_matches.sort(key=lambda x: -x["group_count"])
+        substring_matches.sort(key=lambda x: -x["group_count"])
+        return (prefix_matches + substring_matches)[:limit]
+
     def get_group_genes(self, group_name: str) -> set[str]:
         """Return all genes/features associated with a specific group.
 
@@ -398,6 +423,42 @@ class PairwiseStore:
             "median": row[4],
             "stddev": row[5],
         }
+
+    def group_metric_profile(self, group_name: str) -> list[dict]:
+        """Compute AVG, MAX, COUNT for each metric column for a given group.
+
+        Aggregates across all pairs where the group appears as either
+        group_1 or group_2.
+
+        Args:
+            group_name: Name of the group (case-insensitive).
+
+        Returns:
+            List of dicts: [{"metric": str, "avg": float, "max": float, "count": int}, ...]
+
+        Raises:
+            KeyError: If the group is not found in the names map.
+        """
+        gid = self._name_to_id.get(group_name.lower())
+        if gid is None:
+            raise KeyError(f"Group not found: {group_name}")
+
+        parts = []
+        for m in self.METRICS:
+            parts.append(
+                f"SELECT '{m}' AS metric, "
+                f"AVG({m}) AS avg, "
+                f"MAX({m}) AS max, "
+                f"COUNT(*) AS count "
+                f"FROM pairs "
+                f"WHERE group_1_id = {gid} OR group_2_id = {gid}"
+            )
+        query = " UNION ALL ".join(parts)
+        rows = self._con.execute(query).fetchall()
+        return [
+            {"metric": r[0], "avg": r[1], "max": r[2], "count": r[3]}
+            for r in rows
+        ]
 
     def group_pair_counts(self) -> dict[int, int]:
         """Count how many pairs each group participates in."""

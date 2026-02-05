@@ -5,22 +5,22 @@ interface Props {
 }
 
 /**
- * Control buttons for the force graph (zoom, fit, etc.)
+ * Control buttons for the force graph (zoom, fit, reheat, etc.)
  */
 export default function ForceGraphControls({ graphRef }: Props) {
   const handleZoomIn = () => {
     const graph = graphRef.current;
     if (graph) {
-      const currentZoom = (graph as any).zoom?.() ?? 1;
-      (graph as any).zoom?.(currentZoom * 1.5, 300);
+      const currentZoom = graph.zoom?.() ?? 1;
+      graph.zoom?.(currentZoom * 1.5, 300);
     }
   };
 
   const handleZoomOut = () => {
     const graph = graphRef.current;
     if (graph) {
-      const currentZoom = (graph as any).zoom?.() ?? 1;
-      (graph as any).zoom?.(currentZoom / 1.5, 300);
+      const currentZoom = graph.zoom?.() ?? 1;
+      graph.zoom?.(currentZoom / 1.5, 300);
     }
   };
 
@@ -28,8 +28,8 @@ export default function ForceGraphControls({ graphRef }: Props) {
     graphRef.current?.zoomToFit?.(400, 50);
   };
 
-  const handleCenter = () => {
-    graphRef.current?.centerAt?.(0, 0, 300);
+  const handleReheat = () => {
+    graphRef.current?.d3ReheatSimulation?.();
   };
 
   const buttonStyle: React.CSSProperties = {
@@ -70,8 +70,8 @@ export default function ForceGraphControls({ graphRef }: Props) {
       <button onClick={handleFit} style={buttonStyle} title="Fit to screen">
         ⊡
       </button>
-      <button onClick={handleCenter} style={buttonStyle} title="Center view">
-        ◎
+      <button onClick={handleReheat} style={buttonStyle} title="Re-run layout simulation">
+        ↻
       </button>
     </div>
   );

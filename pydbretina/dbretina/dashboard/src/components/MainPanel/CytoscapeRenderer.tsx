@@ -13,7 +13,9 @@ cytoscape.use(popper);
 
 // Map our layout algorithm names to Cytoscape layout names
 const LAYOUT_MAP: Record<LayoutAlgorithm, string> = {
+  force: "fcose",
   fr: "fcose",
+  fa2: "fcose", // FA2 not available in Cytoscape, use fcose
   drl: "fcose", // DRL not available in Cytoscape, use fcose
   kk: "fcose", // KK uses backend positions
   circle: "circle",

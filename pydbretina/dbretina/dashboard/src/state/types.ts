@@ -73,6 +73,21 @@ export interface LoadingProgress {
   startTime?: number; // timestamp for timeout warnings
 }
 
+/** Compare mode state for two-node analysis */
+export interface CompareState {
+  active: boolean;
+  nodeA: GraphNode | null;
+  nodeB: GraphNode | null;
+}
+
+/** Metric profile for a single metric */
+export interface MetricProfile {
+  metric: string;
+  avg: number;
+  max: number;
+  count: number;
+}
+
 /** Data state indicators for UI feedback */
 export interface DataState {
   isEmpty: boolean;
@@ -83,7 +98,7 @@ export interface DataState {
   };
 }
 
-export type LayoutAlgorithm = "fr" | "drl" | "kk" | "circle" | "grid";
+export type LayoutAlgorithm = "force" | "fr" | "fa2" | "drl" | "kk" | "circle" | "grid";
 
 /** Graph renderer type */
 export type RendererType = "forcegraph" | "cytoscape" | "sigma" | "auto";
@@ -206,6 +221,15 @@ export interface DashboardState {
   geneStatistics: GeneStatistics | null;
   geneGroups: GeneGroupsResult | null;
 
+  // Compare mode
+  compareState: CompareState;
+
+  // Detail panel visibility
+  detailPanelOpen: boolean;
+
+  // Node filter — when set, only these nodes (and edges between them) are shown
+  nodeFilter: Set<string> | null;
+
   // Legacy fields (kept for backwards compatibility)
   loading: Record<string, boolean>;
   error: string | null;
@@ -252,4 +276,14 @@ export type DashboardAction =
   | { type: "SET_ACTIVE_GENE"; gene: string | null }
   | { type: "SET_GENE_STATISTICS"; stats: GeneStatistics | null }
   | { type: "SET_GENE_GROUPS"; result: GeneGroupsResult | null }
-  | { type: "CLEAR_BIOLOGICAL_ANALYSIS" };
+  | { type: "CLEAR_BIOLOGICAL_ANALYSIS" }
+  // Compare mode actions
+  | { type: "ENTER_COMPARE_MODE"; nodeA: GraphNode }
+  | { type: "SET_COMPARE_NODE_B"; nodeB: GraphNode }
+  | { type: "EXIT_COMPARE_MODE" }
+  // Detail panel actions
+  | { type: "TOGGLE_DETAIL_PANEL" }
+  | { type: "SET_DETAIL_PANEL_OPEN"; open: boolean }
+  // Node filter actions
+  | { type: "SET_NODE_FILTER"; nodes: Set<string> }
+  | { type: "CLEAR_NODE_FILTER" };

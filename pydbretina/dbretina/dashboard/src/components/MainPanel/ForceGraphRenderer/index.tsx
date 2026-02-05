@@ -6,7 +6,10 @@ import { useForceGraphData } from "./useForceGraphData";
 import { useForceGraphInteractions } from "./useForceGraphInteractions";
 import { ForceNode, ForceLink } from "./types";
 import ForceGraphControls from "./ForceGraphControls";
-import { THRESHOLDS, COLORS } from "./constants";
+import { THRESHOLDS, COLORS, PHYSICS } from "./constants";
+import { fetchLayout } from "../../../api";
+import Graph from "graphology";
+import forceAtlas2 from "graphology-layout-forceatlas2";
 
 /**
  * ForceGraphRenderer - High-performance graph visualization using react-force-graph.
@@ -17,13 +20,20 @@ import { THRESHOLDS, COLORS } from "./constants";
  */
 export default function ForceGraphRenderer() {
   const containerRef = useRef<HTMLDivElement>(null);
-  // Use any for graph ref since the library types are complex with generics
   const graphRef = useRef<any>();
   const { state, dispatch } = useDashboard();
 
   // Track selection state in ref to avoid stale closures in event handlers
   const selectionRef = useRef(state.selection);
   selectionRef.current = state.selection;
+
+  // Track compare state in ref for interaction handlers
+  const compareStateRef = useRef(state.compareState);
+  compareStateRef.current = state.compareState;
+
+  // Track highlight nodes in ref for per-frame rendering
+  const highlightNodesRef = useRef(state.highlightNodes);
+  highlightNodesRef.current = state.highlightNodes;
 
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [hoveredNode, setHoveredNode] = useState<ForceNode | null>(null);
@@ -37,6 +47,7 @@ export default function ForceGraphRenderer() {
     dispatch,
     graphData: state.graphData,
     selectionRef,
+    compareStateRef,
   });
 
   // Track container dimensions with ResizeObserver
@@ -54,28 +65,192 @@ export default function ForceGraphRenderer() {
     return () => observer.disconnect();
   }, []);
 
+  // Configure d3-force physics when graph instance is ready
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph || !forceGraphData) return;
+
+    const nodeCount = forceGraphData.nodes.length;
+    const isLarge = nodeCount > THRESHOLDS.REDUCE_PHYSICS;
+
+    // Configure charge (repulsion) force
+    const charge = graph.d3Force("charge");
+    if (charge) {
+      charge
+        .strength(isLarge ? -30 : PHYSICS.CHARGE_STRENGTH)
+        .distanceMax(isLarge ? 300 : PHYSICS.CHARGE_DISTANCE_MAX);
+    }
+
+    // Configure link (spring) force
+    const link = graph.d3Force("link");
+    if (link) {
+      link
+        .distance(isLarge ? 30 : PHYSICS.LINK_DISTANCE)
+        .strength(PHYSICS.LINK_STRENGTH);
+    }
+
+    // Configure center force
+    const center = graph.d3Force("center");
+    if (center) {
+      center.strength(PHYSICS.CENTER_STRENGTH);
+    }
+
+    graph.d3ReheatSimulation?.();
+  }, [forceGraphData]);
+
   // Auto-fit graph when data changes
   useEffect(() => {
     if (forceGraphData && graphRef.current) {
-      // Delay to let physics settle a bit first
       const timer = setTimeout(() => {
         graphRef.current?.zoomToFit?.(400, 50);
-      }, 500);
+      }, 800);
       return () => clearTimeout(timer);
     }
   }, [forceGraphData]);
+
+  // Handle layout algorithm changes
+  useEffect(() => {
+    if (!forceGraphData || !graphRef.current) return;
+
+    const nodes = forceGraphData.nodes;
+    const nc = nodes.length;
+    const layout = state.layoutAlgorithm;
+
+    // Helper: clear all fixed positions and let simulation run
+    const clearFixed = () => {
+      nodes.forEach((node) => {
+        node.fx = undefined;
+        node.fy = undefined;
+      });
+    };
+
+    // Helper: apply positions and fit
+    const applyPositionsAndFit = (
+      positions: Record<string, [number, number]>,
+      scale: number
+    ) => {
+      nodes.forEach((node) => {
+        const pos = positions[node.id];
+        if (pos) {
+          node.x = pos[0] * scale;
+          node.y = pos[1] * scale;
+          node.fx = pos[0] * scale;
+          node.fy = pos[1] * scale;
+        }
+      });
+      graphRef.current?.d3ReheatSimulation?.();
+      setTimeout(() => {
+        // Release fixed positions for interaction
+        clearFixed();
+        graphRef.current?.zoomToFit?.(400, 50);
+      }, 300);
+    };
+
+    // "force" = live d3-force simulation (default)
+    if (layout === "force") {
+      clearFixed();
+      graphRef.current?.d3ReheatSimulation?.();
+      setTimeout(() => graphRef.current?.zoomToFit?.(400, 50), 800);
+      return;
+    }
+
+    // Circle layout: arrange nodes in a circle
+    if (layout === "circle") {
+      const radius = Math.max(100, nc * 3);
+      nodes.forEach((node, i) => {
+        const angle = (2 * Math.PI * i) / nc;
+        node.fx = radius * Math.cos(angle);
+        node.fy = radius * Math.sin(angle);
+      });
+      graphRef.current?.d3ReheatSimulation?.();
+      setTimeout(() => graphRef.current?.zoomToFit?.(400, 50), 100);
+      return;
+    }
+
+    // Grid layout: arrange nodes in a grid
+    if (layout === "grid") {
+      const cols = Math.ceil(Math.sqrt(nc));
+      const spacing = 50;
+      nodes.forEach((node, i) => {
+        node.fx = (i % cols) * spacing - (cols * spacing) / 2;
+        node.fy = Math.floor(i / cols) * spacing - (Math.ceil(nc / cols) * spacing) / 2;
+      });
+      graphRef.current?.d3ReheatSimulation?.();
+      setTimeout(() => graphRef.current?.zoomToFit?.(400, 50), 100);
+      return;
+    }
+
+    // ForceAtlas2: compute layout client-side using graphology
+    if (layout === "fa2") {
+      clearFixed();
+
+      // Build graphology graph
+      const g = new Graph();
+      nodes.forEach((n) => g.addNode(n.id, { x: n.x ?? Math.random() * 500, y: n.y ?? Math.random() * 500 }));
+      forceGraphData.links.forEach((l) => {
+        const src = typeof l.source === "string" ? l.source : l.source.id;
+        const tgt = typeof l.target === "string" ? l.target : l.target.id;
+        if (g.hasNode(src) && g.hasNode(tgt) && !g.hasEdge(src, tgt)) {
+          g.addEdge(src, tgt, { weight: l.weight });
+        }
+      });
+
+      // Run ForceAtlas2
+      const iterations = nc < 500 ? 200 : nc < 2000 ? 100 : 50;
+      forceAtlas2.assign(g, {
+        iterations,
+        settings: {
+          gravity: 1,
+          scalingRatio: nc < 200 ? 10 : 5,
+          strongGravityMode: true,
+          barnesHutOptimize: nc > 500,
+          barnesHutTheta: 0.5,
+        },
+      });
+
+      // Apply positions
+      const positions: Record<string, [number, number]> = {};
+      g.forEachNode((id, attrs) => {
+        positions[id] = [attrs.x, attrs.y];
+      });
+      applyPositionsAndFit(positions, 1);
+      return;
+    }
+
+    // Backend-computed layouts: FR, DRL, KK
+    if (layout === "fr" || layout === "drl" || layout === "kk") {
+      clearFixed();
+
+      fetchLayout(state.metric, state.cutoff, layout)
+        .then((result) => {
+          if (!graphRef.current) return;
+          applyPositionsAndFit(result.positions, 500);
+        })
+        .catch(() => {
+          // Fallback: reheat simulation
+          graphRef.current?.d3ReheatSimulation?.();
+          setTimeout(() => graphRef.current?.zoomToFit?.(400, 50), 800);
+        });
+    }
+  }, [state.layoutAlgorithm]);
 
   const nodeCount = state.graphData?.nodes.length ?? 0;
   const use3D = nodeCount >= THRESHOLDS.USE_3D;
 
   /**
-   * Custom 2D node rendering with Canvas API
+   * Custom 2D node rendering with Canvas API.
+   * Reads selection/highlight state from refs for per-frame accuracy
+   * without triggering graph data recomputation on clicks.
    */
   const nodeCanvasObject = useCallback(
     (node: ForceNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const size = node.size;
       const x = node.x!;
       const y = node.y!;
+
+      // Check selection/highlight state from refs (always current, no data recompute)
+      const isSelected = selectionRef.current.selectedNodes.has(node.id);
+      const isHighlighted = highlightNodesRef.current.has(node.id);
 
       // Draw node circle
       ctx.beginPath();
@@ -84,7 +259,7 @@ export default function ForceGraphRenderer() {
       ctx.fill();
 
       // Draw border for selection/path highlighting
-      if (node.isSelected) {
+      if (isSelected) {
         ctx.strokeStyle = COLORS.SELECTION_HIGHLIGHT;
         ctx.lineWidth = 3 / globalScale;
         ctx.stroke();
@@ -92,7 +267,7 @@ export default function ForceGraphRenderer() {
         ctx.strokeStyle = COLORS.PATH_HIGHLIGHT;
         ctx.lineWidth = 4 / globalScale;
         ctx.stroke();
-      } else if (node.isHighlighted) {
+      } else if (isHighlighted) {
         ctx.strokeStyle = "#ff6b6b";
         ctx.lineWidth = 2 / globalScale;
         ctx.stroke();
@@ -121,7 +296,7 @@ export default function ForceGraphRenderer() {
   const nodePointerAreaPaint = useCallback(
     (node: ForceNode, color: string, ctx: CanvasRenderingContext2D) => {
       ctx.beginPath();
-      ctx.arc(node.x!, node.y!, node.size + 4, 0, 2 * Math.PI);
+      ctx.arc(node.x!, node.y!, node.size + 8, 0, 2 * Math.PI);
       ctx.fillStyle = color;
       ctx.fill();
     },
@@ -132,6 +307,8 @@ export default function ForceGraphRenderer() {
   if (!forceGraphData) {
     return <div className="graph-container" />;
   }
+
+  const isLarge = nodeCount > THRESHOLDS.REDUCE_PHYSICS;
 
   // Common props for both 2D and 3D
   const commonProps = {
@@ -144,22 +321,23 @@ export default function ForceGraphRenderer() {
     nodeVal: (n: ForceNode) => n.size,
     linkColor: (l: ForceLink) => (l.isOnPath ? COLORS.LINK_PATH : l.color),
     linkWidth: (l: ForceLink) => (l.isOnPath ? 3 : l.width),
+    linkHoverPrecision: 6, // Wider hit area for edge clicks
     onNodeClick: interactions.handleNodeClick,
     onNodeHover: setHoveredNode,
     onLinkClick: interactions.handleLinkClick,
     onBackgroundClick: interactions.handleBackgroundClick,
-    // Physics settings - reduce for large graphs
-    d3AlphaDecay: nodeCount > THRESHOLDS.REDUCE_PHYSICS ? 0.1 : 0.02,
-    d3VelocityDecay: 0.3,
-    warmupTicks: nodeCount > THRESHOLDS.REDUCE_PHYSICS ? 0 : 100,
-    cooldownTicks: nodeCount > THRESHOLDS.REDUCE_PHYSICS ? 0 : 200,
+    // Physics settings
+    d3AlphaDecay: isLarge ? 0.1 : PHYSICS.ALPHA_DECAY,
+    d3VelocityDecay: PHYSICS.VELOCITY_DECAY,
+    warmupTicks: isLarge ? 0 : PHYSICS.WARMUP_TICKS,
+    cooldownTicks: isLarge ? 0 : PHYSICS.COOLDOWN_TICKS,
   };
 
   return (
     <div
       ref={containerRef}
       className="graph-container"
-      style={{ position: "relative", width: "100%", height: "100%" }}
+      style={{ position: "relative", height: "100%" }}
     >
       {use3D ? (
         <ForceGraph3D

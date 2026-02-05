@@ -341,6 +341,21 @@ def create_app(
                 resource_id=group_name,
             )
 
+    @app.get("/api/v1/groups/{group_name}/metric-profile")
+    def get_group_metric_profile(group_name: str):
+        """Get aggregated metric profile (AVG, MAX, COUNT) for a group."""
+        try:
+            metrics = store.group_metric_profile(group_name)
+        except KeyError:
+            raise DataNotFoundError(
+                detail=f"Group not found: {group_name}",
+                resource_type="group",
+                resource_id=group_name,
+            )
+        except Exception as e:
+            raise DBRetinaAPIError(detail=f"Metric profile failed: {e}")
+        return {"group": group_name, "metrics": metrics}
+
     @app.get("/api/v1/statistics")
     def get_statistics():
         """Metric distribution statistics."""
@@ -510,6 +525,24 @@ def create_app(
         matches = store.search_groups(q)
         items = [{"id": gid, "name": name} for gid, name in sorted(matches.items())]
         return {"query": q, "count": len(items[:limit]), "matches": items[:limit]}
+
+    @app.get("/api/v1/genes/search")
+    def search_genes(
+        q: str = Query(..., min_length=1, description="Gene name query"),
+        limit: int = Query(20, ge=1, le=100),
+    ):
+        """Search gene names by prefix/substring match for autocomplete."""
+        if not dbri_path:
+            raise FeatureNotAvailableError(
+                detail="Gene index not available",
+                feature="gene_search",
+                requirement="Start server with -i flag to specify index file",
+            )
+        try:
+            matches = store.search_gene_names(q, limit=limit)
+        except Exception as e:
+            raise DBRetinaAPIError(detail=f"Gene search failed: {e}")
+        return {"query": q, "genes": matches}
 
     @app.get("/api/v1/features/search")
     def search_features(
@@ -871,16 +904,15 @@ def create_app(
 
         if edge_list:
             g.add_edges(edge_list)
-            g.es["weight"] = weights
 
         degrees = g.degree()
         try:
-            pr = g.pagerank(weights="weight")
+            pr = g.pagerank(weights=weights if weights else None)
         except Exception:
             pr = [0.0] * g.vcount()
 
         try:
-            communities = g.community_leiden(weights="weight", objective_function="modularity")
+            communities = g.community_leiden(weights=weights if weights else None, objective_function="modularity")
             membership = communities.membership
         except Exception:
             membership = [0] * g.vcount()
@@ -1231,7 +1263,6 @@ def create_app(
                 weights.append(float(row["weight"]))
         if edge_list:
             g.add_edges(edge_list)
-            g.es["weight"] = weights
 
         algo_map = {
             "fr": "fruchterman_reingold",
@@ -1244,7 +1275,11 @@ def create_app(
         if g.vcount() > 500 and layout_name == "fruchterman_reingold":
             layout_name = "drl"
 
-        layout = g.layout(layout_name)
+        # Pass weight values directly (not attribute name) to avoid C-level crash
+        if weights and layout_name in ("fruchterman_reingold", "kamada_kawai", "drl"):
+            layout = g.layout(layout_name, weights=weights)
+        else:
+            layout = g.layout(layout_name)
 
         positions = {}
         for gid in all_ids:
@@ -1418,7 +1453,7 @@ def create_app(
         # Add communities if requested
         if include_communities and edge_list:
             try:
-                communities = g.community_leiden(weights="weight")
+                communities = g.community_leiden(weights=weights if weights else None)
                 g.vs["community"] = communities.membership
             except Exception:
                 g.vs["community"] = [0] * g.vcount()
@@ -1426,7 +1461,8 @@ def create_app(
         # Add layout if requested
         if include_layout:
             try:
-                layout = g.layout("fr" if g.vcount() < 500 else "drl")
+                layout_algo = "fr" if g.vcount() < 500 else "drl"
+                layout = g.layout(layout_algo, weights=weights if weights else None)
                 g.vs["x"] = [coord[0] for coord in layout]
                 g.vs["y"] = [coord[1] for coord in layout]
             except Exception:

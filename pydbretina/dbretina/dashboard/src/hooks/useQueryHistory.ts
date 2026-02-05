@@ -119,10 +119,11 @@ ORDER BY ochiai_range`,
 ];
 
 // Cypher query templates
+// Note: Group is a reserved word in KuzuDB, so it must be backtick-escaped
 export const CYPHER_TEMPLATES = [
   {
     name: "Neighbors of a Group",
-    query: `MATCH (a:Group)-[r:SIMILAR_TO]->(b:Group)
+    query: `MATCH (a:\`Group\`)-[r:SIMILAR_TO]->(b:\`Group\`)
 WHERE a.name = "group_name"
 RETURN b.name AS neighbor, r.ochiai AS similarity
 ORDER BY r.ochiai DESC
@@ -130,14 +131,14 @@ LIMIT 20`,
   },
   {
     name: "Shortest Path",
-    query: `MATCH (a:Group), (b:Group)
+    query: `MATCH (a:\`Group\`), (b:\`Group\`)
 WHERE a.name = "group_a" AND b.name = "group_b"
 MATCH path = shortestPath((a)-[:SIMILAR_TO*]-(b))
 RETURN length(path) AS path_length`,
   },
   {
     name: "Hub Nodes (High Degree)",
-    query: `MATCH (a:Group)-[r:SIMILAR_TO]-(b:Group)
+    query: `MATCH (a:\`Group\`)-[r:SIMILAR_TO]-(b:\`Group\`)
 WITH a.name AS group_name, COUNT(r) AS degree
 WHERE degree > 10
 RETURN group_name, degree
@@ -146,7 +147,7 @@ LIMIT 20`,
   },
   {
     name: "Strong Triangles",
-    query: `MATCH (a:Group)-[r1:SIMILAR_TO]->(b:Group)-[r2:SIMILAR_TO]->(c:Group)-[r3:SIMILAR_TO]->(a)
+    query: `MATCH (a:\`Group\`)-[r1:SIMILAR_TO]->(b:\`Group\`)-[r2:SIMILAR_TO]->(c:\`Group\`)-[r3:SIMILAR_TO]->(a)
 WHERE r1.ochiai > 50 AND r2.ochiai > 50 AND r3.ochiai > 50
 RETURN a.name, b.name, c.name,
        r1.ochiai + r2.ochiai + r3.ochiai AS total_similarity

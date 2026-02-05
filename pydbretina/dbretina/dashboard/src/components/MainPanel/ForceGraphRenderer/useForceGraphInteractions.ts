@@ -1,5 +1,5 @@
-import { useCallback, MutableRefObject, Dispatch } from "react";
-import { DashboardAction, SelectionState, GraphData } from "../../../state/types";
+import { useCallback, useRef, MutableRefObject, Dispatch } from "react";
+import { DashboardAction, SelectionState, CompareState, GraphData } from "../../../state/types";
 import { ForceNode, ForceLink } from "./types";
 
 interface UseForceGraphInteractionsProps {
@@ -7,6 +7,7 @@ interface UseForceGraphInteractionsProps {
   dispatch: Dispatch<DashboardAction>;
   graphData: GraphData | null;
   selectionRef: MutableRefObject<SelectionState>;
+  compareStateRef: MutableRefObject<CompareState>;
 }
 
 interface UseForceGraphInteractionsReturn {
@@ -18,16 +19,43 @@ interface UseForceGraphInteractionsReturn {
 /**
  * Hook to handle user interactions with the force graph.
  * Provides handlers for node clicks, link clicks, and background clicks.
+ *
+ * Uses a timestamp guard to prevent background clicks from immediately
+ * clearing a selection set by a node/link click (race condition in
+ * react-force-graph with dense graphs).
  */
 export function useForceGraphInteractions({
   dispatch,
   selectionRef,
+  compareStateRef,
 }: UseForceGraphInteractionsProps): UseForceGraphInteractionsReturn {
+  // Guard: track last element click time to avoid background click race condition
+  const lastElementClickTime = useRef(0);
+
   /**
-   * Handle node click - supports single select and multi-select (shift+click)
+   * Handle node click - supports single select, multi-select (shift+click),
+   * and compare mode (picks second node).
    */
   const handleNodeClick = useCallback(
     (node: ForceNode, event: MouseEvent) => {
+      lastElementClickTime.current = Date.now();
+
+      // Compare mode: if waiting for nodeB, set it instead of normal selection
+      const cmp = compareStateRef.current;
+      if (cmp.active && !cmp.nodeB) {
+        dispatch({
+          type: "SET_COMPARE_NODE_B",
+          nodeB: {
+            id: node.id,
+            label: node.label,
+            degree: node.degree,
+            community: node.community,
+            pagerank: node.pagerank,
+          },
+        });
+        return;
+      }
+
       const currentSelection = selectionRef.current;
 
       if (event.shiftKey) {
@@ -54,7 +82,7 @@ export function useForceGraphInteractions({
         },
       });
     },
-    [dispatch, selectionRef]
+    [dispatch, selectionRef, compareStateRef]
   );
 
   /**
@@ -62,6 +90,7 @@ export function useForceGraphInteractions({
    */
   const handleLinkClick = useCallback(
     (link: ForceLink, _event: MouseEvent) => {
+      lastElementClickTime.current = Date.now();
       // Extract source/target IDs (links may have resolved node objects)
       const source = typeof link.source === "string" ? link.source : link.source.id;
       const target = typeof link.target === "string" ? link.target : link.target.id;
@@ -72,9 +101,11 @@ export function useForceGraphInteractions({
   );
 
   /**
-   * Handle background click - clears selection
+   * Handle background click - clears selection.
+   * Ignores clicks within 200ms of a node/link click to prevent race conditions.
    */
   const handleBackgroundClick = useCallback(() => {
+    if (Date.now() - lastElementClickTime.current < 200) return;
     dispatch({ type: "SELECT_NODE", node: null });
     dispatch({ type: "SELECT_EDGE", edge: null });
   }, [dispatch]);

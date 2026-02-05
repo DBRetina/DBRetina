@@ -188,6 +188,42 @@ export default function App() {
           {renderErrorBar()}
           {renderTruncationWarning()}
           <Toolbar />
+          {/* Compare mode indicator */}
+          {state.compareState.active && !state.compareState.nodeB && (
+            <div
+              style={{
+                padding: "8px 16px",
+                background: "#e8f0fe",
+                borderBottom: "1px solid var(--accent)",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--accent)">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+              </svg>
+              <span style={{ flex: 1 }}>
+                <strong>Compare Mode:</strong> Click a second node to compare with{" "}
+                <strong>{state.compareState.nodeA?.label}</strong>
+              </span>
+              <button
+                onClick={() => dispatch({ type: "EXIT_COMPARE_MODE" })}
+                style={{
+                  padding: "4px 12px",
+                  border: "1px solid var(--accent)",
+                  borderRadius: 4,
+                  background: "white",
+                  color: "var(--accent)",
+                  fontSize: 11,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
           <div className="content-area">
             {/* Enhanced loading overlay with message */}
             {(graphLoading?.active || infoLoading?.active) && (
@@ -196,12 +232,13 @@ export default function App() {
                 overlay
               />
             )}
+            {/* Query panel — collapsible left side panel */}
+            <QueryPanel />
             {state.activeView === "network" && <NetworkView />}
             {state.activeView === "table" && <TableView />}
             {state.activeView === "stats" && <StatsView />}
-            {(state.selectedNode || state.selectedEdge) && <DetailPanel />}
+            <DetailPanel />
           </div>
-          {state.queryPanelOpen && <QueryPanel />}
         </div>
       </div>
     </ErrorBoundary>

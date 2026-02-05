@@ -31,7 +31,7 @@ export default function SQLEditor({ onResult, onError, onLoading }: Props) {
 
   const handleRun = useCallback(async () => {
     const q = query.trim();
-    if (!q || q === SQL_PLACEHOLDER) return;
+    if (!q) return;
 
     // Frontend validation
     const validation = validateSQLSafety(q);

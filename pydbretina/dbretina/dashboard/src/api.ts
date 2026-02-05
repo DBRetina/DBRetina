@@ -118,6 +118,10 @@ export async function searchGroups(q: string, limit = 20): Promise<{ matches: Gr
   return fetchJSON(`${BASE}/groups/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 }
 
+export async function searchGenes(q: string, limit = 20): Promise<{ query: string; genes: Array<{ gene: string; group_count: number }> }> {
+  return fetchJSON(`${BASE}/genes/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+}
+
 export async function searchFeatures(q: string, limit = 20): Promise<{ feature: string; count: number; groups: string[] }> {
   return fetchJSON(`${BASE}/features/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 }
@@ -465,6 +469,24 @@ export async function analyzeClusterGenes(
       top_n: topN,
     }),
   });
+}
+
+// ── Metric Profile API ────────────────────────────────────────────
+
+export interface MetricProfileResult {
+  group: string;
+  metrics: Array<{
+    metric: string;
+    avg: number;
+    max: number;
+    count: number;
+  }>;
+}
+
+export async function fetchMetricProfile(
+  groupName: string
+): Promise<MetricProfileResult> {
+  return fetchJSON(`${BASE}/groups/${encodeURIComponent(groupName)}/metric-profile`);
 }
 
 /**

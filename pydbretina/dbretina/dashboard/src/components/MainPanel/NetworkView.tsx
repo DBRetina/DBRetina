@@ -48,7 +48,7 @@ export default function NetworkView() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", flex: 1, minWidth: 0 }}>
       <SelectionToolbar />
       <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
         <ForceGraphRenderer />

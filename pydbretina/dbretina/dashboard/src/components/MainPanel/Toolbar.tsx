@@ -2,7 +2,9 @@ import { useDashboard } from "../../state/context";
 import { LayoutAlgorithm } from "../../state/types";
 
 const LAYOUT_OPTIONS: { value: LayoutAlgorithm; label: string; description: string }[] = [
-  { value: "fr", label: "Fruchterman-Reingold", description: "Force-directed layout (default)" },
+  { value: "force", label: "Force-Directed", description: "Live force simulation (interactive)" },
+  { value: "fr", label: "Fruchterman-Reingold", description: "Classic FR layout (server-computed)" },
+  { value: "fa2", label: "ForceAtlas2", description: "ForceAtlas2 layout (good for communities)" },
   { value: "drl", label: "DrL", description: "Distributed Recursive Layout for large graphs" },
   { value: "kk", label: "Kamada-Kawai", description: "Spring-based energy minimization" },
   { value: "circle", label: "Circle", description: "Nodes arranged in a circle" },
@@ -68,7 +70,7 @@ export default function Toolbar() {
         </span>
       )}
       <button
-        className="view-tab"
+        className={`view-tab ${state.queryPanelOpen ? "active" : ""}`}
         style={{ marginLeft: 8 }}
         onClick={() => dispatch({ type: "TOGGLE_QUERY_PANEL" })}
       >
