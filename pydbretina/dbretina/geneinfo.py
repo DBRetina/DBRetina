@@ -94,18 +94,19 @@ Detailed description:
     
     """
     
+    import _dbretina_internal as dbretina_internal
+
     # ---------------------------
     # INVERTED INDEX
     # ---------------------------
-    
+
     # Inverting the index
     inverted_index_prefix = f"inverted_{index_prefix}"
-    phmap_file = f"{inverted_index_prefix}.phmap"
-    if not os.path.exists(phmap_file):
+    inverted_dbri_file = f"{inverted_index_prefix}.dbri"
+    if not os.path.exists(inverted_dbri_file):
         # inverted index not found
         dbri_path = f"{index_prefix}.dbri"
         if os.path.exists(dbri_path):
-            import _dbretina_internal as dbretina_internal
             raw_json_str = dbretina_internal.dbri_load_raw_gene_sets(dbri_path)
             supergroups_to_features = json.loads(raw_json_str)["data"]
         else:
