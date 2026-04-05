@@ -79,7 +79,6 @@ def fnv1a_64(s: str) -> str:
     return str(h)
 
 
-# TODO: do the opposite of this (gmt to json, not gmt->asc->json)
 def build_gene_set_json(association_files, output_prefix):
     # default dictionary string to list of 
     gene_set_to_genes = defaultdict(list)
@@ -132,9 +131,6 @@ def validate_all_files_exist(ctx, param, value):
             raise click.BadParameter(f"File '{path}' doesn't exist")
     return value
 
-# TODO: continue this for refactoring
-# class Sketch:
-    
 
 @cli.command(name="index", help_priority=1, epilog=dbretina_doc.doc_url("index"))
 @click.option('-a', '--asc', "asc_file", multiple=True, required=False, callback = validate_all_files_exist , help="associations file col1: supergroup, col2: single feature. 1st line is header.")
