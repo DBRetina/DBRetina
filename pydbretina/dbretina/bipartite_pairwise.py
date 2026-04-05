@@ -10,22 +10,10 @@ import subprocess
 import os
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-import networkx as nx
-import dash
-import plotly.io as pio
-from dash import dcc
-from dash import html
-from dash.dependencies import Input, Output
-import plotly.graph_objects as go
-import plotly.express as px
 import dbretina.dbretina_doc_url as dbretina_doc
-from sklearn.preprocessing import MinMaxScaler
 from plotly.graph_objects import Figure, Parcats
-import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-import plotly.subplots as sp
 import json
 
 def execute_bash_command(command):
@@ -57,19 +45,7 @@ def path_to_absolute_path(ctx, param, value):
     with contextlib.suppress(Exception):
         return os.path.abspath(value) if value is not None else None
 
-# TODO: Remove later
-def working2_plot_bipartite(df_bipartite, output_prefix):
-    from sklearn.preprocessing import LabelEncoder
-    le = LabelEncoder()
-    df_bipartite['group_1'] = le.fit_transform(df_bipartite['group_1'])
-    fig = px.parallel_categories(df_bipartite[['group_1', 'group_2']], color="group_1", color_continuous_scale=px.colors.sequential.Inferno)
-    fig.write_html(output_prefix + ".html")
-
-
 def plot_bipartite(df_bipartite, color_metric, output_prefix):
-    # Min-Max normalization for the color metric to get values in range [0,1]
-    scaler = MinMaxScaler()
-    # df_bipartite['color'] = scaler.fit_transform(df_bipartite[[color_metric]])
     df_bipartite['color'] = df_bipartite[color_metric]
     lowest_color = df_bipartite['color'].min()
     largest_color = df_bipartite['color'].max()
@@ -104,184 +80,13 @@ def plot_bipartite(df_bipartite, color_metric, output_prefix):
     left_margin = df_bipartite['group_1'].str.len().max() * 4
     right_margin = df_bipartite['group_2'].str.len().max() * 4
     
-    print(f"Left margin: {left_margin}")
-    print(f"Right margin: {right_margin}")
-    
-    max_margin = max(left_margin, right_margin)
-
     fig.update_layout(margin={"r":right_margin,"l":left_margin, 'pad' : 5})
 
     
     fig.update_layout(coloraxis_colorbar=dict(orientation="v"))
     fig.write_html(f"{output_prefix}.html")
-    
-    # write high fidelity image
     fig.write_image(f"{output_prefix}.png", width=1920, height=1080, scale=5)
-    
-    # fig.write_image(f"{output_prefix}.png")
-    # fig.write_image(f"{output_prefix}_high_dpi.png", scale=5)
 
-
-# TODO: Remove later
-def working_plot_bipartite(df_bipartite, output_prefix):
-    B = nx.Graph()
-    B.add_nodes_from(df_bipartite['group_1'], bipartite=0)
-    B.add_nodes_from(df_bipartite['group_2'], bipartite=1)
-    B.add_edges_from([(row['group_1'], row['group_2']) for _, row in df_bipartite.iterrows()])
-
-    # separate by group
-    l, r = nx.bipartite.sets(B)
-    pos = {}
-
-    # update position for node from each group
-    pos |= ((node, (1, index)) for index, node in enumerate(l))
-    pos.update((node, (2, index)) for index, node in enumerate(r))
-
-    # Create node trace
-    node_trace = go.Scatter(
-        x=[pos[i][0] for i in B.nodes()],
-        y=[pos[i][1] for i in B.nodes()],
-        mode='markers',
-        text=[f'Name: {str(n)}<br># of connections: {len(list(B.neighbors(n)))}' for n in B.nodes()],
-        hoverinfo='text',
-        marker=dict(
-            showscale=True,
-            colorscale='Viridis',
-            reversescale=True,
-            color=[len(list(B.neighbors(n))) for n in B.nodes()],
-            size=10,
-            colorbar=dict(
-                thickness=15,
-                title='Node Connections',
-                xanchor='left',
-                titleside='right'
-            ),
-            line=dict(width=2)))
-
-    # Create edge trace
-    edge_trace = go.Scatter(
-        x=[],
-        y=[],
-        line=dict(width=0.5),
-        hoverinfo='none',
-        mode='lines')
-
-    for edge in B.edges():
-        x0, y0 = pos[edge[0]]
-        x1, y1 = pos[edge[1]]
-        edge_trace['x'] += (x0, x1, None)
-        edge_trace['y'] += (y0, y1, None)
-        # edge color based on the number of connections
-        edge_trace['line']['color'] = "blue"
-
-    # Create figure
-    fig = go.Figure(data=[edge_trace, node_trace],
-                    layout=go.Layout(
-                        title='Network graph',
-                        titlefont=dict(size=16),
-                        showlegend=False,
-                        hovermode='closest',
-                        margin=dict(b=20, l=5, r=5, t=40),
-                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
-
-    fig.write_html(output_prefix + ".html")
-    # export high quality image
-    fig.write_image(output_prefix + ".png", width=1920, height=1080)
-
-
-# TODO: Experminetal
-def interactive_dashboard(df_bipartite):
-    # create dash application
-    app = dash.Dash(__name__)
-
-    # get column names of the dataframe
-    col_options = [dict(label=x, value=x) for x in df_bipartite.columns]
-
-    # layout of the dashboard
-    app.layout = html.Div([
-        html.H1('Bipartite pairwise study', style={'textAlign': 'center', 'color': '#7FDBFF'}),
-
-
-        html.Div(id='main-div', children=[
-            html.Div([
-                html.Div([
-                    dcc.Dropdown(
-                        id='xaxis-column',
-                        options=col_options,
-                        value='containment'
-                    )], style={'width': '48%', 'display': 'inline-block'}),
-                
-                html.Div([
-                    dcc.Dropdown(
-                        id='yaxis-column',
-                        options=col_options,
-                        value='ochiai'
-                    )], style={'width': '48%', 'float': 'right', 'display': 'inline-block'})
-            ]),
-
-            dcc.Dropdown(id='plot_type', options=[
-                {'label': 'Scatter', 'value': 'scatter'},
-                {'label': 'Bar', 'value': 'bar'},
-                {'label': 'Box', 'value': 'box'},
-                {'label': 'Heatmap', 'value': 'heatmap'},
-                {'label': 'Parallel Categories', 'value': 'parcats'},
-                {'label': 'Bipartite Network', 'value': 'bipartite'}],
-                value='scatter'
-            ),
-
-            dcc.RangeSlider(
-                id='pvalue-slider',
-                min=df_bipartite['pvalue'].min(),
-                max=df_bipartite['pvalue'].max(),
-                value=[df_bipartite['pvalue'].min(), df_bipartite['pvalue'].max()],
-                marks={str(pvalue): str(pvalue) for pvalue in df_bipartite['pvalue'].unique()},
-                step=None
-            ),
-
-            # dcc.Graph(id='indicator-graphic')
-            dcc.Graph(id='indicator-graphic', style={'height': '70vh'}, responsive=True)
-
-        ])
-    ])
-
-
-    # callback to update graph when dropdown value is selected
-    @app.callback(
-        Output('indicator-graphic', 'figure'),
-        [Input('xaxis-column', 'value'),
-        Input('yaxis-column', 'value'),
-        Input('plot_type', 'value'),
-        Input('pvalue-slider', 'value')])
-    
-    def update_graph(xaxis_column_name, yaxis_column_name, plot_type, pvalue_range):
-        dff = df_bipartite[(df_bipartite['pvalue'] >= pvalue_range[0]) & (df_bipartite['pvalue'] <= pvalue_range[1])]
-
-        if plot_type == 'scatter':
-            fig = px.scatter(dff, x=xaxis_column_name, y=yaxis_column_name)
-        elif plot_type == 'bar':
-            fig = px.bar(dff, x=xaxis_column_name, y=yaxis_column_name)
-        elif plot_type == 'box':
-            fig = px.box(dff, x=xaxis_column_name, y=yaxis_column_name)
-        elif plot_type == 'heatmap':
-            pivot_table = dff.pivot(index='group_1', columns='group_2', values='pvalue')
-            fig = px.imshow(pivot_table)
-        elif plot_type == 'parcats':
-            fig = go.Figure(data=go.Parcats(
-                dimensions=[
-                    {'label': 'Group 1', 'values': dff['group_1']},
-                    {'label': 'Group 2', 'values': dff['group_2']},
-                    {'label': 'P-value', 'values': dff['pvalue']}]
-            ))
-        elif plot_type == 'bipartite':
-            # Here you need to include the code to create bipartite graph. 
-            # Creating a bipartite graph in Plotly can be complex, so you need to decide how to implement it according to your needs.
-            fig = go.Figure()
-
-        fig.update_layout(margin={'l': 40, 'b': 40, 't': 10, 'r': 0}, hovermode='closest')
-        return fig
-    
-    app.run_server(debug=True)
 
 def check_if_there_is_a_pvalue(pairwise_file):
     with open(pairwise_file) as F:
@@ -687,41 +492,6 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
                 OUT.write(f"Missing group2 names: {','.join(list(unfound_group2))}\n")
 
 
-    ###########################################################
-    # 3. create the bipartite graph
-    ###########################################################    
-
-    # one_to_one = df_bipartite.drop_duplicates(subset=['group_1', 'group_2'])
-    # one_to_many = df_bipartite.groupby('group_1').filter(lambda x: len(x['group_2']) > 1)
-    # many_to_one = df_bipartite.groupby('group_2').filter(lambda x: len(x['group_1']) > 1)
-    # statistics = df_bipartite.describe()
-    
-    # # write report to terminal
-    # LOGGER.INFO(f"Statistics:")
-    # print(f"  - Number of one-to-one matches: {one_to_one.shape[0]}")
-    # print(f"  - Number of one-to-many matches: {one_to_many.shape[0]}")
-    # print(f"  - Number of many-to-one matches: {many_to_one.shape[0]}")
-    # print(f"  - Number of unique groups in group1: {len(unique_matched_group1)}")
-    # print(f"  - Number of unique groups in group2: {len(unique_matched_group2)}")
-    # print(f"  - Number of groups in group1 that have no match: {len(unfound_group1)}")
-    # print(f"  - Number of groups in group2 that have no match: {len(unfound_group2)}")
-    # print(f"  - Number of groups in group1: {len(group1_dict)}")
-    # print(f"  - Number of groups in group2: {len(group2_dict)}")
-    # print(f"  - Number of groups in group1 that have no overlap with any group in group2: {len(unfound_group1)}")
-    # print(f"  - Number of groups in group2 that have no overlap with any group in group1: {len(unfound_group2)}")
-    
-
-
-    ###########################################################
-    # draw the graph
-    ## TODO: Nice scatter plot, but let's do it later 
-    """ # << ---- ### DISABLED FOR NOW ### ---- 
-    LOGGER.INFO(f"Writing the scatter graph to {output_prefix}_scatter.html")
-    fig = px.scatter(df_bipartite, x="containment", y="ochiai", color="pvalue", size='jaccard', hover_data=['group_1','group_2'])
-    fig.write_html(f"{output_prefix}_scatter.html")
-    """
-
-    ###########################################################
     if not no_plot:
         LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.html")
         LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.png")
@@ -735,154 +505,4 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
     LOGGER.INFO(f"Writing the pivot table to {output_prefix}_pivot_table.html")
     plot_pivot_table(df_bipartite, metric, f"{output_prefix}_pivot_table")
 
-    # TODO: DISABLED for now. No need to plot 3 categories 
-    """
-    ###########################################################
-    ########### PARALLEL CATEGORIES PLOT ######################
-    ########################################################### 
-    LOGGER.INFO(f"Writing the parcats graph to {output_prefix}_parcats.html")
-    df_bipartite['color_group'] = pd.Categorical(df_bipartite['group_1']).codes
-    scaler = MinMaxScaler()
-    df_bipartite['color'] = scaler.fit_transform(df_bipartite[[metric]])
-    fig = go.Figure(data=
-        go.Parcats(
-            dimensions=[
-                {'label': 'Group 1', 'values': df_bipartite['group_1']},
-                {'label': 'Group 2', 'values': df_bipartite['group_2']},
-                {'label': 'P-value', 'values': df_bipartite['pvalue']}],
-            line={
-                'color': df_bipartite['color_group'], 
-                'colorscale': 'Jet',
-                'colorbar': {'title': metric, 'thickness': 10, 'orientation': 'h'}
-                },
-            hoveron='color', 
-            hoverinfo='count+probability',
-            )
-        )
-
-    fig.write_html(f"{output_prefix}_parcats.html")
-    fig.write_image(f"{output_prefix}_parcats.png", width=1920, height=1080, scale=2)
-    """
-
-    ###########################################################
-
-    # TODO: [DEV] BETA
-    # interactive_dashboard(df_bipartite)
-
-
-    ## TODO: RESEARCH CODE STUDY PVALUE-CUTOFF #1
-    #################################################################
-    # 4. study the different statistics with different pvalue cutoffs
-    #################################################################
-
-    """ << --------- RESEARCH CODE ---------
-    def calculate_connections(df, cutoff):
-        # Filter the dataframe by the cutoff
-        df_filtered = df[df['pvalue'] <= cutoff]
-
-        # Count the number of unique group2 values for each group1 value
-        counts_1 = df_filtered.groupby('group_1')['group_2'].nunique()
-        # Count the number of unique group1 values for each group2 value
-        counts_2 = df_filtered.groupby('group_2')['group_1'].nunique()
-
-        # Calculate the number of 1-to-1, group1-to-many, and group2-to-many connections
-        one_to_one = sum(counts_1 == 1) + sum(counts_2 == 1)
-        group1_to_many = sum(counts_1 > 1)
-        group2_to_many = sum(counts_2 > 1)
-
-        # Total 1-to-many is the sum of group1-to-many and group2-to-many
-        total_one_to_many = group1_to_many + group2_to_many
-
-        return one_to_one, group1_to_many, group2_to_many, total_one_to_many
-
-
-    LOGGER.INFO("Calculating the connections for different pvalue cutoffs (Please Wait!)")
-
-    cutoffs = np.arange(df_bipartite['pvalue'].min(), df_bipartite['pvalue'].max(), 0.001)
-    results_cutoffs = []
-    for cutoff in cutoffs:
-        one_to_one, group1_to_many, group2_to_many, total_one_to_many = calculate_connections(df_bipartite, cutoff)
-
-        # Append the results for this cutoff to the dataframe
-        results_cutoffs.append({
-            'pvalue_cutoff': cutoff,
-            '1-to-1': one_to_one,
-            'group1-to-many': group1_to_many,
-            'group2-to-many': group2_to_many,
-            'total_1-to-many': total_one_to_many
-        })
-
-    results = pd.DataFrame(results_cutoffs)
-
-    LOGGER.INFO(f"Writing the results to {output_prefix}_pvalues_cutoffs.tsv")
-    results.to_csv(f"{output_prefix}_pvalues_cutoffs.tsv", sep='\t', index=False)
-
-    #################################################################
-    # 4.1 Plotting the analysis results for cutoff vs. connections
-
-    #### 4.1.1 Correlation Heatmap of connections
-    LOGGER.INFO(f"Writing the correlation heatmap to {output_prefix}_pvalues_correlation_heatmap.png")
-    plt.figure(figsize=(10, 8))
-    sns.set(style="white")
-    # Calculate correlation matrix
-    corr = results.iloc[:, 1:].corr()
-    # Generate a mask for the upper triangle
-    mask = np.triu(np.ones_like(corr, dtype=float))
-    # Draw the heatmap
-    sns.heatmap(corr, mask=mask, annot=True, fmt=".002f", linewidths=.5, cmap='coolwarm')
-    plt.title('Correlation Heatmap of connections')
-    plt.savefig(f"{output_prefix}_pvalues_correlation_heatmap.png")
-
-    #### 4.1.2 Pairplot of connections    
-    LOGGER.INFO(f"Writing the pairplot to {output_prefix}_pvalues_pairplot.png")
-    sns.set(style="ticks", color_codes=True)
-    # Exclude 'pvalue_cutoff' from the pairplot
-    pairplot_data = results.iloc[:, :] # all rows, all columns except the first column
-    # Draw the pairplot
-    sns.pairplot(pairplot_data)
-    plt.savefig(f"{output_prefix}_pvalues_pairplot.png", dpi=400)
-
-
-    #### 4.1.3 Scatterplot of connections
-    LOGGER.INFO(f"Writing the scatterplot to {output_prefix}_pvalues_cutoffs_scatterplot.html")
-    fig = sp.make_subplots(rows=4, cols=1)
-    # Create scatter plots for each metric against pvalue_cutoff
-    for i, metric in enumerate(results.columns[1:], start=1):
-        fig.add_trace(
-            go.Scatter(x=results['pvalue_cutoff'], y=results[metric], mode='lines+markers', name=metric),
-            row=i, col=1
-        )
-
-    # Update layout
-    fig.update_layout(height=800, width=800, title_text="Metrics vs P-Value Cutoff")
-    fig.write_html(f"{output_prefix}_pvalues_cutoffs_scatterplot.html")
-
-
-    #### 4.1.4 Parallel plot
-    LOGGER.INFO(f"Writing the parallel plot to {output_prefix}_pvalues_cutoffs_parallelplot.html")
-    # Create a parallel coordinates plot
-    fig = px.parallel_coordinates(results, color="pvalue_cutoff", 
-                                labels={"1-to-1": "One-to-One", 
-                                        "group1-to-many": "Group1-to-Many", 
-                                        "group2-to-many": "Group2-to-Many", 
-                                        "total_1-to-many": "Total One-to-Many"},
-                                color_continuous_scale=px.colors.diverging.Tealrose,
-                                color_continuous_midpoint=results['pvalue_cutoff'].median())
-
-    fig.update_layout(
-        title='Parallel Coordinates Plot for Different connections',
-        autosize=True,
-        # width=1000,
-        # height=600,
-    )
-
-    fig.write_html(f"{output_prefix}_pvalues_cutoffs_parallelplot.html")
-    
-    #################################################################
-
-    # Interactive Dashboard
-    # interactive_dashboard(df_bipartite)
-    
-    >> --------- RESEARCH CODE --------- """
-    
     LOGGER.SUCCESS("Done!")
