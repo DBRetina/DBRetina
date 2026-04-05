@@ -116,7 +116,6 @@ void GeneSets::build_from_index(string index_prefix) {
     string colors_map_file = index_prefix + "_color_to_sources.bin";
     // We need this to find out how many pathways are associated with each gene
     load_colors_to_sources(colors_map_file, &color_to_ids);
-    cout << "Loaded colors: " << color_to_ids.size() << endl;
     build_gene_to_PSI();
     build_all_pathways_PSI();
     create_hash_to_gene_name(index_prefix + "_raw.json", this->hashed_gene_to_name);
@@ -615,8 +614,6 @@ unordered_map<string, double> GeneSets::proportionalSetCover(int cluster_id, int
     int covered_genes = 0;
     int sorted_pathways_index = -1;
     while ((((double)covered_genes / universal_size) * 100 < GC) && !uncovered_genes.empty() && ++sorted_pathways_index < sorted_pathways_by_ppi.size() - 1) {
-        cerr << "[DEBUG SETCOV] Covered genes %: " << ((double)covered_genes / universal_size) * 100 << "<" << GC << endl;
-        cerr << "[DEBUG SETCOV] Uncovered genes: " << uncovered_genes.size() << endl;
         flat_hash_map<string, double> pathway_scores;
         flat_hash_map<string, int> pathway_to_common_genes;
 
@@ -646,10 +643,8 @@ unordered_map<string, double> GeneSets::proportionalSetCover(int cluster_id, int
         auto& best_pathway_genes = this->pathway_to_gene_set[best_pathway->first];
         covered_genes += pathway_to_common_genes[best_pathway->first];
 
-        cout << "best_pathway: " << best_pathway->first << " score: " << best_pathway->second << endl;
-        cout << "best_pathway_genes: " << best_pathway_genes.size() << endl;
-        for (const auto& gene : best_pathway_genes)
-            uncovered_genes.erase(gene); // TODO this is slow, use a set difference
+        for (const auto& gene : common_genes)
+            uncovered_genes.erase(gene);
 
         selected_pathways[best_pathway->first] = pathway_scores[best_pathway->first];
 
@@ -681,8 +676,6 @@ unordered_map<string, double> GeneSets::greedy_proportional_set_cover(int cluste
     int covered_genes = 0;
 
     while (((double)covered_genes / universal_size) * 100 < GC && !uncovered_genes.empty()) {
-        cerr << "[DEBUG SETCOV] Covered genes %: " << ((double)covered_genes / universal_size) * 100 << "<" << GC << endl;
-        cerr << "[DEBUG SETCOV] Uncovered genes: " << uncovered_genes.size() << endl;
         flat_hash_map<string, double> pathway_scores;
         flat_hash_map<string, int> pathway_to_common_genes;
 
@@ -712,10 +705,10 @@ unordered_map<string, double> GeneSets::greedy_proportional_set_cover(int cluste
         auto& best_pathway_genes = this->pathway_to_gene_set[best_pathway->first];
         covered_genes += pathway_to_common_genes[best_pathway->first];
 
-        cout << "best_pathway: " << best_pathway->first << " score: " << best_pathway->second << endl;
-        cout << "best_pathway_genes: " << best_pathway_genes.size() << endl;
-        for (const auto& gene : best_pathway_genes)
-            uncovered_genes.erase(gene); // TODO this is slow, use a set difference
+        // Erase only genes in the intersection (recompute for best pathway)
+        flat_hash_set<uint64_t> best_common = this->set_intersection(best_pathway_genes, uncovered_genes);
+        for (const auto& gene : best_common)
+            uncovered_genes.erase(gene);
 
         selected_pathways[best_pathway->first] = pathway_scores[best_pathway->first];
 
@@ -763,7 +756,6 @@ double GeneSets::get_pathway_PSI(string pathway) {
         throw std::invalid_argument("Pathway does not exist");
 
     auto genes = pathway_to_gene_set[pathway];
-    // cout << "Pathway: " << pathway << " genes: " << genes.size() << endl;
     double average_psi = 0.0;
     for (auto& gene : genes) {
         average_psi += gene_to_PSI[gene];
