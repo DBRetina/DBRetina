@@ -202,21 +202,7 @@ Detailed description:
     if os.path.exists(_tmp_file):
         os.remove(_tmp_file)
 
-    #### <<< ------ TODO: Fix later ------ >>> ####
-    """
-    features_counts = []
-    with open(counts_file) as f:
-        print(f"[DEBUG] reading {counts_file}")
-        for line in f:
-            if not line.startswith('#'):
-                break
-                        
-        features_counts.extend(int(line.strip().split('\t')[1]) for line in f)
-
-    output_file = f"{output_prefix}_features_count_per_group_histogram.png"
-    ctx.obj.INFO(
-        f"Plotting histogram of features frequencies to {output_file}")
-    plot_histogram(features_counts, output_file)
+    # Histogram plotting deferred (requires counts_file output from C++ query)
     """
 
     ctx.obj.SUCCESS("Query done!")
