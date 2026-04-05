@@ -312,8 +312,7 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
             with open(newick_out, 'w') as NW:
                     NW.write(newick_string)
             
-            # TODO: add a flag to visualize the tree
-            # Beta: visualize the newick tree
+            # Visualize the newick tree as circular dendrogram
             tree = Phylo.read(StringIO(newick_string), "newick")
             # Initialize circos sector with tree size
             circos = Circos(sectors={"Tree": tree.count_terminals()})

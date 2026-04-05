@@ -137,16 +137,23 @@ class DeduplicateGroups():
 
     def process_associations(self):
         self.df_associations = pd.read_csv(self.associations_file, sep="\t")
-        # rename 'hgnc_symbol_ids to 'item'
-        # rename second column to item
+        # rename second column to item, first to group
         self.df_associations.rename(columns={self.df_associations.columns[1]: 'item'}, inplace=True)
         self.df_associations.rename(columns={self.df_associations.columns[0]: 'group'}, inplace=True)
-        # all to lower
+        self._finalize_associations()
+
+    def process_associations_from_dict(self, raw_json):
+        rows = []
+        for group, items in raw_json.items():
+            for item in items:
+                rows.append({"group": group.lower(), "item": item.lower()})
+        self.df_associations = pd.DataFrame(rows)
+        self._finalize_associations()
+
+    def _finalize_associations(self):
         self.df_associations['item'] = self.df_associations['item'].str.lower()
         self.df_associations['group'] = self.df_associations['group'].str.lower()
-        # calculate group to size
         self.groups_to_items_no = self.df_associations.groupby('group')['item'].nunique().to_dict()
-        # constrcut dictionary of group to items list
         self.groups_to_items = self.df_associations.groupby('group')['item'].apply(set).to_dict()
 
 
@@ -562,7 +569,8 @@ class DeduplicateGroups():
             self.containment_cutoff, 
             _communities_file_prefix)
         
-        self.process_associations()
+        if self.df_associations is None:
+            self.process_associations()
         self.build_group_to_gpi()
         self.build_item_to_CSI()
         self.build_group_to_CSI()
@@ -810,46 +818,21 @@ class GraphBasedDeduplication(DeduplicateGroups):
 
 
     def build_all(self, output_prefix):
-        print(f"Building all for {output_prefix}")
-        self.process_associations()
-        print("Associations processed")
+        if self.df_associations is None:
+            self.process_associations()
 
         self.build_group_to_gpi()
-        print("Group to GPI built")
-
         self.build_item_to_CSI()
-        print("Item to CSI built")
-
         self.build_group_to_CSI()
-        print("Group to CSI built")
-
         self.process_pairwise_file(self.main_pairwise_file, self.containment_cutoff)
-        print(f"Group modularity computed with containment_cutoff {self.containment_cutoff} on {self.main_pairwise_file}")
-
         self.build_groups_metadata()
-        print("Groups metadata built")
-
         self.export_item_to_gpi_CSI(f"{output_prefix}_item_to_GPI_CSI.tsv")
-        print(f"Item to GPI CSI exported at {output_prefix}_item_to_GPI_CSI.tsv")
-
         self.remove_exact_ochiai_matches()
-        print("Exact Ochiai matches removed")
-
         self.export_groups_metadata(f"{output_prefix}_PRE-DEDUP_groups_metadata.tsv")
-        print(f"PRE Groups metadata exported at {output_prefix}_groups_metadata.tsv")
-
-        print("Deduplication in process ...")
         self.graph_based_setcover(self.GC)
-        print(f"Deduplication done. Results exported at {output_prefix}_clusters.tsv")
-
         self.export_groups_metadata(f"{output_prefix}_groups_metadata.tsv")
-        print(f"Groups metadata exported at {output_prefix}_groups_metadata.tsv")
-
         self.df_logging.to_csv(f"{output_prefix}_set_cover_logging", sep='\t', index=False)
-        print(f"Logs exported at {output_prefix}_set_cover_logging.tsv")
-
         self.export_split_group_metadata(output_prefix)
-        print(f"Split groups metadata exported at {output_prefix}_remaining_groups_metadata.tsv and {output_prefix}_removed_groups_metadata.tsv")
 
         self.write_new_associations_file(f"{output_prefix}_associations.tsv")
         print(f"New associations exported at {output_prefix}_associations.tsv")
@@ -936,10 +919,6 @@ def path_to_absolute_path(ctx, param, value):
 def main(ctx, index_prefix, containment_cutoff, ochiai_cutoff, GC, output_prefix, ochiai_community_cutoff):
     """Apply set-cover algorithm.
     """
-    # TODO: make temporary association file (parse the json file directly later)
-    # TODO: This is DUMP, but will work for now.
-    # TODO: change the `def process_associations(self)` function to accept the json file
-    
     dbri_path = f"{index_prefix}.dbri"
     if os.path.exists(dbri_path):
         import _dbretina_internal as dbretina_internal
@@ -947,28 +926,16 @@ def main(ctx, index_prefix, containment_cutoff, ochiai_cutoff, GC, output_prefix
         raw_associations_json = json.loads(raw_json_str)['data']
     else:
         raw_associations_json = json.load(open(f"{index_prefix}_raw.json"))['data']
-    # write the associations to a two columns tsv file
-    _tmp_associations = f".DBRetina_tmp_association_{index_prefix}.tsv"
-    with open(_tmp_associations, "w") as f:
-        f.write("itemset\titem\n")
-        for group, items in raw_associations_json.items():
-            for item in items:            
-                f.write(f"{group}\t{item}\n")
-    
-    #### Start main code
 
-    dedup =  DeduplicateGroups(
-        associations_file=_tmp_associations,
+    dedup = DeduplicateGroups(
+        associations_file=None,
         index_prefix=index_prefix,
         containment_cutoff=containment_cutoff,
         exact_ochiai_cutoff=ochiai_cutoff,
-        ochiai_community_cutoff = ochiai_community_cutoff,
+        ochiai_community_cutoff=ochiai_community_cutoff,
         GC=GC,
-        ctx = ctx,
+        ctx=ctx,
     )
-    
+    dedup.process_associations_from_dict(raw_associations_json)
     dedup.build_all(output_prefix)
-    
-    if '.DBRetina' in _tmp_associations:
-        os.remove(_tmp_associations)
     
