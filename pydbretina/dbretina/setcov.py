@@ -670,7 +670,6 @@ class GraphBasedDeduplication(DeduplicateGroups):
 
         graph_remaining_groups_df = pd.DataFrame(columns = sorted_groups_df.columns)
         first_group_name = sorted_groups_df.iloc[0].name
-        print(f"[DEBUG] first group name: {first_group_name}")
 
         # load pairwise file
         # Try Parquet/PairwiseStore first
@@ -722,24 +721,17 @@ class GraphBasedDeduplication(DeduplicateGroups):
 
         # first update the similarity_bin of the whole table
         for neighbor, weight in get_all_neighbor_weights_dict(first_group_name).items():
-            print(f"[DEBUG] neighbor: {neighbor}, weight: {weight}")
             sorted_groups_df.loc[neighbor, 'similarity'] += weight
             sorted_groups_df.loc[neighbor, 'similarity_bin'] += math.ceil(sorted_groups_df.loc[neighbor, 'similarity'] / 10)
 
-        print(f"[DEBUG] graph_remaining_groups_df: {graph_remaining_groups_df.head()}")
 
         # plot_and_highligh_specific_node(G, first_group_name, f"iteration_{iteration}_first_group.png")
 
         # remove the first group from sorted_groups_df and from the graph
         
-        # TODO REMOVE DEBUG
-        # sorted_groups_df.to_csv(f"iteration_ZERO_{iteration}_sorted_groups_df.tsv", sep="\t")
         sorted_groups_df.drop(first_group_name, inplace=True)
-        print(f"[REMOVED] {first_group_name} removed |  Graph nodes: {len(G.nodes())}")
         
-        print(f"[DEBUG] Graph size: {len(G.nodes())}")
         G.remove_node(first_group_name)
-        print(f"[DEBUG] {first_group_name} removed |  Graph size: {len(G.nodes())}")
         # remove first_group_name edges
 
         # update uncovered_items with groups_to_items[first_group_name]
@@ -759,8 +751,6 @@ class GraphBasedDeduplication(DeduplicateGroups):
 
         while True and sorted_groups_df.shape[0] > 0:
             iteration += 1
-            # TODO REMOVE DEBUG
-            # sorted_groups_df.to_csv(f"iteration_{iteration}_sorted_groups_df.tsv", sep="\t")
 
             # sort groups by lowest similarity_bin, lowest modularity, highest average_CSI, highest no_of_items
             print(f"Iteration {iteration} | number of sorted_groups_df = {len(sorted_groups_df)}")
@@ -770,14 +760,11 @@ class GraphBasedDeduplication(DeduplicateGroups):
 
             # get the first group
             first_group_name = sorted_groups_df.iloc[0].name
-            print(f"[CURRENT GROUP] {first_group_name} |  Graph nodes: {len(G.nodes())} | Uncovered items: {len(uncovered_items)} | Items covered: {items_covered} | Iteration: {iteration} | Remaining groups: {len(sorted_groups_df)}")
             # export graph nodes to TSV
             intersected_items = self.groups_to_items[first_group_name].intersection(uncovered_items)
-            print(f"[DEBUG] Next group to remove: {first_group_name}")
 
             group_neighbors = get_all_neighbor_weights_dict(first_group_name)
             for neighbor, weight in group_neighbors.items():
-                print(f"[DEBUG] neighbor: {neighbor}, weight: {weight}")
                 sorted_groups_df.loc[neighbor, 'similarity'] *= (iteration - 1)
                 sorted_groups_df.loc[neighbor, 'similarity'] += weight
                 sorted_groups_df.loc[neighbor, 'similarity'] /= iteration
@@ -795,10 +782,8 @@ class GraphBasedDeduplication(DeduplicateGroups):
             # remove the first group from sorted_groups_df and from the graph
             G.remove_node(first_group_name)
             sorted_groups_df.drop(first_group_name, inplace=True)
-            print(f"[REMOVED] {first_group_name} removed |  Graph size: {len(G.nodes())}")
             
             if len(intersected_items) == 0:
-                print(f"!!! [DEBUG] iteration: {iteration}, first_group_name: {first_group_name}, intersected_items: {intersected_items}, uncovered_items: {len(uncovered_items)}")
                 iteration -= 1
                 continue
             
@@ -815,7 +800,6 @@ class GraphBasedDeduplication(DeduplicateGroups):
                 break
 
 
-        print(f"[DEBUG] selected_groups: {selected_groups}")
         self.final_remaining_groups_count = len(selected_groups)
         self.final_remaining_groups.update(selected_groups)
 
@@ -879,7 +863,6 @@ class GraphBasedDeduplication(DeduplicateGroups):
         print(f"number of groups removed from set-cover only: {number_of_groups_removed_from_set_cover} = {percentage_number_of_groups_removed_from_set_cover}%")
         print(f"final number of groups {self.final_remaining_groups_count} = {100 * self.final_remaining_groups_count / self.total_number_of_groups}%")
         total_percentage = percentage_number_of_groups_removed_from_exact_duplicates + percentage_number_of_groups_removed_from_set_cover + (100 * self.final_remaining_groups_count / self.total_number_of_groups)
-        print(f"[DEBUG] total percentage of groups: {total_percentage}%")
         
         items_stats = self.calculate_items_stats()
         print(f"original number of items {items_stats['original_no_of_items']}")
