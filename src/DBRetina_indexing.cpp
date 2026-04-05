@@ -146,12 +146,6 @@ namespace dbretina {
                             sort(colors.begin(), colors.end());
                         }
 
-                        // [OPTIMIZE] [TODO] Optimize colors concatenation
-                        // string colorsString = to_string(colors[0]);
-                        // for (int k = 1; k < colors.size(); k++) {
-                        //     colorsString += ";" + to_string(colors[k]);
-                        // }
-
                         std::stringstream ss;
                         if (!colors.empty()) {
                             ss << colors[0];
@@ -160,26 +154,8 @@ namespace dbretina {
                             }
                         }
                         std::string colorsString = ss.str();
-                        // END [OPTIMIZE] [TODO] Optimize colors concatenation
-
 
                         auto itTag = tagsMap.find(colorsString);
-
-                        // START [OPTIMIZE] [TODO] Optimize
-                        // if (itTag == tagsMap.end()) {
-                        //     uint64_t newColor;
-                        //     if (freeColors.size() == 0) {
-                        //         newColor = groupID++;
-                        //     }
-                        //     else {
-                        //         newColor = freeColors.top();
-                        //         freeColors.pop();
-                        //     }
-                        //     tagsMap.insert(make_pair(colorsString, newColor));
-                        //     legend->insert(make_pair(newColor, colors));
-                        //     itTag = tagsMap.find(colorsString);
-                        //     colorsCount[newColor] = 0;
-                        // }
 
                         if (itTag == tagsMap.end()) {
                             uint64_t newColor;
@@ -193,35 +169,11 @@ namespace dbretina {
                             itTag = inserted.first;
                             colorsCount[newColor] = 0;
                         }
-                        // END [OPTIMIZE] [TODO] Optimize
                         uint64_t newColor = itTag->second;
 
                         convertMap.emplace(currentTag, newColor);
                         itc = convertMap.find(currentTag);
                     }
-                    // START [OPTIMIZE] [TODO] Optimize
-                    // if (itc->second != currentTag) {
-
-                    //     colorsCount[currentTag]--;
-                    //     if (colorsCount[currentTag] == 0 && currentTag != 0) {
-
-                    //         auto _invGroupNameIT = inv_groupNameMap.find(currentTag);
-                    //         if (_invGroupNameIT == inv_groupNameMap.end()) {
-                    //             freeColors.push(currentTag);
-                    //             vector<uint32_t> colors = legend->find(currentTag)->second;
-                    //             string colorsString = to_string(colors[0]);
-                    //             for (unsigned int k = 1; k < colors.size(); k++) {
-                    //                 colorsString += ";" + to_string(colors[k]);
-                    //             }
-                    //             tagsMap.erase(colorsString);
-                    //             legend->erase(currentTag);
-                    //             if (convertMap.find(currentTag) != convertMap.end())
-                    //                 convertMap.erase(currentTag);
-                    //         }
-
-                    //     }
-                    //     colorsCount[itc->second]++;
-                    // }
 
                     if (itc->second != currentTag) {
                         --colorsCount[currentTag];
@@ -247,10 +199,6 @@ namespace dbretina {
                         }
                         ++colorsCount[itc->second];
                     }
-
-                    // END [OPTIMIZE] [TODO] Optimize
-
-
 
                     frame->setCount(hashed_feature, itc->second);
                     if (frame->getCount(hashed_feature) != itc->second) {

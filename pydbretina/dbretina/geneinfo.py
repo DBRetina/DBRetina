@@ -203,7 +203,6 @@ Detailed description:
         os.remove(_tmp_file)
 
     # Histogram plotting deferred (requires counts_file output from C++ query)
-    """
 
     ctx.obj.SUCCESS("Query done!")
 

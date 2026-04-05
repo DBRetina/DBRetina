@@ -260,13 +260,6 @@ namespace dbretina {
         return (double)k * N / (double)(s * M);
     }
 
-    // TODO - check how to integrate it in our code
-    double calcExpectedSuccesses(int s, int M, int N) {
-        // this function calculates the expected successes in the source
-        // which means the expected number of genes that are in the source and in the target
-        return (double)s * M / N;
-    }
-
     double calcPValue(int k, int s, int M, int N, bool isOverEnrichment) {
         /*
             Here we set the isOverEnriched null hypothesis as boolean set by user.

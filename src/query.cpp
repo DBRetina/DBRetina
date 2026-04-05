@@ -23,7 +23,6 @@ inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string
         std::string column1, column2;
 
         if (std::getline(lineStream, column1, '|') && std::getline(lineStream, column2, '|')) {
-            cout << column1 << "|" << column2 << std::endl;
             transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
             map.operator[](stoi(column1)) = column2;
         }
@@ -106,7 +105,6 @@ void query(string index_prefix, string inverted_index_prefix, string query_file,
 
     // load query file
     auto queries = load_query_file_single_column(query_file);
-    cout << "number of queries: " << queries.size() << endl;
 
     // print queries
     auto hasher = string_hasher();
@@ -151,8 +149,6 @@ void query(string index_prefix, string inverted_index_prefix, string query_file,
         }
     }
 
-    // free inverted index
-    cout << "freeing inverted index" << endl;
     delete inverted_kf;
     inverted_color_to_ids.clear();
     inverted_namesmap.clear();
