@@ -34,7 +34,10 @@ import dbretina.dbretina_doc_url as dbretina_doc
     help="Neighborhood hops (hypergraph/projection methods)",
 )
 @click.option(
-    "-m", "--metric", default="ochiai", show_default=True, type=str,
+    "-m", "--metric", default="ochiai", show_default=True,
+    type=click.Choice(
+        ["containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio"]
+    ),
     help="Metric for edge_weighted method",
 )
 @click.option(
@@ -108,7 +111,8 @@ def main(ctx, data_path, index_prefix, group_name, group_b, method,
                 f'Scoring shared genes between "{group_name}" and '
                 f'"{group_b}" (method={method})'
             )
-            df = gi.explain_pair(group_name, group_b, method=method)
+            df = gi.explain_pair(group_name, group_b, method=method,
+                                 metric=metric, cutoff=cutoff)
 
             lines = ["gene\tscore\tglobal_freq\tspecificity"]
             for _, row in df.head(top).iterrows():
@@ -141,6 +145,7 @@ def main(ctx, data_path, index_prefix, group_name, group_b, method,
             )
             df = gi.hub_genes(
                 group_name, hops=hops, method=method, top_n=top,
+                metric=metric, cutoff=cutoff,
             )
 
             lines = ["gene\tscore\tnum_diseases"]

@@ -1912,6 +1912,111 @@ class TestSpecialCharPairwise(unittest.TestCase):
 
 
 # ============================================================
+# Genescore (subdev1 A2 regression): -m/-c must be applied
+# ============================================================
+
+def parse_gene_score_map(out):
+    """Parse genescore stdout -> {gene: score}; ignores log/header lines."""
+    scores = {}
+    for line in out.splitlines():
+        parts = line.strip().split("\t")
+        if len(parts) >= 2 and parts[0] != "gene":
+            try:
+                scores[parts[0]] = float(parts[1])
+            except ValueError:
+                continue
+    return scores
+
+
+class TestGenescore(unittest.TestCase):
+    """genescore must actually apply --metric/--cutoff to edge_weighted scoring."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_genescore_")
+        self.prefix, self.pw = setup_index_and_pairwise(self.tmpdir)
+        self.parquet = f"{self.prefix}_DBRetina_pairwise"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _edge_weighted_scores(self, cutoff, group="groupa", metric="ochiai"):
+        """Run genescore edge_weighted; return {gene: score} (skips log/header lines)."""
+        rc, out, err = run_command(
+            f"DBRetina genescore -d {self.parquet} -i {self.prefix} "
+            f"{group} --method edge_weighted -m {metric} -c {cutoff} -n 50"
+        )
+        self.assertEqual(rc, 0, f"genescore failed (cutoff={cutoff}): {err}")
+        return parse_gene_score_map(out)
+
+    def test_edge_weighted_respects_cutoff(self):
+        # GroupA's pairs: B(~77), C(~36), E(~22), F(100, identical). At -c 100 only the
+        # identical A=F pair survives, so scores must differ from -c 0 (all pairs).
+        low = self._edge_weighted_scores(0)
+        high = self._edge_weighted_scores(100)
+        self.assertTrue(low, "edge_weighted at -c 0 returned no genes")
+        self.assertTrue(high, "edge_weighted at -c 100 returned no genes")
+        self.assertNotEqual(
+            low, high,
+            "genescore --method edge_weighted ignored -c: identical scores at "
+            f"-c 0 and -c 100 ({low})",
+        )
+
+    def _compare_scores(self, ga, gb, cutoff, metric="ochiai"):
+        """Run genescore --compare (explain_pair path); return {gene: score}."""
+        rc, out, err = run_command(
+            f"DBRetina genescore -d {self.parquet} -i {self.prefix} "
+            f"{ga} --compare {gb} --method edge_weighted -m {metric} -c {cutoff} -n 50"
+        )
+        self.assertEqual(rc, 0, f"genescore --compare failed (cutoff={cutoff}): {err}")
+        return parse_gene_score_map(out)
+
+    def test_edge_weighted_respects_metric(self):
+        # Same cutoff, different metric -> different weights/qualifying pairs -> different scores.
+        ochiai = self._edge_weighted_scores(20, metric="ochiai")
+        jaccard = self._edge_weighted_scores(20, metric="jaccard")
+        self.assertTrue(ochiai, "edge_weighted (ochiai) returned no genes")
+        self.assertTrue(jaccard, "edge_weighted (jaccard) returned no genes")
+        self.assertNotEqual(
+            ochiai, jaccard,
+            "genescore --method edge_weighted ignored -m (ochiai == jaccard scores)",
+        )
+
+    def test_explain_pair_respects_cutoff(self):
+        # --compare routes through explain_pair, which must also honor -c.
+        low = self._compare_scores("groupa", "groupc", 0)
+        high = self._compare_scores("groupa", "groupc", 100)
+        self.assertTrue(low, "explain_pair at -c 0 returned no shared genes")
+        self.assertTrue(high, "explain_pair at -c 100 returned no shared genes")
+        self.assertNotEqual(
+            low, high,
+            "genescore --compare --method edge_weighted ignored -c",
+        )
+
+    def test_explain_pair_respects_metric(self):
+        # --compare must honor -m too (forwarded on the same call line as cutoff).
+        ochiai = self._compare_scores("groupa", "groupc", 20, metric="ochiai")
+        jaccard = self._compare_scores("groupa", "groupc", 20, metric="jaccard")
+        self.assertTrue(ochiai, "explain_pair (ochiai) returned no shared genes")
+        self.assertTrue(jaccard, "explain_pair (jaccard) returned no shared genes")
+        self.assertNotEqual(
+            ochiai, jaccard,
+            "genescore --compare --method edge_weighted ignored -m",
+        )
+
+    def test_invalid_metric_rejected(self):
+        # An unknown metric must fail cleanly at the CLI, not with a raw traceback.
+        rc, out, err = run_command(
+            f"DBRetina genescore -d {self.parquet} -i {self.prefix} "
+            f"groupa --method edge_weighted -m bogus_metric -c 20"
+        )
+        self.assertNotEqual(rc, 0, "invalid --metric should fail")
+        self.assertNotIn(
+            "Traceback", out + err,
+            f"invalid --metric produced a raw traceback:\n{err[-300:]}",
+        )
+
+
+# ============================================================
 # Main
 # ============================================================
 

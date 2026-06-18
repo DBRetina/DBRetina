@@ -296,7 +296,8 @@ class GeneImportance:
     # ── Convenience Methods ────────────────────────────────────────
 
     def explain_pair(
-        self, group_a: str, group_b: str, method: str = "hypergraph"
+        self, group_a: str, group_b: str, method: str = "hypergraph",
+        metric: str = "ochiai", cutoff: float = 20,
     ) -> pd.DataFrame:
         """Rank shared genes between two diseases by importance.
 
@@ -304,6 +305,8 @@ class GeneImportance:
             group_a: First disease/group name.
             group_b: Second disease/group name.
             method: Scoring method ("hypergraph", "edge_weighted", or "projection").
+            metric: Similarity metric for the edge_weighted method (ignored otherwise).
+            cutoff: Minimum metric value for the edge_weighted method (ignored otherwise).
 
         Returns:
             DataFrame with columns: gene, score, local_freq, global_freq, specificity.
@@ -315,7 +318,7 @@ class GeneImportance:
 
         # Get scores from selected method for context
         if method == "edge_weighted":
-            all_scores = self.edge_weighted_scores(group_a)
+            all_scores = self.edge_weighted_scores(group_a, metric=metric, cutoff=cutoff)
         elif method == "projection":
             all_scores = self.projection_scores(group_a)
         else:
@@ -344,6 +347,8 @@ class GeneImportance:
         hops: int = 2,
         method: str = "projection",
         top_n: int = 30,
+        metric: str = "ochiai",
+        cutoff: float = 20,
     ) -> pd.DataFrame:
         """Rank all genes in a disease's neighborhood by importance.
 
@@ -352,12 +357,14 @@ class GeneImportance:
             hops: Number of hops for neighborhood.
             method: Scoring method ("projection", "hypergraph", or "edge_weighted").
             top_n: Number of top genes to return.
+            metric: Similarity metric for the edge_weighted method (ignored otherwise).
+            cutoff: Minimum metric value for the edge_weighted method (ignored otherwise).
 
         Returns:
             DataFrame with columns: gene, score, num_diseases.
         """
         if method == "edge_weighted":
-            scores = self.edge_weighted_scores(group_name)
+            scores = self.edge_weighted_scores(group_name, metric=metric, cutoff=cutoff)
         elif method == "hypergraph":
             scores = self.hypergraph_scores(group_name, hops=hops)
         else:
