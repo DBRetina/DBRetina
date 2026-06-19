@@ -25,7 +25,6 @@ from .api_errors import (
     FeatureNotAvailableError,
     AlgorithmError,
     validate_sql_safety,
-    validate_cypher_safety,
     validate_metric as _validate_metric,
     validate_cutoff as _validate_cutoff,
 )
@@ -1299,43 +1298,11 @@ def create_app(
 
         return {"algorithm": layout_name, "positions": positions}
 
-    class CypherQuery(BaseModel):
-        query: str
-        metric: Optional[str] = None
-        cutoff: Optional[float] = None
-
-    @app.post("/api/v1/cypher")
-    def execute_cypher(body: CypherQuery):
-        """Execute a Cypher query on the graph database (read-only)."""
-        # Validate query safety
-        validate_cypher_safety(body.query)
-
-        graph, m, c = get_graph(body.metric, body.cutoff)
-        try:
-            df = graph.cypher(body.query)
-
-            # Check result size
-            if len(df) > MAX_PAIRS_RESPONSE:
-                raise DataTooLargeError(
-                    detail=f"Query returned too many rows ({len(df):,})",
-                    requested_size=len(df),
-                    max_size=MAX_PAIRS_RESPONSE,
-                    suggestion="Add LIMIT clause to your Cypher query",
-                )
-
-            return {
-                "columns": list(df.columns),
-                "row_count": len(df),
-                "rows": df.to_dict(orient="records"),
-            }
-        except (DataTooLargeError, UnsafeQueryError):
-            raise
-        except Exception as e:
-            raise QuerySyntaxError(
-                detail=f"Cypher error: {e}",
-                query_type="cypher",
-                query=body.query,
-            )
+    # The raw /api/v1/cypher endpoint was REMOVED for security: untrusted Cypher on
+    # Kùzu allowed arbitrary file read/write (COPY/LOAD) plus function-style readers
+    # (CALL read_parquet/read_csv/...) that crash the process (segfault DoS) — none
+    # of which a keyword denylist or read-only mode can contain. Graph features use the
+    # typed /api/v1/graph/* endpoints. (Kùzu itself is slated for removal.)
 
     # ── Export Endpoints ───────────────────────────────────────────
 

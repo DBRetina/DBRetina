@@ -41,8 +41,8 @@ def main(ctx, data_path, index_prefix, metric, cutoff, port, host, api_key):
     """Start a REST API server with interactive dashboard.
 
     Serves the pairwise dataset over HTTP with JSON endpoints for
-    filtering, group queries, statistics, SQL, Cypher, and an
-    interactive network graph dashboard.
+    filtering, group queries, statistics, SQL, and an interactive
+    network graph dashboard.
 
     \b
     Example:

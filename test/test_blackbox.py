@@ -2186,6 +2186,20 @@ class TestRestSecurity(unittest.TestCase):
         finally:
             store.close()
 
+    def test_cypher_endpoint_removed(self):
+        # The raw /api/v1/cypher endpoint is removed (unsafe: file read + segfault DoS via Kùzu).
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/cypher",
+                            json={"query": "MATCH (g:`Group`) RETURN count(g)",
+                                  "metric": "ochiai", "cutoff": 0.0})
+            # Route gone: 404 (no route) or 405 (POST falls through to the static mount).
+            self.assertIn(r.status_code, (404, 405),
+                          f"/api/v1/cypher should be removed, got {r.status_code}")
+            self.assertNotIn("row_count", r.text, "/cypher must not execute queries")
+        finally:
+            store.close()
+
 
 # ============================================================
 # Main
