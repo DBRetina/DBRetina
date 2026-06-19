@@ -101,14 +101,22 @@ def create_app(
     app.state.default_metric = graph_metric
     app.state.default_cutoff = graph_cutoff
 
-    # ── CORS for dev mode ───────────────────────────────────────
+    # ── Sandbox the SQL surface: lock DuckDB to in-memory data, no filesystem ──
+    # Untrusted queries (POST /api/v1/sql) run against this connection; disabling
+    # external access blocks read_text/read_csv/COPY/ATTACH etc. — defense that does
+    # not depend on a keyword denylist.
+    store.harden_readonly()
 
+    # ── CORS (restrict to the dashboard dev origin; never wildcard) ──────
+    # The bundled dashboard is served same-origin (no CORS needed); only the Vite
+    # dev server is cross-origin.
     from fastapi.middleware.cors import CORSMiddleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["x-api-key", "content-type"],
     )
 
     # ── Exception handlers ────────────────────────────────────────
@@ -144,7 +152,7 @@ def create_app(
             path = request.url.path
             if path in ("/", "/docs", "/openapi.json", "/redoc") or not path.startswith("/api/"):
                 return await call_next(request)
-            key = request.headers.get("x-api-key") or request.query_params.get("api_key")
+            key = request.headers.get("x-api-key")
             if key != api_key:
                 return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
             return await call_next(request)

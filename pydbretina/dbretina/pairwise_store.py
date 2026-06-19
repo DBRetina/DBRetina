@@ -119,6 +119,23 @@ class PairwiseStore:
     def __exit__(self, *args):
         self.close()
 
+    def harden_readonly(self):
+        """Sandbox the DuckDB connection for untrusted SQL (the ``serve`` /sql endpoint).
+
+        Materializes the lazy ``pairs`` parquet view into an in-memory table, then disables
+        DuckDB filesystem access, so file-reading SQL (read_text/read_csv/read_parquet/COPY/
+        ATTACH/...) is rejected while queries over ``pairs`` keep working. Trade-off: loads the
+        pairwise data into memory; intended for the served store only. Idempotent.
+        """
+        if getattr(self, "_hardened", False):
+            return
+        self._con.execute("DROP VIEW IF EXISTS pairs")
+        self._con.execute(
+            f"CREATE TABLE pairs AS SELECT * FROM read_parquet('{self._parquet_glob}')"
+        )
+        self._con.execute("SET enable_external_access=false")
+        self._hardened = True
+
     # ── Metadata ──────────────────────────────────────────────────────
 
     @property

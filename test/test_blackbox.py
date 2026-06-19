@@ -2094,6 +2094,100 @@ class TestRestHubGenes(unittest.TestCase):
 
 
 # ============================================================
+# REST security (S1 SQL file-read, S2 CORS, S3 api-key-in-URL)
+# ============================================================
+
+try:
+    import fastapi as _fa  # noqa: F401
+    import duckdb as _dk  # noqa: F401
+    import httpx as _hx  # noqa: F401
+    from starlette.testclient import TestClient as _TestClient
+    _HAS_REST_TEST = True
+except Exception:
+    _HAS_REST_TEST = False
+
+
+@unittest.skipUnless(_HAS_REST_TEST, "REST security tests need [server] extra + httpx")
+class TestRestSecurity(unittest.TestCase):
+    """serve REST must: block SQL file reads, not use wildcard CORS, reject API key in URL."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_sec_")
+        self.prefix, self.pw = setup_index_and_pairwise(self.tmpdir)
+        self.parquet = f"{self.prefix}_DBRetina_pairwise"
+        self.dbri = f"{self.prefix}.dbri"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _client(self, api_key=None):
+        from dbretina.compat import open_pairwise
+        from dbretina.pairwise_store import PairwiseStore
+        from dbretina.rest_api import create_app
+        store = open_pairwise(self.parquet)
+        if store is None:
+            store = PairwiseStore(self.parquet, dbri_path=self.dbri)
+        else:
+            store._dbri_path = self.dbri
+        app = create_app(store, api_key=api_key, dbri_path=self.dbri)
+        return _TestClient(app), store
+
+    def test_sql_endpoint_cannot_read_files(self):
+        # S1: arbitrary file read via DuckDB read_text() must be blocked.
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/sql",
+                            json={"query": "SELECT * FROM read_text('/etc/passwd')"})
+            self.assertNotIn("root:", r.text,
+                             "SQL endpoint leaked /etc/passwd contents (file read not blocked)")
+            self.assertNotEqual(r.status_code, 200,
+                                f"file-read query unexpectedly succeeded: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_cors_is_not_wildcard(self):
+        # S2: CORS must not allow arbitrary origins.
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/info", headers={"Origin": "http://evil.example"})
+            acao = r.headers.get("access-control-allow-origin")
+            self.assertNotEqual(acao, "*", "CORS allows any origin (*)")
+            self.assertNotEqual(acao, "http://evil.example",
+                                "CORS reflects an arbitrary origin")
+        finally:
+            store.close()
+
+    def test_api_key_rejected_in_query_param(self):
+        # S3: when auth is on, the key must NOT be accepted via URL query param (log leak).
+        client, store = self._client(api_key="SECRET")
+        try:
+            r_q = client.get("/api/v1/info?api_key=SECRET")
+            self.assertEqual(r_q.status_code, 401,
+                             "API key accepted via query param (leaks into URLs/logs)")
+            r_h = client.get("/api/v1/info", headers={"x-api-key": "SECRET"})
+            self.assertEqual(r_h.status_code, 200, "API key via header should authenticate")
+        finally:
+            store.close()
+
+    def test_harden_readonly_is_idempotent(self):
+        # Calling harden twice (e.g. create_app twice on one store) must not crash and stay locked.
+        from dbretina.compat import open_pairwise
+        from dbretina.pairwise_store import PairwiseStore
+        store = open_pairwise(self.parquet)
+        if store is None:
+            store = PairwiseStore(self.parquet, dbri_path=self.dbri)
+        try:
+            store.harden_readonly()
+            store.harden_readonly()  # second call must be a no-op, not raise
+            with self.assertRaises(Exception):  # filesystem still disabled
+                store._con.execute("SELECT * FROM read_text('/etc/passwd')").fetchone()
+            n = store._con.execute("SELECT count(*) FROM pairs").fetchone()[0]
+            self.assertGreater(n, 0, "pairs still queryable after double-harden")
+        finally:
+            store.close()
+
+
+# ============================================================
 # Main
 # ============================================================
 
