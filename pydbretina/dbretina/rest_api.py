@@ -644,6 +644,8 @@ def create_app(
                 hops=body.hops,
                 method=body.method,
                 top_n=body.top_n,
+                metric=body.metric,
+                cutoff=body.cutoff,
             )
             genes = df.to_dict(orient="records")
             return {

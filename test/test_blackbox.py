@@ -32,6 +32,7 @@ import tempfile
 import shutil
 import json
 import unittest
+from types import SimpleNamespace
 
 # ============================================================
 # SECTION 1: Test Data Constants
@@ -2014,6 +2015,82 @@ class TestGenescore(unittest.TestCase):
             "Traceback", out + err,
             f"invalid --metric produced a raw traceback:\n{err[-300:]}",
         )
+
+
+# ============================================================
+# REST hub-genes (subdev1 A5): endpoint must honor request metric/cutoff
+# ============================================================
+
+try:
+    import fastapi as _fastapi  # noqa: F401
+    import duckdb as _duckdb  # noqa: F401
+    _HAS_SERVER = True
+except Exception:
+    _HAS_SERVER = False
+
+
+@unittest.skipUnless(_HAS_SERVER, "REST/genescore needs the [server] extra (fastapi, duckdb)")
+class TestRestHubGenes(unittest.TestCase):
+    """REST /api/v1/genes/hub-genes must apply request.metric/cutoff (A5);
+    edge_weighted_scores must reject unknown metrics with a clean error (A7)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_rest_")
+        self.prefix, self.pw = setup_index_and_pairwise(self.tmpdir)
+        self.parquet = f"{self.prefix}_DBRetina_pairwise"
+        self.dbri = f"{self.prefix}.dbri"
+        from dbretina.compat import open_pairwise
+        from dbretina.pairwise_store import PairwiseStore
+        from dbretina.rest_api import create_app
+        store = open_pairwise(self.parquet)
+        if store is None:
+            store = PairwiseStore(self.parquet, dbri_path=self.dbri)
+        else:
+            store._dbri_path = self.dbri
+        self.store = store
+        app = create_app(store, dbri_path=self.dbri)
+        self.hub_ep = next(
+            (r.endpoint for r in app.routes
+             if getattr(r, "path", "") == "/api/v1/genes/hub-genes"), None)
+        self.assertIsNotNone(self.hub_ep, "hub-genes endpoint not registered")
+
+    def tearDown(self):
+        try:
+            self.store.close()
+        except Exception:
+            pass
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _hub(self, cutoff, metric="ochiai", group="groupa"):
+        body = SimpleNamespace(group_name=group, method="edge_weighted",
+                               hops=2, top_n=50, metric=metric, cutoff=cutoff)
+        res = self.hub_ep(body)
+        return {g["gene"]: g["score"] for g in res["genes"]}
+
+    def test_hub_genes_respects_cutoff(self):
+        low = self._hub(0)
+        high = self._hub(100)
+        self.assertTrue(low, "REST hub-genes at cutoff 0 returned no genes")
+        self.assertNotEqual(
+            low, high,
+            "REST /genes/hub-genes ignored request.cutoff (identical at 0 and 100)",
+        )
+
+    def test_hub_genes_respects_metric(self):
+        ochiai = self._hub(20, metric="ochiai")
+        jaccard = self._hub(20, metric="jaccard")
+        self.assertTrue(ochiai, "REST hub-genes (ochiai) returned no genes")
+        self.assertNotEqual(
+            ochiai, jaccard,
+            "REST /genes/hub-genes ignored request.metric (ochiai == jaccard)",
+        )
+
+    def test_edge_weighted_rejects_unknown_metric(self):
+        # A7: an unknown metric must raise a clean ValueError, not leak a raw DuckDB error.
+        from dbretina.gene_importance import GeneImportance
+        gi = GeneImportance(self.store)
+        with self.assertRaises(ValueError):
+            gi.edge_weighted_scores("groupa", metric="bogus_metric")
 
 
 # ============================================================

@@ -86,6 +86,10 @@ class GeneImportance:
         Returns:
             Dict mapping gene_name -> accumulated score.
         """
+        if metric not in PairwiseStore.METRICS:
+            raise ValueError(
+                f"Unknown metric '{metric}'. Valid: {', '.join(PairwiseStore.METRICS)}"
+            )
         store = self._store
         gene_sets = store._load_gene_sets()
         target_key = group_name.lower()
