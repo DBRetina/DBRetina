@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { useDashboard } from "../../../state/context";
 import { VALID_METRICS } from "../../../utils/validation";
+import { genId } from "../../../utils/uid";
 
 export interface FilterCondition {
   id: string;
@@ -176,7 +177,7 @@ interface FilterBuilderProps {
 export default function FilterBuilder({ onApply, onClear }: FilterBuilderProps) {
   const { state } = useDashboard();
   const [conditions, setConditions] = useState<FilterCondition[]>([
-    { id: crypto.randomUUID(), metric: "ochiai", operator: ">=", value: 50 },
+    { id: genId(), metric: "ochiai", operator: ">=", value: 50 },
   ]);
   const [logic, setLogic] = useState<"AND" | "OR">("AND");
   const [expanded, setExpanded] = useState(false);
@@ -206,7 +207,7 @@ export default function FilterBuilder({ onApply, onClear }: FilterBuilderProps) 
   const addCondition = useCallback(() => {
     setConditions((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), metric: "ochiai", operator: ">=", value: 50 },
+      { id: genId(), metric: "ochiai", operator: ">=", value: 50 },
     ]);
   }, []);
 
@@ -221,7 +222,7 @@ export default function FilterBuilder({ onApply, onClear }: FilterBuilderProps) 
   const applyPreset = useCallback((preset: (typeof presets)[0]) => {
     setConditions(
       preset.conditions.map((c) => ({
-        id: crypto.randomUUID(),
+        id: genId(),
         metric: c.metric,
         operator: c.operator,
         value: c.value,
@@ -236,7 +237,7 @@ export default function FilterBuilder({ onApply, onClear }: FilterBuilderProps) 
 
   const handleClear = useCallback(() => {
     setConditions([
-      { id: crypto.randomUUID(), metric: "ochiai", operator: ">=", value: 50 },
+      { id: genId(), metric: "ochiai", operator: ">=", value: 50 },
     ]);
     setLogic("AND");
     onClear();
