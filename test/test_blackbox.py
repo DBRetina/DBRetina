@@ -2201,6 +2201,123 @@ class TestRestSecurity(unittest.TestCase):
             store.close()
 
 
+@unittest.skipUnless(_HAS_REST_TEST, "graph endpoint tests need [server] extra + httpx")
+class TestRestGraph(unittest.TestCase):
+    """serve graph + algorithms endpoints (igraph-backed)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_graph_")
+        self.prefix, self.pw = setup_index_and_pairwise(self.tmpdir)
+        self.parquet = f"{self.prefix}_DBRetina_pairwise"
+        self.dbri = f"{self.prefix}.dbri"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _client(self):
+        from dbretina.compat import open_pairwise
+        from dbretina.pairwise_store import PairwiseStore
+        from dbretina.rest_api import create_app
+        store = open_pairwise(self.parquet)
+        if store is None:
+            store = PairwiseStore(self.parquet, dbri_path=self.dbri)
+        else:
+            store._dbri_path = self.dbri
+        return _TestClient(create_app(store, dbri_path=self.dbri)), store
+
+    def test_algorithms_clustering_lists_algorithms(self):
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/algorithms/clustering")
+            self.assertEqual(r.status_code, 200, f"got {r.status_code}: {r.text[:200]}")
+            self.assertIn("algorithms", r.json())
+        finally:
+            store.close()
+
+    def test_graph_cluster_returns_membership(self):
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/graph/cluster",
+                            json={"algorithm": "leiden", "parameters": {},
+                                  "metric": "ochiai", "cutoff": 0.0})
+            self.assertEqual(r.status_code, 200, f"got {r.status_code}: {r.text[:200]}")
+            body = r.json()
+            for k in ("membership", "num_clusters", "modularity"):
+                self.assertIn(k, body)
+        finally:
+            store.close()
+
+    def test_graph_components_returns_components(self):
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/graph/components?metric=ochiai&cutoff=0.0")
+            self.assertEqual(r.status_code, 200, f"got {r.status_code}: {r.text[:200]}")
+            body = r.json()
+            for k in ("num_components", "components"):
+                self.assertIn(k, body)
+        finally:
+            store.close()
+
+    def test_graph_cluster_high_cutoff_no_edges(self):
+        # No edges (very high cutoff) must NOT 500 — leiden/louvain modularity is NaN there.
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/graph/cluster",
+                            json={"algorithm": "leiden", "parameters": {},
+                                  "metric": "ochiai", "cutoff": 100.0})
+            self.assertEqual(r.status_code, 200, f"high-cutoff cluster 500'd: {r.text[:200]}")
+            self.assertIsNotNone(r.json().get("modularity"))
+        finally:
+            store.close()
+
+    def test_graph_cluster_louvain(self):
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/graph/cluster",
+                            json={"algorithm": "louvain", "parameters": {},
+                                  "metric": "ochiai", "cutoff": 0.0})
+            self.assertEqual(r.status_code, 200, f"got {r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_graph_cluster_unknown_algorithm_rejected(self):
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/graph/cluster",
+                            json={"algorithm": "bogus", "parameters": {},
+                                  "metric": "ochiai", "cutoff": 0.0})
+            self.assertEqual(r.status_code, 400, f"unknown algorithm not rejected: {r.status_code}")
+        finally:
+            store.close()
+
+    def test_graph_components_min_size_filters_all(self):
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/graph/components?metric=ochiai&cutoff=0.0&min_size=100000")
+            self.assertEqual(r.status_code, 200, f"got {r.status_code}: {r.text[:200]}")
+            self.assertEqual(r.json().get("num_components"), 0)
+        finally:
+            store.close()
+
+
+class TestAlgorithmsModule(unittest.TestCase):
+    """dbretina.algorithms.run_clustering (igraph-backed) — no server needed."""
+
+    def test_run_clustering_no_edge_graph_modularity_finite(self):
+        # A graph with vertices but no edges yields NaN modularity from igraph;
+        # run_clustering must coerce it to a JSON-serializable finite value.
+        import math
+        import igraph as ig
+        from dbretina.algorithms import run_clustering
+        for algo in ("leiden", "louvain"):
+            g = ig.Graph(n=5, directed=False)  # 5 vertices, 0 edges
+            res = run_clustering(g, algorithm=algo)
+            self.assertTrue(
+                math.isfinite(res.modularity),
+                f"{algo} no-edge modularity not finite: {res.modularity}",
+            )
+
+
 # ============================================================
 # Main
 # ============================================================
