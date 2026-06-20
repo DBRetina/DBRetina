@@ -1,0 +1,6 @@
+# Dependencies
+node_modules/
+
+# Build caches (the shipped bundle is built to ../dashboard_dist, which is tracked)
+*.tsbuildinfo
+.vite/

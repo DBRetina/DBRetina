@@ -143,39 +143,6 @@ export function validateSQLSafety(query: string): ValidationResult {
 }
 
 /**
- * Validate Cypher query for dangerous patterns.
- * Uses word-boundary matching on the query after stripping string literals.
- */
-const DANGEROUS_CYPHER_PATTERNS = [
-  "DETACH DELETE",
-  "DELETE",
-  "CREATE",
-  "MERGE",
-  "SET",
-  "REMOVE",
-  "DROP",
-];
-
-export function validateCypherSafety(query: string): ValidationResult {
-  if (!query || query.trim().length === 0) {
-    return { valid: false, error: "Query is required" };
-  }
-
-  const stripped = stripStringLiterals(query);
-  for (const pattern of DANGEROUS_CYPHER_PATTERNS) {
-    const regex = new RegExp("\\b" + escapeRegExp(pattern) + "\\b", "i");
-    if (regex.test(stripped)) {
-      return {
-        valid: false,
-        error: `Query contains blocked operation: ${pattern}`,
-      };
-    }
-  }
-
-  return { valid: true };
-}
-
-/**
  * Validate pagination parameters
  */
 export function validatePagination(

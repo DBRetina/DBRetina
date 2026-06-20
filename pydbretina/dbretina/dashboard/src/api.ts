@@ -152,18 +152,6 @@ export async function executeSql(query: string): Promise<QueryResult> {
   });
 }
 
-export async function executeCypher(
-  query: string,
-  metric?: string,
-  cutoff?: number
-): Promise<QueryResult> {
-  return fetchJSON(`${BASE}/cypher`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, metric, cutoff }),
-  });
-}
-
 export async function fetchPairs(
   metric: string,
   cutoff: number,

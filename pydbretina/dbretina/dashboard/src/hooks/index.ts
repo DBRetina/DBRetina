@@ -19,6 +19,5 @@ export {
 export {
   useQueryHistory,
   SQL_TEMPLATES,
-  CYPHER_TEMPLATES,
   type QueryHistoryItem,
 } from "./useQueryHistory";

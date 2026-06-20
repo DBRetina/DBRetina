@@ -1,7 +1,6 @@
 import { useState, useCallback } from "react";
 import { useDashboard } from "../../state/context";
 import SQLEditor from "./SQLEditor";
-import CypherEditor from "./CypherEditor";
 import ResultsTable from "./ResultsTable";
 import { QueryResult, APIError } from "../../state/types";
 import { EmptyState } from "../Common";
@@ -36,7 +35,7 @@ function extractMatchingNodeIds(
 
 export default function QueryPanel() {
   const { state, dispatch } = useDashboard();
-  const [activeTab, setActiveTab] = useState<"sql" | "cypher">("sql");
+  const [activeTab, setActiveTab] = useState<"sql">("sql");
   const [results, setResults] = useState<QueryResult | null>(null);
   const [error, setError] = useState<APIError | null>(null);
   const [loading, setLoading] = useState(false);
@@ -138,12 +137,6 @@ export default function QueryPanel() {
             >
               SQL
             </button>
-            <button
-              className={`query-tab ${activeTab === "cypher" ? "active" : ""}`}
-              onClick={() => setActiveTab("cypher")}
-            >
-              Cypher
-            </button>
           </div>
           {loading && (
             <span style={{ fontSize: 11, color: "var(--accent)" }}>
@@ -160,9 +153,6 @@ export default function QueryPanel() {
         <div className="query-panel-body">
           {activeTab === "sql" && (
             <SQLEditor onResult={handleResult} onError={handleError} onLoading={handleLoading} />
-          )}
-          {activeTab === "cypher" && (
-            <CypherEditor onResult={handleResult} onError={handleError} onLoading={handleLoading} />
           )}
 
           {/* Highlight indicator */}
@@ -297,7 +287,7 @@ export default function QueryPanel() {
                 ) : null}
                 {error.error_code === "UNSAFE_QUERY" && (
                   <div style={{ fontSize: 11, opacity: 0.8, marginTop: 2 }}>
-                    Only read queries (SELECT, MATCH, RETURN) are allowed.
+                    Only read queries (SELECT) are allowed.
                   </div>
                 )}
               </div>

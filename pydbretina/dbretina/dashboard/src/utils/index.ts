@@ -9,7 +9,6 @@ export {
   validateCutoff,
   validateSearchQuery,
   validateSQLSafety,
-  validateCypherSafety,
   validatePagination,
   validateHops,
   validateForm,
