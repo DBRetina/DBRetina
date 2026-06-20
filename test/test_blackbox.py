@@ -2299,6 +2299,137 @@ class TestRestGraph(unittest.TestCase):
         finally:
             store.close()
 
+    # ── igraph re-platform characterization tests ──────────────────
+    # /data, /neighborhood, /communities, /layout passed on Kùzu and must
+    # still pass on igraph; /shortest-path was BROKEN on Kùzu and must now work.
+
+    def _a_group(self, store):
+        """Return some real group name from the store."""
+        names = list(store.get_names_map().values())
+        self.assertTrue(names, "store has no groups")
+        return names[0]
+
+    def _connected_pair(self, store):
+        """Return (source, target) for two groups joined by an edge at cutoff 0."""
+        from dbretina.pairwise_graph import PairwiseGraph
+        g = PairwiseGraph(store, metric="ochiai", cutoff=0.0)
+        edf = g.edges_dataframe()
+        self.assertGreater(len(edf), 0, "no edges in graph to test shortest-path")
+        nm = g._names_map
+        src = nm[int(edf.iloc[0]["src"])]
+        dst = nm[int(edf.iloc[0]["dst"])]
+        return src, dst
+
+    def test_graph_data_shape(self):
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/graph/data?metric=ochiai&cutoff=0.0")
+            self.assertEqual(r.status_code, 200, f"got {r.status_code}: {r.text[:200]}")
+            body = r.json()
+            for k in ("nodes", "edges", "meta"):
+                self.assertIn(k, body)
+            self.assertGreater(len(body["edges"]), 0, "graph/data returned no edges")
+            # node objects carry the documented keys
+            n0 = body["nodes"][0]
+            for k in ("id", "label", "degree", "community", "pagerank"):
+                self.assertIn(k, n0)
+            # edge objects carry source/target/weight/shared_features
+            e0 = body["edges"][0]
+            for k in ("source", "target", "weight", "shared_features"):
+                self.assertIn(k, e0)
+        finally:
+            store.close()
+
+    def test_graph_neighborhood_shape(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.get(
+                f"/api/v1/graph/neighborhood?group={group}&metric=ochiai&cutoff=0.0&hops=2"
+            )
+            self.assertEqual(r.status_code, 200, f"got {r.status_code}: {r.text[:200]}")
+            body = r.json()
+            for k in ("nodes", "edges", "meta"):
+                self.assertIn(k, body)
+        finally:
+            store.close()
+
+    def test_graph_neighborhood_unknown_group_404(self):
+        client, store = self._client()
+        try:
+            r = client.get(
+                "/api/v1/graph/neighborhood?group=__no_such_group__&metric=ochiai&cutoff=0.0"
+            )
+            self.assertEqual(r.status_code, 404, f"expected 404, got {r.status_code}")
+        finally:
+            store.close()
+
+    def test_graph_communities_shape(self):
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/graph/communities?metric=ochiai&cutoff=0.0&method=leiden")
+            self.assertEqual(r.status_code, 200, f"got {r.status_code}: {r.text[:200]}")
+            body = r.json()
+            for k in ("communities", "num_communities", "sizes"):
+                self.assertIn(k, body)
+            self.assertIsInstance(body["communities"], dict)
+        finally:
+            store.close()
+
+    def test_graph_layout_shape(self):
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/graph/layout?metric=ochiai&cutoff=0.0&algorithm=fr")
+            self.assertEqual(r.status_code, 200, f"got {r.status_code}: {r.text[:200]}")
+            body = r.json()
+            for k in ("algorithm", "positions"):
+                self.assertIn(k, body)
+            self.assertIsInstance(body["positions"], dict)
+            # every position is an [x, y] pair
+            for pos in body["positions"].values():
+                self.assertEqual(len(pos), 2)
+        finally:
+            store.close()
+
+    def test_graph_shortest_path_works(self):
+        # Was BROKEN on Kùzu (SHORTEST path query); must return 200 with a real path.
+        client, store = self._client()
+        try:
+            src, dst = self._connected_pair(store)
+            r = client.get(
+                f"/api/v1/graph/shortest-path?source={src}&target={dst}&metric=ochiai&cutoff=0.0"
+            )
+            self.assertEqual(r.status_code, 200, f"shortest-path 500'd: {r.text[:200]}")
+            body = r.json()
+            for k in ("path_length", "path_nodes", "connected"):
+                self.assertIn(k, body)
+            self.assertTrue(body["connected"], "connected pair reported as disconnected")
+            self.assertEqual(body["path_length"], 1, "adjacent pair should be 1 hop")
+            self.assertEqual(body["path_nodes"], [src, dst])
+        finally:
+            store.close()
+
+    def test_graph_shortest_path_unknown_group_404(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.get(
+                f"/api/v1/graph/shortest-path?source={group}&target=__nope__&metric=ochiai&cutoff=0.0"
+            )
+            self.assertEqual(r.status_code, 404, f"expected 404, got {r.status_code}")
+        finally:
+            store.close()
+
+    def test_export_graph_graphml_works(self):
+        # igraph write_graphml needs a real fd; the endpoint must not 500 on a BytesIO.
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/export/graph/graphml?metric=ochiai&cutoff=0.0")
+            self.assertEqual(r.status_code, 200, f"graphml export failed: {r.text[:200]}")
+            self.assertIn(b"graphml", r.content[:400].lower())
+        finally:
+            store.close()
+
 
 class TestAlgorithmsModule(unittest.TestCase):
     """dbretina.algorithms.run_clustering (igraph-backed) — no server needed."""

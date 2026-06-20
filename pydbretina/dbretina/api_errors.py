@@ -130,7 +130,7 @@ class DataTooLargeError(DBRetinaAPIError):
 
 
 class QuerySyntaxError(DBRetinaAPIError):
-    """Raised when SQL or Cypher query has syntax errors."""
+    """Raised when a SQL query has syntax errors."""
 
     status_code = 400
     error_code = "QUERY_SYNTAX_ERROR"
@@ -217,11 +217,6 @@ DANGEROUS_SQL_PATTERNS = [
     "UPDATE", "EXEC", "EXECUTE", "GRANT", "REVOKE",
 ]
 
-DANGEROUS_CYPHER_PATTERNS = [
-    "DETACH DELETE", "DELETE", "CREATE", "MERGE",
-    "SET", "REMOVE", "DROP",
-]
-
 
 def _strip_string_literals(query: str) -> str:
     """Remove string literal contents so they don't trigger keyword checks."""
@@ -242,24 +237,6 @@ def validate_sql_safety(query: str) -> None:
         if re.search(r"\b" + re.escape(pattern) + r"\b", stripped, re.IGNORECASE):
             raise UnsafeQueryError(
                 detail=f"SQL query contains blocked operation: {pattern}",
-                operation=pattern,
-            )
-
-
-def validate_cypher_safety(query: str) -> None:
-    """Check if Cypher query is safe for read-only execution.
-
-    Strips string literals and uses word-boundary matching so values
-    like 'gene_set_1' don't trigger the SET check.
-
-    Raises:
-        UnsafeQueryError: If query contains dangerous patterns.
-    """
-    stripped = _strip_string_literals(query)
-    for pattern in DANGEROUS_CYPHER_PATTERNS:
-        if re.search(r"\b" + re.escape(pattern) + r"\b", stripped, re.IGNORECASE):
-            raise UnsafeQueryError(
-                detail=f"Cypher query contains blocked operation: {pattern}",
                 operation=pattern,
             )
 

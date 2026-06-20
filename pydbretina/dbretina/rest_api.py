@@ -881,47 +881,32 @@ def create_app(
 
     def _graph_data_response(graph, metric_name, limit=5000):
         """Convert a PairwiseGraph to the standard node/edge JSON format."""
-        import igraph as ig
-
-        # Get edges
-        edges_df = graph.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            f'RETURN a.id AS src, b.id AS dst, r.{metric_name} AS weight, '
-            f'r.shared_features AS shared_features'
-        )
+        # Reuse the graph's already-built igraph (vertex i has gid == idx_to_gid[i]).
+        g = graph.to_igraph()
         names_map = graph._names_map
+        id_idx = graph._gid_to_idx
+        all_ids = graph._idx_to_gid
 
-        # Build igraph for degree + pagerank + communities
-        all_ids = sorted(names_map.keys())
-        id_idx = {gid: i for i, gid in enumerate(all_ids)}
-        g = ig.Graph(n=len(all_ids), directed=False)
-
-        edge_list = []
-        weights = []
+        # The graph's edge weights ARE this metric; read them back per edge.
+        weights = g.es["weight"] if g.ecount() > 0 else None
         edge_data = []
-        for _, row in edges_df.iterrows():
-            src, dst = int(row["src"]), int(row["dst"])
-            if src in id_idx and dst in id_idx:
-                edge_list.append((id_idx[src], id_idx[dst]))
-                w = float(row["weight"])
-                weights.append(w)
-                edge_data.append({
-                    "source": str(src), "target": str(dst),
-                    "weight": round(w, 2),
-                    "shared_features": int(row["shared_features"]),
-                })
-
-        if edge_list:
-            g.add_edges(edge_list)
+        for e in g.es:
+            src = all_ids[e.source]
+            dst = all_ids[e.target]
+            edge_data.append({
+                "source": str(src), "target": str(dst),
+                "weight": round(float(e["weight"]), 2),
+                "shared_features": int(e["shared_features"]),
+            })
 
         degrees = g.degree()
         try:
-            pr = g.pagerank(weights=weights if weights else None)
+            pr = g.pagerank(weights=weights)
         except Exception:
             pr = [0.0] * g.vcount()
 
         try:
-            communities = g.community_leiden(weights=weights if weights else None, objective_function="modularity")
+            communities = g.community_leiden(weights=weights, objective_function="modularity")
             membership = communities.membership
         except Exception:
             membership = [0] * g.vcount()
@@ -959,7 +944,7 @@ def create_app(
             "edges": edge_data,
             "meta": {
                 "total_nodes": len(connected_ids),
-                "total_edges": len(edges_df),
+                "total_edges": g.ecount(),
                 "returned_nodes": len(nodes),
                 "returned_edges": len(edge_data),
                 "truncated": truncated,
@@ -1123,35 +1108,19 @@ def create_app(
 
         graph, m, c = get_graph(body.metric, body.cutoff)
 
-        # Build igraph from PairwiseGraph
-        import igraph as ig
-
-        edges_df = graph.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            f'RETURN a.id AS src, b.id AS dst, r.{m} AS weight'
-        )
+        # Reuse the graph's already-built igraph (read-only; run_clustering does
+        # not mutate it). Its edge weights ARE this metric.
+        g = graph.to_igraph()
         names_map = graph._names_map
-        all_ids = sorted(names_map.keys())
-        id_idx = {gid: i for i, gid in enumerate(all_ids)}
-
-        g = ig.Graph(n=len(all_ids), directed=False)
-        edge_list = []
-        weights = []
-        for _, row in edges_df.iterrows():
-            src, dst = int(row["src"]), int(row["dst"])
-            if src in id_idx and dst in id_idx:
-                edge_list.append((id_idx[src], id_idx[dst]))
-                weights.append(float(row["weight"]))
-
-        if edge_list:
-            g.add_edges(edge_list)
-            g.es["weight"] = weights
+        all_ids = graph._idx_to_gid
+        id_idx = graph._gid_to_idx
+        weights = g.es["weight"] if g.ecount() > 0 else None
 
         try:
             result = run_clustering(
                 g,
                 algorithm=body.algorithm,
-                weights=weights if weights else None,
+                weights=weights,
                 **body.parameters,
             )
         except Exception as e:
@@ -1195,26 +1164,11 @@ def create_app(
 
         graph, m, c = get_graph(metric, cutoff)
 
-        # Build igraph from PairwiseGraph
-        import igraph as ig
-
-        edges_df = graph.cypher(
-            'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            'RETURN a.id AS src, b.id AS dst'
-        )
+        # Reuse the graph's already-built igraph (connected_components is read-only).
+        g = graph.to_igraph()
         names_map = graph._names_map
-        all_ids = sorted(names_map.keys())
-        id_idx = {gid: i for i, gid in enumerate(all_ids)}
-
-        g = ig.Graph(n=len(all_ids), directed=False)
-        edge_list = []
-        for _, row in edges_df.iterrows():
-            src, dst = int(row["src"]), int(row["dst"])
-            if src in id_idx and dst in id_idx:
-                edge_list.append((id_idx[src], id_idx[dst]))
-
-        if edge_list:
-            g.add_edges(edge_list)
+        all_ids = graph._idx_to_gid
+        id_idx = graph._gid_to_idx
 
         result = run_clustering(
             g,
@@ -1250,28 +1204,14 @@ def create_app(
         algorithm: str = Query("fr", description="Layout algorithm: fr, drl, kk, circle"),
     ):
         """Get pre-computed node positions for graph layout."""
-        import igraph as ig
-
         graph, m, c = get_graph(metric, cutoff)
 
-        edges_df = graph.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            f'RETURN a.id AS src, b.id AS dst, r.{m} AS weight'
-        )
+        # Reuse the graph's already-built igraph (g.layout is read-only).
+        g = graph.to_igraph()
         names_map = graph._names_map
-        all_ids = sorted(names_map.keys())
-        id_idx = {gid: i for i, gid in enumerate(all_ids)}
-
-        g = ig.Graph(n=len(all_ids), directed=False)
-        edge_list = []
-        weights = []
-        for _, row in edges_df.iterrows():
-            src, dst = int(row["src"]), int(row["dst"])
-            if src in id_idx and dst in id_idx:
-                edge_list.append((id_idx[src], id_idx[dst]))
-                weights.append(float(row["weight"]))
-        if edge_list:
-            g.add_edges(edge_list)
+        all_ids = graph._idx_to_gid
+        id_idx = graph._gid_to_idx
+        weights = list(g.es["weight"]) if g.ecount() > 0 else []
 
         algo_map = {
             "fr": "fruchterman_reingold",
@@ -1298,11 +1238,11 @@ def create_app(
 
         return {"algorithm": layout_name, "positions": positions}
 
-    # The raw /api/v1/cypher endpoint was REMOVED for security: untrusted Cypher on
-    # Kùzu allowed arbitrary file read/write (COPY/LOAD) plus function-style readers
-    # (CALL read_parquet/read_csv/...) that crash the process (segfault DoS) — none
-    # of which a keyword denylist or read-only mode can contain. Graph features use the
-    # typed /api/v1/graph/* endpoints. (Kùzu itself is slated for removal.)
+    # The raw /api/v1/cypher endpoint was REMOVED for security: untrusted Cypher
+    # allowed arbitrary file read/write plus function-style readers that crash the
+    # process (segfault DoS) — none of which a keyword denylist or read-only mode
+    # can contain. Graph features now run entirely on in-memory igraph via the typed
+    # /api/v1/graph/* endpoints (no embedded graph database).
 
     # ── Export Endpoints ───────────────────────────────────────────
 
@@ -1385,8 +1325,6 @@ def create_app(
 
         Returns the graph as a downloadable file.
         """
-        import igraph as ig
-
         if format not in ("graphml", "gexf", "json", "cytoscape"):
             raise ValidationError(
                 detail=f"Unsupported graph format: {format}",
@@ -1397,38 +1335,20 @@ def create_app(
 
         graph, m, c = get_graph(metric, cutoff)
 
-        # Build igraph
-        edges_df = graph.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            f'RETURN a.id AS src, b.id AS dst, r.{m} AS weight, r.shared_features AS shared_features'
-        )
-        names_map = graph._names_map
-        all_ids = sorted(names_map.keys())
-        id_idx = {gid: i for i, gid in enumerate(all_ids)}
+        # This endpoint writes vertex attributes (id/community/x/y), so it must
+        # operate on a COPY of the shared graph — never mutate the cached one.
+        g = graph.to_igraph().copy()
+        all_ids = graph._idx_to_gid
+        weights = list(g.es["weight"]) if g.ecount() > 0 else []
 
-        g = ig.Graph(n=len(all_ids), directed=False)
-        edge_list = []
-        weights = []
-        shared_features = []
-
-        for _, row in edges_df.iterrows():
-            src, dst = int(row["src"]), int(row["dst"])
-            if src in id_idx and dst in id_idx:
-                edge_list.append((id_idx[src], id_idx[dst]))
-                weights.append(float(row["weight"]))
-                shared_features.append(int(row["shared_features"]))
-
-        if edge_list:
-            g.add_edges(edge_list)
-            g.es["weight"] = weights
-            g.es["shared_features"] = shared_features
-
-        # Add node attributes
-        g.vs["name"] = [names_map[gid] for gid in all_ids]
+        # Match the old export schema: vertices carry string "id" + "name" only;
+        # drop the internal int "gid" so it doesn't leak into the export.
         g.vs["id"] = [str(gid) for gid in all_ids]
+        if "gid" in g.vs.attributes():
+            del g.vs["gid"]
 
         # Add communities if requested
-        if include_communities and edge_list:
+        if include_communities and g.ecount() > 0:
             try:
                 communities = g.community_leiden(weights=weights if weights else None)
                 g.vs["community"] = communities.membership
@@ -1449,13 +1369,28 @@ def create_app(
         output = io.BytesIO()
         filename = f"dbretina_graph_{m}_{int(c)}"
 
+        def _graphml_bytes(graph):
+            # igraph's write_graphml needs a real file descriptor (a BytesIO
+            # raises io.UnsupportedOperation: fileno), so write to a temp file.
+            import os
+            import tempfile
+
+            fd, tmp = tempfile.mkstemp(suffix=".graphml")
+            os.close(fd)
+            try:
+                graph.write_graphml(tmp)
+                with open(tmp, "rb") as fh:
+                    return fh.read()
+            finally:
+                os.unlink(tmp)
+
         if format == "graphml":
-            g.write_graphml(output)
+            output.write(_graphml_bytes(g))
             media_type = "application/xml"
             filename += ".graphml"
         elif format == "gexf":
             # igraph doesn't have native GEXF, use GraphML
-            g.write_graphml(output)
+            output.write(_graphml_bytes(g))
             media_type = "application/xml"
             filename += ".gexf"
         elif format in ("json", "cytoscape"):

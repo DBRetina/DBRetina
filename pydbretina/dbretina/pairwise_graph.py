@@ -1,173 +1,100 @@
-"""KuzuDB-backed graph query engine for DBRetina pairwise data."""
+"""In-memory igraph-backed graph engine for DBRetina pairwise data.
 
-import pathlib
-import shutil
-import tempfile
+``PairwiseGraph`` builds an undirected :class:`igraph.Graph` from filtered pairwise
+results and exposes neighborhood traversal, shortest paths, connected components,
+community detection and PageRank — all delegated to igraph (no custom graph
+algorithms).
+
+Vertices are the full node universe from ``store.get_names_map()`` (so isolated
+groups exist as degree-0 vertices). Edges come from
+``store.to_pandas(metric=, cutoff=)``; each edge carries the filter ``weight`` and
+``shared_features`` as edge attributes. Group ids (``gid``) are stable across
+subgraphs; the ``gid <-> vertex index`` mapping is kept internally.
+
+Usage::
+
+    store = PairwiseStore("/path/to/experiment_pairwise")
+    graph = PairwiseGraph(store, metric="jaccard", cutoff=30)
+
+    components = graph.connected_components()   # {name: component_id}
+    pr = graph.pagerank()                        # {name: score}
+    sub = graph.subgraph_around("kegg_alzheimer", hops=2)
+"""
+
+import warnings
 from typing import Optional
 
-try:
-    import kuzu
-except ImportError:
-    kuzu = None  # type: ignore
-
-
-def _require_kuzu():
-    if kuzu is None:
-        raise ImportError(
-            "KuzuDB is required for graph features. "
-            "Install with: pip install 'DBRetina[server]'"
-        )
-
-
 import pandas as pd
-import pyarrow as pa
 
 from .pairwise_store import PairwiseStore
 
 
 class PairwiseGraph:
-    """Graph query engine over DBRetina pairwise data using KuzuDB.
-
-    Builds an embedded graph database from filtered pairwise results,
-    enabling Cypher queries, neighborhood traversal, shortest paths,
-    and graph algorithm wrappers.
-
-    Usage::
-
-        store = PairwiseStore("/path/to/experiment_pairwise")
-        graph = PairwiseGraph(store, metric="jaccard", cutoff=30)
-
-        # Cypher queries
-        df = graph.cypher(
-            "MATCH (a:Group)-[r:SIMILAR_TO]->(b:Group) "
-            "RETURN a.name, b.name, r.jaccard "
-            "ORDER BY r.jaccard DESC LIMIT 10"
-        )
-
-        # Neighborhood
-        neighbors = graph.neighbors("kegg_alzheimer", hops=2)
-
-        # Graph algorithms
-        components = graph.connected_components()
-        pr = graph.pagerank()
-    """
+    """Graph query engine over DBRetina pairwise data using in-memory igraph."""
 
     def __init__(
         self,
         store: PairwiseStore,
         metric: str,
         cutoff: float = 0.0,
-        db_path: Optional[str] = None,
+        db_path: Optional[str] = None,  # accepted for API compat; unused
     ):
-        """Create a graph from filtered pairwise data.
+        """Build a graph from filtered pairwise data.
 
         Args:
             store: PairwiseStore instance to read data from.
-            metric: Metric to filter edges on (e.g. "jaccard").
+            metric: Metric to filter edges on (e.g. "jaccard"); also the edge weight.
             cutoff: Minimum metric value to include an edge.
-            db_path: Optional path for the KuzuDB database.
-                     If None, uses a temporary directory.
+            db_path: Ignored (kept for backwards-compatible signature).
         """
-        _require_kuzu()
         self._store = store
         self._metric = metric
         self._cutoff = cutoff
         self._names_map = store.get_names_map()
         self._name_to_id = {v: k for k, v in self._names_map.items()}
 
-        # Create KuzuDB database
-        if db_path:
-            self._db_dir = pathlib.Path(db_path)
-            self._owns_dir = False
-        else:
-            # KuzuDB creates the directory itself; give it a non-existent path
-            tmp_parent = pathlib.Path(tempfile.mkdtemp(prefix="dbretina_graph_"))
-            self._db_dir = tmp_parent / "db"
-            self._owns_dir = True
-            self._tmp_parent = tmp_parent
+        edge_cols = ["group_1_id", "group_2_id", "shared_features", metric]
+        df = store.to_pandas(metric=metric, cutoff=cutoff, columns=edge_cols)
+        self._build_from_frame(df)
 
-        self._db = kuzu.Database(str(self._db_dir))
-        self._conn = kuzu.Connection(self._db)
+    def _build_from_frame(self, df: pd.DataFrame):
+        """Construct the igraph.Graph from an edges DataFrame (gid columns)."""
+        import igraph as ig
 
-        # Build the graph
-        self._build_graph()
+        # Stable, sorted vertex ordering keyed by group id.
+        gids = sorted(self._names_map.keys())
+        self._gid_to_idx = {gid: i for i, gid in enumerate(gids)}
+        self._idx_to_gid = gids
 
-    def _build_graph(self):
-        """Populate KuzuDB with nodes and edges from the store."""
-        conn = self._conn
+        g = ig.Graph(n=len(gids), directed=False)
+        g.vs["gid"] = gids
+        g.vs["name"] = [self._names_map[gid] for gid in gids]
 
-        # Create node table
-        conn.execute(
-            "CREATE NODE TABLE IF NOT EXISTS `Group`("
-            "id UINT32, name STRING, PRIMARY KEY(id))"
-        )
+        edges, weights, shared = [], [], []
+        idx = self._gid_to_idx
+        metric = self._metric
+        for row in df.itertuples(index=False):
+            s = int(row.group_1_id)
+            d = int(row.group_2_id)
+            if s in idx and d in idx:
+                edges.append((idx[s], idx[d]))
+                weights.append(float(getattr(row, metric)))
+                shared.append(int(row.shared_features))
 
-        # Create relationship table with all metrics
-        rel_cols = (
-            "shared_features UINT64, "
-            "containment FLOAT, "
-            "ochiai FLOAT, "
-            "jaccard FLOAT, "
-            "csi FLOAT, "
-            "dice FLOAT, "
-            "odds_ratio FLOAT"
-        )
-        if self._store.has_pvalue:
-            rel_cols += ", pvalue DOUBLE"
+        if edges:
+            g.add_edges(edges)
+            g.es["weight"] = weights
+            g.es["shared_features"] = shared
 
-        conn.execute(
-            f'CREATE REL TABLE IF NOT EXISTS SIMILAR_TO('
-            f'FROM `Group` TO `Group`, {rel_cols})'
-        )
+        self._g = g
+        self._num_nodes = g.vcount()
+        self._num_edges = g.ecount()
 
-        # Insert nodes via CSV COPY
-        names_map = self._names_map
-        tmp_parent = self._db_dir.parent
-        if names_map:
-            node_csv = tmp_parent / "_nodes.csv"
-            with open(node_csv, "w", newline="") as f:
-                f.write("id,name\n")
-                for gid, name in names_map.items():
-                    # Escape quotes in names for CSV
-                    escaped = name.replace('"', '""')
-                    f.write(f'{gid},"{escaped}"\n')
-            conn.execute(
-                f'COPY `Group` FROM "{node_csv}" (HEADER=TRUE)'
-            )
-            node_csv.unlink(missing_ok=True)
-
-        # Insert edges from filtered pairs via CSV COPY
-        edge_cols = [
-            "group_1_id", "group_2_id", "shared_features",
-            "containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio",
-        ]
-        if self._store.has_pvalue:
-            edge_cols.append("pvalue")
-
-        df = self._store.to_pandas(
-            metric=self._metric, cutoff=self._cutoff, columns=edge_cols
-        )
-
-        if len(df) > 0:
-            edge_csv = tmp_parent / "_edges.csv"
-            df.to_csv(edge_csv, index=False, header=True)
-            conn.execute(
-                f'COPY SIMILAR_TO FROM "{edge_csv}" '
-                f'(HEADER=TRUE)'
-            )
-            edge_csv.unlink(missing_ok=True)
-
-        self._num_nodes = len(names_map)
-        self._num_edges = len(df)
+    # ── Lifecycle ─────────────────────────────────────────────────────
 
     def close(self):
-        """Close the graph database."""
-        self._conn = None
-        self._db = None
-        if self._owns_dir:
-            parent = getattr(self, "_tmp_parent", self._db_dir)
-            if parent.exists():
-                shutil.rmtree(parent, ignore_errors=True)
+        """Release the in-memory graph (no external resources to free)."""
+        self._g = None
 
     def __enter__(self):
         return self
@@ -193,225 +120,54 @@ class PairwiseGraph:
     def cutoff(self) -> float:
         return self._cutoff
 
-    # ── Cypher Queries ────────────────────────────────────────────────
+    # ── Edge access ───────────────────────────────────────────────────
 
-    def cypher(self, query: str, parameters: Optional[dict] = None) -> pd.DataFrame:
-        """Execute a Cypher query and return results as a DataFrame.
+    def edges_dataframe(self) -> pd.DataFrame:
+        """Return this graph's edges as a DataFrame keyed by group id.
 
-        The graph has:
-        - Node table ``Group`` with properties: ``id`` (UINT32), ``name`` (STRING)
-        - Relationship table ``SIMILAR_TO`` with properties:
-          ``shared_features``, ``containment``, ``ochiai``, ``jaccard``,
-          ``csi``, ``dice``, ``odds_ratio``, and optionally ``pvalue``.
-
-        Args:
-            query: Cypher query string.
-            parameters: Optional query parameters.
-
-        Returns:
-            pandas DataFrame with query results.
+        Columns: ``src``/``dst`` (int group ids), ``weight`` (float, the filter
+        metric value) and ``shared_features`` (int). One row per undirected edge.
         """
-        if parameters:
-            result = self._conn.execute(query, parameters=parameters)
-        else:
-            result = self._conn.execute(query)
-        return result.get_as_df()
+        g = self._g
+        idx_to_gid = self._idx_to_gid
+        if g.ecount() == 0:
+            return pd.DataFrame(
+                {
+                    "src": pd.Series([], dtype="int64"),
+                    "dst": pd.Series([], dtype="int64"),
+                    "weight": pd.Series([], dtype="float64"),
+                    "shared_features": pd.Series([], dtype="int64"),
+                }
+            )
+        weights = g.es["weight"]
+        shared = g.es["shared_features"]
+        src, dst = [], []
+        for e in g.es:
+            src.append(idx_to_gid[e.source])
+            dst.append(idx_to_gid[e.target])
+        return pd.DataFrame(
+            {
+                "src": pd.array(src, dtype="int64"),
+                "dst": pd.array(dst, dtype="int64"),
+                "weight": pd.array([float(w) for w in weights], dtype="float64"),
+                "shared_features": pd.array([int(s) for s in shared], dtype="int64"),
+            }
+        )
+
+    def to_igraph(self):
+        """Return the underlying :class:`igraph.Graph` (vertices carry ``gid``/``name``)."""
+        return self._g
 
     # ── Graph Operations ──────────────────────────────────────────────
 
-    def neighbors(self, group_name: str, hops: int = 1) -> pd.DataFrame:
-        """Find neighbors of a group within N hops.
-
-        Args:
-            group_name: Name of the source group.
-            hops: Number of hops (1 = direct neighbors).
-
-        Returns:
-            DataFrame with neighbor names and edge metrics.
-        """
-        gid = self._resolve_id(group_name)
-        if hops == 1:
-            return self.cypher(
-                f'MATCH (a:`Group`)-[r:SIMILAR_TO]-(b:`Group`) '
-                f"WHERE a.id = $gid "
-                f"RETURN b.name AS neighbor, b.id AS neighbor_id, "
-                f"r.{self._metric} AS {self._metric}, "
-                f"r.shared_features AS shared_features "
-                f"ORDER BY r.{self._metric} DESC",
-                parameters={"gid": gid},
-            )
-        else:
-            return self.cypher(
-                f'MATCH (a:`Group`)-[r:SIMILAR_TO* 1..{hops}]-(b:`Group`) '
-                f"WHERE a.id = $gid AND a.id <> b.id "
-                f"RETURN DISTINCT b.name AS neighbor, b.id AS neighbor_id",
-                parameters={"gid": gid},
-            )
-
-    def shortest_path(self, source: str, target: str) -> pd.DataFrame:
-        """Find the shortest path between two groups.
-
-        Args:
-            source: Source group name.
-            target: Target group name.
-
-        Returns:
-            DataFrame with path information.
-        """
-        src_id = self._resolve_id(source)
-        tgt_id = self._resolve_id(target)
-        return self.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO* SHORTEST 1..30]-(b:`Group`) '
-            f"WHERE a.id = $src AND b.id = $tgt "
-            f"RETURN length(r) AS path_length",
-            parameters={"src": src_id, "tgt": tgt_id},
-        )
-
-    def shortest_path_full(self, source: str, target: str) -> dict:
-        """Find the shortest path with full node and edge information.
-
-        Args:
-            source: Source group name.
-            target: Target group name.
-
-        Returns:
-            Dict with path_nodes (list of names), path_length, and edge info.
-        """
-        src_id = self._resolve_id(source)
-        tgt_id = self._resolve_id(target)
-
-        if src_id is None:
-            raise KeyError(f"Source group not found: {source}")
-        if tgt_id is None:
-            raise KeyError(f"Target group not found: {target}")
-
-        # KuzuDB uses different syntax for path queries
-        # We need to get the path nodes using recursive pattern
-        try:
-            # First get the path length
-            length_df = self.cypher(
-                f'MATCH (a:`Group`)-[r:SIMILAR_TO* SHORTEST 1..30]-(b:`Group`) '
-                f"WHERE a.id = $src AND b.id = $tgt "
-                f"RETURN length(r) AS path_length",
-                parameters={"src": src_id, "tgt": tgt_id},
-            )
-
-            if length_df.empty:
-                return {
-                    "source": source,
-                    "target": target,
-                    "path_length": -1,
-                    "path_nodes": [],
-                    "connected": False,
-                }
-
-            path_length = int(length_df.iloc[0]["path_length"])
-
-            # For short paths, we can reconstruct by finding intermediate nodes
-            # This is a workaround since KuzuDB path extraction can be limited
-            if path_length == 1:
-                # Direct connection
-                return {
-                    "source": source,
-                    "target": target,
-                    "path_length": 1,
-                    "path_nodes": [source, target],
-                    "connected": True,
-                }
-
-            # For longer paths, use BFS to reconstruct
-            path_nodes = self._reconstruct_path_bfs(src_id, tgt_id, path_length)
-
-            return {
-                "source": source,
-                "target": target,
-                "path_length": path_length,
-                "path_nodes": path_nodes,
-                "connected": True,
-            }
-
-        except Exception as e:
-            # If path finding fails, return not connected
-            return {
-                "source": source,
-                "target": target,
-                "path_length": -1,
-                "path_nodes": [],
-                "connected": False,
-                "error": str(e),
-            }
-
-    def _reconstruct_path_bfs(self, src_id: int, tgt_id: int, max_depth: int) -> list[str]:
-        """Reconstruct shortest path using BFS.
-
-        Args:
-            src_id: Source group ID.
-            tgt_id: Target group ID.
-            max_depth: Maximum path length to search.
-
-        Returns:
-            List of group names along the path.
-        """
-        from collections import deque
-
-        # Get all edges
-        edges_df = self.cypher(
-            'MATCH (a:`Group`)-[r:SIMILAR_TO]-(b:`Group`) '
-            'RETURN a.id AS src, b.id AS dst'
-        )
-
-        # Build adjacency list
-        adj: dict[int, set[int]] = {}
-        for _, row in edges_df.iterrows():
-            s, d = int(row["src"]), int(row["dst"])
-            if s not in adj:
-                adj[s] = set()
-            if d not in adj:
-                adj[d] = set()
-            adj[s].add(d)
-            adj[d].add(s)
-
-        # BFS to find path
-        queue = deque([(src_id, [src_id])])
-        visited = {src_id}
-
-        while queue:
-            current, path = queue.popleft()
-
-            if current == tgt_id:
-                # Convert IDs to names
-                return [self._names_map.get(nid, str(nid)) for nid in path]
-
-            if len(path) > max_depth:
-                continue
-
-            for neighbor in adj.get(current, []):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append((neighbor, path + [neighbor]))
-
-        # No path found
-        return [self._names_map.get(src_id, str(src_id))]
-
-    def degree_distribution(self) -> pd.DataFrame:
-        """Compute degree distribution of the graph."""
-        return self.cypher(
-            'MATCH (a:`Group`)-[r:SIMILAR_TO]-() '
-            "RETURN a.name AS group_name, a.id AS group_id, COUNT(r) AS degree "
-            "ORDER BY degree DESC"
-        )
-
     def subgraph(self, group_names: list[str]) -> "PairwiseGraph":
         """Extract a subgraph containing only the specified groups.
-
-        Creates a new PairwiseGraph with only the specified nodes and
-        edges between them.
 
         Args:
             group_names: List of group names to include.
 
         Returns:
-            A new PairwiseGraph instance containing only the specified groups.
+            A new PairwiseGraph with those nodes and the induced edges.
         """
         gids = []
         for name in group_names:
@@ -420,27 +176,15 @@ class PairwiseGraph:
                 raise KeyError(f"Group not found: {name}")
             gids.append(gid)
         gid_set = set(gids)
+        sub_names = {gid: self._names_map[gid] for gid in gid_set}
 
-        placeholders = ", ".join(str(g) for g in gid_set)
-        pvalue_col = ", r.pvalue AS pvalue" if self._store.has_pvalue else ""
-        edges_df = self.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            f'WHERE a.id IN [{placeholders}] AND b.id IN [{placeholders}] '
-            f'RETURN a.id AS group_1_id, b.id AS group_2_id, '
-            f'r.shared_features AS shared_features, '
-            f'r.containment AS containment, r.ochiai AS ochiai, '
-            f'r.jaccard AS jaccard, r.csi AS csi, r.dice AS dice, '
-            f'r.odds_ratio AS odds_ratio'
-            + pvalue_col
-        )
+        df = self.edges_dataframe()
+        if not df.empty:
+            mask = df["src"].isin(gid_set) & df["dst"].isin(gid_set)
+            df = df.loc[mask]
 
-        return PairwiseGraph._from_edges(
-            edges_df=edges_df,
-            names_map={gid: self._names_map[gid] for gid in gid_set},
-            metric=self._metric,
-            cutoff=self._cutoff,
-            has_pvalue=self._store.has_pvalue,
-            store=self._store,
+        return PairwiseGraph._from_edge_frame(
+            df, sub_names, self._metric, self._cutoff, self._store
         )
 
     def subgraph_around(self, center: str, hops: int = 1) -> "PairwiseGraph":
@@ -451,24 +195,15 @@ class PairwiseGraph:
             hops: Number of hops to include (default 1 = direct neighbors).
 
         Returns:
-            A new PairwiseGraph containing the center and all nodes
-            within the specified number of hops, plus edges between them.
+            A new PairwiseGraph with the center, all nodes within ``hops``, and
+            the edges induced among them.
         """
         gid = self._resolve_id(center)
-        neighbors_df = self.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO* 1..{hops}]-(b:`Group`) '
-            f'WHERE a.id = $gid '
-            f'RETURN DISTINCT b.id AS neighbor_id',
-            parameters={"gid": gid},
-        )
-
-        neighbor_ids = set(neighbors_df["neighbor_id"].tolist())
-        neighbor_ids.add(gid)
-
-        group_names = [
-            self._names_map[nid] for nid in neighbor_ids
-            if nid in self._names_map
-        ]
+        center_idx = self._gid_to_idx[gid]
+        # igraph neighborhood includes the center vertex itself.
+        idxs = self._g.neighborhood(vertices=center_idx, order=hops)
+        idx_to_gid = self._idx_to_gid
+        group_names = [self._names_map[idx_to_gid[i]] for i in idxs]
         return self.subgraph(group_names)
 
     def connected_components(
@@ -477,104 +212,47 @@ class PairwiseGraph:
         """Find weakly connected components.
 
         Args:
-            group_names: Optional list of group names to restrict analysis to.
+            group_names: Optional subset of group names to restrict analysis to.
                          If None, uses all nodes in the graph.
 
         Returns:
             Dict mapping group_name -> component_id.
         """
-        try:
-            import igraph as ig
-        except ImportError:
-            raise ImportError(
-                "igraph is required for connected_components(). "
-                "Install with: pip install igraph"
-            )
+        if group_names is not None:
+            return self.subgraph(group_names).connected_components()
 
-        edges_df = self.cypher(
-            'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            "RETURN a.id AS src, b.id AS dst"
-        )
-
-        all_ids = self._resolve_group_ids(group_names)
-        if edges_df.empty:
-            names = self._names_map if group_names is None else {
-                gid: self._names_map[gid] for gid in all_ids
-            }
-            return {name: i for i, name in enumerate(names.values())}
-
-        id_idx = {gid: i for i, gid in enumerate(all_ids)}
-        g = ig.Graph(n=len(all_ids), directed=False)
-        edge_list = [
-            (id_idx[row["src"]], id_idx[row["dst"]])
-            for _, row in edges_df.iterrows()
-            if row["src"] in id_idx and row["dst"] in id_idx
-        ]
-        g.add_edges(edge_list)
-        membership = g.connected_components().membership
-        return {
-            self._names_map[gid]: membership[i]
-            for i, gid in enumerate(all_ids)
-            if gid in self._names_map
-        }
+        membership = self._g.connected_components(mode="weak").membership
+        names = self._g.vs["name"]
+        return {names[i]: membership[i] for i in range(self._g.vcount())}
 
     def community_detection(
         self, method: str = "leiden", group_names: Optional[list[str]] = None
     ) -> dict[str, int]:
-        """Detect communities using igraph algorithms.
+        """Detect communities using igraph.
 
         Args:
-            method: "leiden" or "louvain".
-            group_names: Optional list of group names to restrict analysis to.
-                         If None, uses all nodes in the graph.
+            method: "leiden" (modularity objective) or "louvain" (multilevel).
+            group_names: Optional subset of group names to restrict analysis to.
 
         Returns:
             Dict mapping group_name -> community_id.
         """
-        try:
-            import igraph as ig
-        except ImportError:
-            raise ImportError(
-                "igraph is required for community_detection(). "
-                "Install with: pip install igraph"
-            )
+        if group_names is not None:
+            return self.subgraph(group_names).community_detection(method=method)
 
-        edges_df = self.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            f"RETURN a.id AS src, b.id AS dst, r.{self._metric} AS weight"
-        )
-
-        all_ids = self._resolve_group_ids(group_names)
-        if edges_df.empty:
-            names = self._names_map if group_names is None else {
-                gid: self._names_map[gid] for gid in all_ids
-            }
-            return {name: 0 for name in names.values()}
-
-        id_idx = {gid: i for i, gid in enumerate(all_ids)}
-        g = ig.Graph(n=len(all_ids), directed=False)
-        edge_list = []
-        weights = []
-        for _, row in edges_df.iterrows():
-            if row["src"] in id_idx and row["dst"] in id_idx:
-                edge_list.append((id_idx[row["src"]], id_idx[row["dst"]]))
-                weights.append(float(row["weight"]))
-        g.add_edges(edge_list)
-        if weights:
-            g.es["weight"] = weights
-
+        g = self._g
+        weights = "weight" if g.ecount() > 0 and "weight" in g.es.attributes() else None
         if method == "leiden":
-            membership = g.community_leiden(weights="weight" if weights else None).membership
+            membership = g.community_leiden(
+                objective_function="modularity", weights=weights
+            ).membership
         elif method == "louvain":
-            membership = g.community_multilevel(weights="weight" if weights else None).membership
+            membership = g.community_multilevel(weights=weights).membership
         else:
             raise ValueError(f"Unknown method '{method}'. Use 'leiden' or 'louvain'.")
 
-        return {
-            self._names_map[gid]: membership[i]
-            for i, gid in enumerate(all_ids)
-            if gid in self._names_map
-        }
+        names = g.vs["name"]
+        return {names[i]: membership[i] for i in range(g.vcount())}
 
     def pagerank(
         self, damping: float = 0.85, group_names: Optional[list[str]] = None
@@ -583,53 +261,62 @@ class PairwiseGraph:
 
         Args:
             damping: Damping factor (default 0.85).
-            group_names: Optional list of group names to restrict PageRank to.
-                         If None, uses all nodes in the graph.
+            group_names: Optional subset of group names to restrict PageRank to.
 
         Returns:
             Dict mapping group_name -> PageRank score.
         """
-        try:
-            import igraph as ig
-        except ImportError:
-            raise ImportError(
-                "igraph is required for pagerank(). "
-                "Install with: pip install igraph"
-            )
+        if group_names is not None:
+            return self.subgraph(group_names).pagerank(damping=damping)
 
-        edges_df = self.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            f"RETURN a.id AS src, b.id AS dst, r.{self._metric} AS weight"
-        )
+        g = self._g
+        weights = "weight" if g.ecount() > 0 and "weight" in g.es.attributes() else None
+        pr = g.pagerank(damping=damping, weights=weights)
+        names = g.vs["name"]
+        return {names[i]: pr[i] for i in range(g.vcount())}
 
-        all_ids = self._resolve_group_ids(group_names)
-        id_idx = {gid: i for i, gid in enumerate(all_ids)}
-        g = ig.Graph(n=len(all_ids), directed=False)
-        edge_list = []
-        weights = []
-        for _, row in edges_df.iterrows():
-            if row["src"] in id_idx and row["dst"] in id_idx:
-                edge_list.append((id_idx[row["src"]], id_idx[row["dst"]]))
-                weights.append(float(row["weight"]))
-        g.add_edges(edge_list)
-        if weights:
-            g.es["weight"] = weights
+    def shortest_path_full(self, source: str, target: str) -> dict:
+        """Find the shortest path between two groups (by hop count).
 
-        pr = g.pagerank(damping=damping, weights="weight" if weights else None)
-        return {
-            self._names_map[gid]: pr[i]
-            for i, gid in enumerate(all_ids)
-            if gid in self._names_map
-        }
+        Args:
+            source: Source group name.
+            target: Target group name.
 
-    # ── Name Resolution ──────────────────────────────────────────────
-
-    def search_groups(self, pattern: str) -> dict[int, str]:
-        """Search for groups whose name contains the pattern (case-insensitive).
-
-        Delegates to the underlying PairwiseStore.
+        Returns:
+            Dict with ``source``, ``target``, ``path_length`` (hops; -1 if
+            disconnected), ``path_nodes`` (list of group names) and ``connected``.
         """
-        return self._store.search_groups(pattern)
+        src_id = self._resolve_id(source)
+        tgt_id = self._resolve_id(target)
+        src_idx = self._gid_to_idx[src_id]
+        tgt_idx = self._gid_to_idx[tgt_id]
+
+        # Unweighted shortest path (by number of edges), matching the previous
+        # hop-count semantics. igraph warns to stderr when the target is unreachable;
+        # that's an expected case (we report connected=False below), so silence it.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            paths = self._g.get_shortest_paths(src_idx, to=tgt_idx, output="vpath")
+        path = paths[0] if paths else []
+
+        if not path:
+            return {
+                "source": source,
+                "target": target,
+                "path_length": -1,
+                "path_nodes": [],
+                "connected": False,
+            }
+
+        names = self._g.vs["name"]
+        path_nodes = [names[i] for i in path]
+        return {
+            "source": source,
+            "target": target,
+            "path_length": len(path) - 1,
+            "path_nodes": path_nodes,
+            "connected": True,
+        }
 
     # ── Internal ──────────────────────────────────────────────────────
 
@@ -639,91 +326,42 @@ class PairwiseGraph:
             raise KeyError(f"Group not found: {group_name}")
         return gid
 
-    def _resolve_group_ids(self, group_names: Optional[list[str]] = None) -> list[int]:
-        """Resolve group names to sorted list of IDs for igraph construction.
-
-        Args:
-            group_names: Optional list of group names. If None, returns all IDs.
-
-        Returns:
-            Sorted list of group IDs.
-        """
-        if group_names is None:
-            return sorted(self._names_map.keys())
-        target_ids = set()
-        for name in group_names:
-            gid = self._name_to_id.get(name.lower())
-            if gid is not None:
-                target_ids.add(gid)
-        return sorted(target_ids)
-
     @classmethod
-    def _from_edges(
+    def _from_edge_frame(
         cls,
         edges_df: pd.DataFrame,
         names_map: dict[int, str],
         metric: str,
         cutoff: float,
-        has_pvalue: bool,
         store: PairwiseStore,
-        db_path: Optional[str] = None,
     ) -> "PairwiseGraph":
-        """Build a PairwiseGraph directly from edge data (internal constructor)."""
-        _require_kuzu()
+        """Build a PairwiseGraph directly from an edges DataFrame (internal).
+
+        ``edges_df`` must have columns ``src``, ``dst``, ``weight``,
+        ``shared_features`` keyed by group id. Used by ``subgraph``.
+        """
         obj = object.__new__(cls)
         obj._store = store
         obj._metric = metric
         obj._cutoff = cutoff
-        obj._names_map = names_map
+        obj._names_map = dict(names_map)
         obj._name_to_id = {v: k for k, v in names_map.items()}
 
-        if db_path:
-            obj._db_dir = pathlib.Path(db_path)
-            obj._owns_dir = False
+        # Reshape to the gid-column layout _build_from_frame expects.
+        if edges_df.empty:
+            frame = pd.DataFrame(
+                columns=["group_1_id", "group_2_id", "shared_features", metric]
+            )
         else:
-            tmp_parent = pathlib.Path(tempfile.mkdtemp(prefix="dbretina_subgraph_"))
-            obj._db_dir = tmp_parent / "db"
-            obj._owns_dir = True
-            obj._tmp_parent = tmp_parent
-
-        obj._db = kuzu.Database(str(obj._db_dir))
-        obj._conn = kuzu.Connection(obj._db)
-
-        conn = obj._conn
-        conn.execute(
-            "CREATE NODE TABLE IF NOT EXISTS `Group`("
-            "id UINT32, name STRING, PRIMARY KEY(id))"
-        )
-        rel_cols = (
-            "shared_features UINT64, containment FLOAT, ochiai FLOAT, "
-            "jaccard FLOAT, csi FLOAT, dice FLOAT, odds_ratio FLOAT"
-        )
-        if has_pvalue:
-            rel_cols += ", pvalue DOUBLE"
-        conn.execute(
-            f'CREATE REL TABLE IF NOT EXISTS SIMILAR_TO('
-            f'FROM `Group` TO `Group`, {rel_cols})'
-        )
-
-        tmp_parent_path = obj._db_dir.parent
-        if names_map:
-            node_csv = tmp_parent_path / "_nodes.csv"
-            with open(node_csv, "w", newline="") as f:
-                f.write("id,name\n")
-                for gid, name in names_map.items():
-                    escaped = name.replace('"', '""')
-                    f.write(f'{gid},"{escaped}"\n')
-            conn.execute(f'COPY `Group` FROM "{node_csv}" (HEADER=TRUE)')
-            node_csv.unlink(missing_ok=True)
-
-        if len(edges_df) > 0:
-            edge_csv = tmp_parent_path / "_edges.csv"
-            edges_df.to_csv(edge_csv, index=False, header=True)
-            conn.execute(f'COPY SIMILAR_TO FROM "{edge_csv}" (HEADER=TRUE)')
-            edge_csv.unlink(missing_ok=True)
-
-        obj._num_nodes = len(names_map)
-        obj._num_edges = len(edges_df)
+            frame = pd.DataFrame(
+                {
+                    "group_1_id": edges_df["src"].to_numpy(),
+                    "group_2_id": edges_df["dst"].to_numpy(),
+                    "shared_features": edges_df["shared_features"].to_numpy(),
+                    metric: edges_df["weight"].to_numpy(),
+                }
+            )
+        obj._build_from_frame(frame)
         return obj
 
     def __repr__(self):
@@ -735,15 +373,14 @@ class PairwiseGraph:
     def _repr_html_(self):
         """Rich HTML display for Jupyter notebooks."""
         try:
-            cc = self.connected_components()
-            n_components = len(set(cc.values()))
+            n_components = len(self._g.connected_components(mode="weak"))
         except Exception:
             n_components = "?"
 
         try:
-            deg = self.degree_distribution()
-            avg_deg = sum(deg.values()) / len(deg) if deg else 0.0
-            max_deg = max(deg.values()) if deg else 0
+            degrees = self._g.degree()
+            avg_deg = sum(degrees) / len(degrees) if degrees else 0.0
+            max_deg = max(degrees) if degrees else 0
             avg_deg_str = f"{avg_deg:.1f}"
         except Exception:
             avg_deg_str = "?"

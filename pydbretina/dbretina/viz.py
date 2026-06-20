@@ -17,39 +17,22 @@ import dbretina.dbretina_doc_url as dbretina_doc
 
 
 def _build_igraph(graph, metric: str):
-    """Build an igraph.Graph from a PairwiseGraph via Cypher.
+    """Return a PairwiseGraph's already-built igraph plus its id maps.
+
+    The graph is built once in ``PairwiseGraph.__init__`` with vertex ``i``
+    keyed by ``sorted(names_map)[i]`` and edge ``weight``/``shared_features``
+    attributes; callers here treat it read-only.
 
     Returns:
         (ig_graph, all_ids, id_idx, names_map)
-        where all_ids is sorted list of group IDs,
+        where all_ids is the sorted list of group IDs,
         id_idx maps group_id -> igraph vertex index,
         names_map maps group_id -> group_name.
     """
-    import igraph as ig
-
-    edges_df = graph.cypher(
-        f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-        f'RETURN a.id AS src, b.id AS dst, r.{metric} AS weight'
-    )
-
     names_map = graph._names_map
-    all_ids = sorted(names_map.keys())
-    id_idx = {gid: i for i, gid in enumerate(all_ids)}
-
-    g = ig.Graph(n=len(all_ids), directed=False)
-    edge_list = []
-    weights = []
-
-    for _, row in edges_df.iterrows():
-        if row["src"] in id_idx and row["dst"] in id_idx:
-            edge_list.append((id_idx[row["src"]], id_idx[row["dst"]]))
-            weights.append(float(row["weight"]))
-
-    g.add_edges(edge_list)
-    if weights:
-        g.es["weight"] = weights
-
-    return g, all_ids, id_idx, names_map
+    all_ids = graph._idx_to_gid
+    id_idx = graph._gid_to_idx
+    return graph.to_igraph(), all_ids, id_idx, names_map
 
 
 def _compute_layout(ig_graph, large_threshold=500):
@@ -279,11 +262,13 @@ def plot_community_network(
 
     try:
         # First, get only connected nodes (those with at least one edge)
-        edges_df = graph.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            f'RETURN DISTINCT a.name AS src_name, b.name AS dst_name'
-        )
-        connected_names = set(edges_df["src_name"].tolist() + edges_df["dst_name"].tolist())
+        edges_df = graph.edges_dataframe()
+        names_map = graph._names_map
+        connected_names = {
+            names_map[gid]
+            for gid in set(edges_df["src"].tolist() + edges_df["dst"].tolist())
+            if gid in names_map
+        }
 
         if len(connected_names) > max_nodes:
             # Run community detection to prune intelligently
@@ -640,7 +625,6 @@ def plot_threshold_sweep(
     Returns:
         Plotly Figure with animation frames.
     """
-    import igraph as ig
     from .pairwise_graph import PairwiseGraph
 
     if thresholds is None:
@@ -661,11 +645,15 @@ def plot_threshold_sweep(
         raise
 
     try:
-        # Get all edges with weights from the neighborhood subgraph
-        edges_df = sub.cypher(
-            f'MATCH (a:`Group`)-[r:SIMILAR_TO]->(b:`Group`) '
-            f'RETURN a.name AS src, b.name AS dst, r.{metric} AS weight'
-        )
+        # Get all edges with weights from the neighborhood subgraph,
+        # mapping group ids to names (downstream filters on the `src`/`dst`
+        # name columns and the `weight` column).
+        sub_names_map = sub._names_map
+        raw_edges = sub.edges_dataframe()
+        edges_df = raw_edges.assign(
+            src=raw_edges["src"].map(sub_names_map),
+            dst=raw_edges["dst"].map(sub_names_map),
+        )[["src", "dst", "weight"]]
         all_node_names = list(sub._names_map.values())
 
         # Compute layout once on the full (lowest cutoff) neighborhood
