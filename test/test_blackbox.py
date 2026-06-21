@@ -3453,6 +3453,225 @@ class TestEmptyGraphCrashes(unittest.TestCase):
         self.assertGreater(count_tsv_data_rows(f"{out_cc}_clusters.tsv"), 0)
 
 
+class TestQueryClusterInputHandling(unittest.TestCase):
+    """Input-handling regressions for query/cluster (issues 016, 020, 021).
+
+    Uses the shared overlapping fixture, which emits all sibling forms of the
+    pairwise output next to each other: the .tsv, the parquet directory, the
+    .dbrp binary, and the .dbri index.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.parquet_dir = f"{cls.prefix}_DBRetina_pairwise"
+        cls.dbrp = f"{cls.prefix}_DBRetina_pairwise.dbrp"
+        cls.dbri = f"{cls.prefix}.dbri"
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_inputbug_")
+        # All sibling forms must actually exist for these tests to be meaningful.
+        self.assertTrue(os.path.isdir(self.parquet_dir),
+                        f"fixture missing parquet dir: {self.parquet_dir}")
+        self.assertTrue(os.path.isfile(self.dbri),
+                        f"fixture missing .dbri: {self.dbri}")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    # ---- 016: cluster --community on a parquet directory ----
+    def test_016_cluster_community_parquet_dir_no_traceback(self):
+        """cluster --community -p <parquet DIR> must not IsADirectoryError; it
+        should produce the same clusters as the .tsv form."""
+        out_dir = os.path.join(self.tmpdir, "cl_dir")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.parquet_dir} -m ochiai -c 30 "
+            f"--community -o {out_dir}"
+        )
+        assert_no_traceback(self, stderr, "cluster --community parquet dir")
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out_dir}_clusters.tsv")
+
+        # Result must match the .tsv form (same clustering, just a different input form).
+        out_tsv = os.path.join(self.tmpdir, "cl_tsv")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.pw_file} -m ochiai -c 30 "
+            f"--community -o {out_tsv}"
+        )
+        self.assertEqual(rc, 0, stderr)
+
+        def _cluster_members(path):
+            members = []
+            with open(path) as f:
+                for line in f:
+                    if line.startswith("#") or line.lower().startswith("cluster_id"):
+                        continue
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 3:
+                        members.append(frozenset(parts[2].split("|")))
+            return sorted(members, key=lambda s: sorted(s))
+
+        self.assertEqual(
+            _cluster_members(f"{out_dir}_clusters.tsv"),
+            _cluster_members(f"{out_tsv}_clusters.tsv"),
+            "parquet-dir community clustering differs from .tsv form",
+        )
+
+    def test_016_cluster_community_dbrp_no_traceback(self):
+        """cluster --community -p <.dbrp> must also resolve node sizes (sibling
+        featuresNo.tsv) and not crash."""
+        out = os.path.join(self.tmpdir, "cl_dbrp")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.dbrp} -m ochiai -c 30 --community -o {out}"
+        )
+        assert_no_traceback(self, stderr, "cluster --community .dbrp")
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_clusters.tsv")
+
+    # ---- 020: query on parquet dir / .dbrp / .dbri ----
+    def test_020_query_parquet_dir_no_traceback(self):
+        """query -p <parquet DIR> (cutoff-only) must work via the store, not
+        IsADirectoryError. Output must match the .tsv form."""
+        out = os.path.join(self.tmpdir, "q_dir")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.parquet_dir} -m ochiai -c 50 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "query parquet dir")
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}.tsv")
+
+        rows = parse_pairwise_tsv(f"{out}.tsv")
+        self.assertGreater(len(rows), 0, "parquet-dir query returned no rows")
+        for row in rows:
+            self.assertGreaterEqual(row["ochiai"], 50.0)
+
+        # Same pairs as querying the .tsv directly.
+        out_tsv = os.path.join(self.tmpdir, "q_tsv")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.pw_file} -m ochiai -c 50 -o {out_tsv}"
+        )
+        self.assertEqual(rc, 0, stderr)
+
+        def _pairs(path):
+            return sorted(
+                frozenset({r["group_1_name"], r["group_2_name"]})
+                for r in parse_pairwise_tsv(path)
+            )
+
+        self.assertEqual(_pairs(f"{out}.tsv"), _pairs(f"{out_tsv}.tsv"),
+                         "parquet-dir query pairs differ from .tsv form")
+
+    def test_020_query_dbrp_no_traceback(self):
+        """query -p <.dbrp> (cutoff-only) must work via the sibling store, not
+        UnicodeDecodeError."""
+        out = os.path.join(self.tmpdir, "q_dbrp")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.dbrp} -m ochiai -c 50 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "query .dbrp")
+        self.assertNotIn("UnicodeDecodeError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}.tsv")
+        for row in parse_pairwise_tsv(f"{out}.tsv"):
+            self.assertGreaterEqual(row["ochiai"], 50.0)
+
+    def test_020_query_dbri_clean_error(self):
+        """query -p <.dbri> must emit a clean [ERROR] (it is an index, not a
+        pairwise file), never a raw traceback."""
+        out = os.path.join(self.tmpdir, "q_dbri")
+        rc, stdout, stderr = run_command(
+            f"DBRetina query -p {self.dbri} -m ochiai -c 50 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "query .dbri")
+        self.assertNotIn("UnicodeDecodeError", stderr, stderr)
+        self.assertEqual(rc, 1, stderr)
+        self.assertIn("[ERROR]", stderr, stderr)
+        self.assertIn("index", (stdout + stderr).lower(), stderr)
+
+    # ---- 021: groups-only / clusters-only / no-args ----
+    def test_021_query_groups_only_no_cutoff(self):
+        """query -g groups.txt with no -m/-c must run the groups filter, NOT
+        report a misleading 'cutoff must be between 0 and 100'."""
+        groups = write_file(os.path.join(self.tmpdir, "groups.txt"),
+                            "GroupA\nGroupB\n")
+        out = os.path.join(self.tmpdir, "q_g")
+        rc, stdout, stderr = run_command(
+            f"DBRetina query -p {self.pw_file} -g {groups} -o {out}"
+        )
+        assert_no_traceback(self, stderr, "query groups-only")
+        self.assertNotIn("cutoff must be between", (stdout + stderr),
+                         f"misleading cutoff error surfaced:\n{stderr}")
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}.tsv")
+        rows = parse_pairwise_tsv(f"{out}.tsv")
+        self.assertGreater(len(rows), 0, "groups-only query returned no rows")
+        for row in rows:
+            pair = {row["group_1_name"], row["group_2_name"]}
+            self.assertTrue(pair.issubset({"groupa", "groupb"}),
+                            f"unexpected pair in groups-only result: {pair}")
+
+    def test_021_query_clusters_only_no_cutoff(self):
+        """query --clusters-file ... --cluster-ids 1 with no -m/-c must run, NOT
+        report a misleading cutoff error."""
+        # Build a clusters file from the shared fixture.
+        cl = os.path.join(self.tmpdir, "cl")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.pw_file} -m ochiai -c 0 -o {cl}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        clusters_file = f"{cl}_clusters.tsv"
+        assert_file_exists(self, clusters_file)
+
+        out = os.path.join(self.tmpdir, "q_cl")
+        rc, stdout, stderr = run_command(
+            f"DBRetina query -p {self.pw_file} --clusters-file {clusters_file} "
+            f"--cluster-ids 1 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "query clusters-only")
+        self.assertNotIn("cutoff must be between", (stdout + stderr),
+                         f"misleading cutoff error surfaced:\n{stderr}")
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}.tsv")
+
+    def test_021_query_no_args_clean_error(self):
+        """query with no filter args must give the accurate 'requires at least
+        one option' error, NOT the misleading cutoff error."""
+        out = os.path.join(self.tmpdir, "q_noargs")
+        rc, stdout, stderr = run_command(
+            f"DBRetina query -p {self.pw_file} -o {out}"
+        )
+        assert_no_traceback(self, stderr, "query no-args")
+        self.assertEqual(rc, 1, stderr)
+        self.assertNotIn("cutoff must be between", (stdout + stderr),
+                         f"misleading cutoff error surfaced:\n{stderr}")
+        self.assertIn("at least one option", (stdout + stderr).lower(), stderr)
+
+    # ---- guard: valid existing paths unchanged ----
+    def test_021_query_cutoff_only_tsv_still_works(self):
+        """Removing the redundant cutoff guard must not change normal cutoff
+        queries on the .tsv."""
+        out = os.path.join(self.tmpdir, "q_co")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.pw_file} -m ochiai -c 50 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        rows = parse_pairwise_tsv(f"{out}.tsv")
+        for row in rows:
+            self.assertGreaterEqual(row["ochiai"], 50.0)
+
+    def test_021_query_out_of_range_cutoff_still_rejected(self):
+        """An actually out-of-range cutoff (>100) must still be rejected cleanly
+        (the Click callback handles this)."""
+        out = os.path.join(self.tmpdir, "q_bad")
+        rc, stdout, stderr = run_command(
+            f"DBRetina query -p {self.pw_file} -m ochiai -c 150 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "query out-of-range cutoff")
+        self.assertNotEqual(rc, 0, "out-of-range cutoff should be rejected")
+
+
 # ============================================================
 # Main
 # ============================================================

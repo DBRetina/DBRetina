@@ -89,6 +89,49 @@ def check_if_there_is_a_pvalue(pairwise_file):
             else:
                 continue
 
+
+def _classify_pairwise_input(pairwise_file):
+    """Classify a query -p input as 'tsv', 'store', or 'dbri'.
+
+    -p accepts the pairwise TSV, but pairwise emits several sibling forms next
+    to it (a parquet directory, a .dbrp binary, and the .dbri index). Without
+    this guard the text header-copy below open()s the path unconditionally and
+    crashes with a raw traceback on the non-TSV forms (issue 020):
+      - parquet directory -> IsADirectoryError
+      - .dbrp / .dbri     -> UnicodeDecodeError
+
+    Returns:
+      'tsv'   -> a readable text TSV: use the existing awk/TSV code paths.
+      'store' -> a parquet directory, or a .dbrp with a sibling parquet store:
+                 query via dbretina.compat.open_pairwise (cutoff-only).
+      'dbri'  -> a DBRetina index, not a pairwise file: caller emits a clean
+                 error (an index can't be queried as a pairwise file).
+    """
+    # A .dbri index is not a pairwise file. Detect by extension or magic bytes.
+    if pairwise_file.endswith(".dbri"):
+        return "dbri"
+    if os.path.isfile(pairwise_file):
+        try:
+            with open(pairwise_file, "rb") as fh:
+                magic = fh.read(4)
+        except OSError:
+            magic = b""
+        if magic == b"DBRI":
+            return "dbri"
+
+    # A directory input is a parquet pairwise dir -> route through the store.
+    if os.path.isdir(pairwise_file):
+        return "store"
+
+    # A regular file: is it decodable text (the TSV) or a binary (.dbrp)?
+    try:
+        with open(pairwise_file, "r", encoding="utf-8") as fh:
+            fh.read(4096)
+        return "tsv"
+    except (UnicodeDecodeError, IsADirectoryError):
+        return "store"
+
+
 @cli.command(name="query", epilog = dbretina_doc.doc_url("query") , help_priority=3)
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('-g', '--groups-file', "groups_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="single-column supergroups file")
@@ -108,10 +151,13 @@ Detailed description:
     Query a pairwise file by similarity cutoff and/or a set of groups (provided as a single-column file or cluster IDs in a DBRetina cluster file).
     """
     
-    # error if cutoff > 100 or < 0
-    if cutoff > 100 or cutoff < 0:
-        ctx.obj.ERROR("cutoff must be between 0 and 100")
-    
+    # NOTE: cutoff range is validated by the check_cutoff_value callback, which
+    # correctly treats the default -1 as "no cutoff". A second inline guard used
+    # to live here as `if cutoff > 100 or cutoff < 0` -- it fired on the default
+    # -1 and aborted groups-only / clusters-only / no-args queries with a
+    # misleading "cutoff must be between 0 and 100" (issue 021). Removed so those
+    # modes fall through to their proper branches / accurate errors below.
+
     # Extend must be used only when clusters file or groups file is provided
     if extend and groups_file == "NA" and clusters_file == "NA":
         ctx.obj.ERROR("DBRetina's query command requires a groups_file or clusters_file if --extend is provided.")
@@ -147,6 +193,21 @@ Detailed description:
         ctx.obj.ERROR(
             "DBRetina's query command requires awk to be installed and available in the PATH.")
 
+    # Detect the -p input form. -p is the pairwise TSV, but pairwise emits sibling
+    # forms (parquet dir, .dbrp, .dbri) that used to crash with a raw traceback
+    # (issue 020). Route them coherently instead.
+    input_kind = _classify_pairwise_input(pairwise_file)
+    if input_kind == "dbri":
+        ctx.obj.ERROR(
+            f"'{pairwise_file}' is a DBRetina index (.dbri), not a pairwise file. "
+            "Pass the pairwise TSV (or its parquet directory / .dbrp) to -p.")
+    if input_kind == "store" and (groups_file != "NA" or clusters_file != "NA"):
+        # The groups/clusters filter is awk-based and needs the text TSV; the
+        # parquet/.dbrp store path here only supports cutoff filtering.
+        ctx.obj.ERROR(
+            "Filtering by a groups/clusters file requires the pairwise TSV; got a "
+            "parquet directory / .dbrp. Re-run with the pairwise TSV passed to -p.")
+
     metric_to_col = {
         "containment": 5,
         "ochiai": 6,
@@ -157,10 +218,11 @@ Detailed description:
         "pvalue": 11,
     }
     
-     # check if pvalue
-    if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+     # check if pvalue (text TSV only; for the parquet/.dbrp store the
+     # cutoff-only branch validates pvalue availability against the store)
+    if metric == "pvalue" and input_kind == "tsv" and not check_if_there_is_a_pvalue(pairwise_file):
         ctx.obj.ERROR("pvalue not found in pairwise file!")
-    
+
     if metric in metric_to_col:
         # +1 because awk is 1-indexed
         awk_column = metric_to_col[metric] + 1
@@ -175,16 +237,21 @@ Detailed description:
     if groups_file != "NA" and not os.path.exists(groups_file):
         ctx.obj.ERROR(f"Groups file {groups_file} doesn't exist.")
 
-    comment_lines = 0
-    with (open(pairwise_file) as f, open(output_file, 'w') as w):
-        for line in f:
-            comment_lines += 1
-            if line.startswith("#"):
-                w.write(line)
-            else:
-                w.write(f"#command: {get_command()}\n")
-                w.write(line)
-                break
+    # Copy the TSV header (comments + the column header) into the output. A
+    # parquet directory / .dbrp has no text header to copy, so just seed the
+    # output with the #command line for the store branch to append to (issue 020).
+    if input_kind == "tsv":
+        with (open(pairwise_file) as f, open(output_file, 'w') as w):
+            for line in f:
+                if line.startswith("#"):
+                    w.write(line)
+                else:
+                    w.write(f"#command: {get_command()}\n")
+                    w.write(line)
+                    break
+    else:
+        with open(output_file, 'w') as w:
+            w.write(f"#command: {get_command()}\n")
 
     ctx.obj.INFO(
         f"Querying the pairwise matrix on the {metric} column with a cutoff of {cutoff} and groups file {groups_file}."
@@ -250,6 +317,9 @@ Detailed description:
 
         if store is not None:
             ctx.obj.INFO("using Parquet pairwise data via PairwiseStore")
+            if metric == "pvalue" and not store.has_pvalue:
+                store.close()
+                ctx.obj.ERROR("pvalue not found in pairwise file!")
             names_map = store.get_names_map()
             cols = ["group_1_id", "group_2_id", "shared_features",
                     "containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio"]

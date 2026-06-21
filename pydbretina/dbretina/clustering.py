@@ -31,6 +31,28 @@ def get_command():
             _sys_argv[i+1] = os.path.abspath(_sys_argv[i+1])
     return "DBRetina " + " ".join(_sys_argv[1:])
 
+
+def resolve_features_no_file(pairwise_file):
+    """Resolve the sibling ``*_DBRetina_featuresNo.tsv`` for a pairwise input.
+
+    -p may be the pairwise TSV, the parquet directory, or the .dbrp binary;
+    pairwise always emits ``<prefix>_DBRetina_featuresNo.tsv`` next to
+    ``<prefix>_DBRetina_pairwise{,.tsv,.dbrp}``. The community node loader used a
+    brittle ``replace("pairwise.tsv", "featuresNo.tsv")`` that no-ops for the
+    directory/.dbrp forms and then open()s the directory (issue 016). Strip the
+    pairwise extension and the ``_DBRetina_pairwise`` suffix to find the sibling.
+    """
+    base = pairwise_file
+    for ext in (".tsv", ".dbrp"):
+        if base.endswith(ext):
+            base = base[:-len(ext)]
+            break
+    if base.endswith("_DBRetina_pairwise"):
+        prefix = base[:-len("_DBRetina_pairwise")]
+        return prefix + "_DBRetina_featuresNo.tsv"
+    # Legacy / unrecognized naming: fall back to the original .tsv substring swap.
+    return pairwise_file.replace("pairwise.tsv", "featuresNo.tsv")
+
 class Clusters:
 
     metric_to_col = {
@@ -80,8 +102,14 @@ class Clusters:
         node_ids = []
         node_sizes = []
 
-        # replace part of the file name that shares the same prefix
-        featuresCount_file = self.pairwise_file.replace("pairwise.tsv", "featuresNo.tsv")
+        # Sibling featuresNo.tsv, resolved for the .tsv / parquet-dir / .dbrp forms
+        # (issue 016). The file holds one line per group ordered by sequential ID,
+        # so node sizes align with the gid-1 edge indices used in construct_graph.
+        featuresCount_file = resolve_features_no_file(self.pairwise_file)
+        if not os.path.isfile(featuresCount_file):
+            self.Logger.ERROR(
+                f"could not find the per-group feature counts file "
+                f"'{featuresCount_file}' required for --community clustering.")
         with open(featuresCount_file) as F:
             next(F)
             for line in F:
