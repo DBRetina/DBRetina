@@ -28,10 +28,16 @@ def main(ctx, index_a, index_b, output_path):
     ctx.obj.INFO(f"Merging {index_a} (base) + {index_b}")
     ctx.obj.INFO("Merging in progress, please wait...")
 
-    dbretina_internal.dbretina_merge(
-        os.path.abspath(index_a),
-        os.path.abspath(index_b),
-        os.path.abspath(output_path)
-    )
+    try:
+        dbretina_internal.dbretina_merge(
+            os.path.abspath(index_a),
+            os.path.abspath(index_b),
+            os.path.abspath(output_path)
+        )
+    except RuntimeError as e:
+        # Expected merge-time errors from the C++ core (e.g. duplicate group
+        # names across indexes) -> clean [ERROR] line, no Python traceback.
+        # ctx.obj.ERROR exits nonzero.
+        ctx.obj.ERROR(str(e))
 
     ctx.obj.SUCCESS(f"Merged index written to {output_path}")

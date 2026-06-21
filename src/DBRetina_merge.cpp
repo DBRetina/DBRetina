@@ -106,7 +106,9 @@ namespace dbretina {
         for (auto& [group_name, kset] : bFeatureSets) {
             if (groupNameMap.find(group_name) != groupNameMap.end()) {
                 throw std::runtime_error("Duplicate gene set name '" + group_name +
-                    "' exists in both indexes. Use --prefix to disambiguate.");
+                    "' exists in both indexes. Merging indexes that share group "
+                    "names is not supported; rename the conflicting group(s) so "
+                    "names are unique across both indexes before merging.");
             }
 
             new_groups_count++;

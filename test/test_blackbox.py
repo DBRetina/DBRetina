@@ -3004,6 +3004,172 @@ class TestRestPairsSchema(unittest.TestCase):
 
 
 # ============================================================
+# SECTION: CLI UX regressions (clean errors, correct output naming)
+# ============================================================
+
+class TestNeighborsBadMetric(unittest.TestCase):
+    """ISSUE-019: neighbors -m with an invalid or absent-but-valid metric must
+    emit a clean [ERROR] line (no Python traceback) and exit nonzero, while a
+    valid metric still returns neighbors."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        # Parquet pairwise dir produced alongside the TSV (neighbors accepts both).
+        cls.parquet = f"{cls.prefix}_DBRetina_pairwise"
+        # A group that exists in the shared fixture (names are lowercased).
+        cls.group = "groupa"
+
+    def _assert_clean_metric_error(self, metric):
+        rc, stdout, stderr = run_command(
+            f'DBRetina neighbors -d {self.pw_file} "{self.group}" -m {metric} -c 5'
+        )
+        self.assertNotEqual(rc, 0, f"expected nonzero exit for metric {metric!r}")
+        self.assertNotIn("Traceback", stderr,
+                         f"metric {metric!r} leaked a Python traceback:\n{stderr}")
+        self.assertNotIn("ValueError", stderr,
+                         f"metric {metric!r} leaked a ValueError:\n{stderr}")
+        self.assertIn("[ERROR]", stderr,
+                      f"metric {metric!r} did not produce a clean [ERROR] line:\n{stderr}")
+
+    def test_invalid_metric_clean_error(self):
+        """An unknown metric string -> clean [ERROR], no traceback."""
+        self._assert_clean_metric_error("bogusxyz")
+
+    def test_absent_valid_metric_clean_error(self):
+        """A valid-but-unavailable metric (pvalue on a no-pvalue dataset) ->
+        clean [ERROR], no traceback."""
+        self._assert_clean_metric_error("pvalue")
+
+    def test_invalid_metric_on_parquet_clean_error(self):
+        """Same clean handling when reading the Parquet pairwise directory."""
+        if not os.path.isdir(self.parquet):
+            self.skipTest("Parquet pairwise dir not produced")
+        rc, _, stderr = run_command(
+            f'DBRetina neighbors -d {self.parquet} "{self.group}" -m bogusxyz -c 5'
+        )
+        self.assertNotEqual(rc, 0)
+        self.assertNotIn("Traceback", stderr)
+        self.assertIn("[ERROR]", stderr)
+
+    def test_valid_metric_still_returns_neighbors(self):
+        """A valid metric must still succeed and print neighbors."""
+        rc, stdout, stderr = run_command(
+            f'DBRetina neighbors -d {self.pw_file} "{self.group}" -m ochiai -c 5'
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("Traceback", stderr)
+        # groupa overlaps several groups; header + at least one neighbor row.
+        self.assertIn("ochiai", stdout)
+
+
+class TestMergeDuplicateName(unittest.TestCase):
+    """ISSUE-034: merging two indexes that share a group name must produce a
+    clean error (no Python traceback) whose message does NOT reference the
+    nonexistent --prefix flag; a clean merge of non-overlapping indexes still
+    succeeds."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_mergedup_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _create_index(self, name, content):
+        asc = write_file(os.path.join(self.tmpdir, f"{name}.asc"), content)
+        prefix = os.path.join(self.tmpdir, name)
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, f"index {name} failed: {stderr}")
+        return prefix
+
+    def test_duplicate_name_clean_error_no_prefix_advice(self):
+        idx_a = self._create_index("dupa",
+            "gene_set\tgene\nshared_grp\tAlpha\nshared_grp\tBeta\nonly_a\tGamma\n")
+        idx_b = self._create_index("dupb",
+            "gene_set\tgene\nshared_grp\tDelta\nshared_grp\tEpsilon\nonly_b\tZeta\n")
+        out = os.path.join(self.tmpdir, "dup_merged.dbri")
+        rc, _, stderr = run_command(
+            f"DBRetina merge -a {idx_a}.dbri -b {idx_b}.dbri -o {out}"
+        )
+        self.assertNotEqual(rc, 0, "duplicate-name merge should fail")
+        self.assertNotIn("Traceback", stderr,
+                         f"duplicate-name merge leaked a traceback:\n{stderr}")
+        self.assertNotIn("RuntimeError", stderr,
+                         f"duplicate-name merge leaked a RuntimeError:\n{stderr}")
+        self.assertNotIn("--prefix", stderr,
+                         f"error still references the nonexistent --prefix flag:\n{stderr}")
+        self.assertIn("[ERROR]", stderr,
+                      f"no clean [ERROR] line emitted:\n{stderr}")
+        # The error should still name the offending group so the user can fix it.
+        self.assertIn("shared_grp", stderr)
+
+    def test_clean_merge_still_succeeds(self):
+        idx_a = self._create_index("cleana",
+            "gene_set\tgene\nclean_a\tAlpha\nclean_a\tBeta\n")
+        idx_b = self._create_index("cleanb",
+            "gene_set\tgene\nclean_b\tGamma\nclean_b\tDelta\n")
+        out = os.path.join(self.tmpdir, "clean_merged.dbri")
+        rc, _, stderr = run_command(
+            f"DBRetina merge -a {idx_a}.dbri -b {idx_b}.dbri -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, out)
+
+
+class TestInteractomeNaming(unittest.TestCase):
+    """ISSUE-040: interactome must name its outputs/log strings for the
+    interactome command (not '*_genenet.*'), while genenet keeps its own
+    genenet-named outputs."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_interactome_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_interactome_outputs_named_interactome(self):
+        out = os.path.join(self.tmpdir, "it")
+        rc, _, stderr = run_command(
+            f"DBRetina interactome -i {self.prefix} -p {self.pw_file} -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        # interactome-named output exists and is non-empty...
+        assert_file_exists(self, f"{out}_interactome.tsv")
+        # ...and the misleading genenet-named output does NOT.
+        self.assertFalse(os.path.exists(f"{out}_genenet.tsv"),
+                         "interactome still wrote a *_genenet.tsv file")
+        # Log strings should refer to 'interactome', not 'genenet'.
+        self.assertNotIn("Exporting genenet", stderr)
+
+    def test_genenet_outputs_unaffected(self):
+        out = os.path.join(self.tmpdir, "gn")
+        rc, _, stderr = run_command(
+            f"DBRetina genenet -i {self.prefix} -p {self.pw_file} -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        # genenet keeps its genenet-named output...
+        assert_file_exists(self, f"{out}_genenet.tsv")
+        # ...and must NOT produce an interactome-named file.
+        self.assertFalse(os.path.exists(f"{out}_interactome.tsv"),
+                         "genenet wrote an *_interactome.tsv file")
+
+    def test_interactome_graphml_named_interactome(self):
+        out = os.path.join(self.tmpdir, "itg")
+        rc, _, stderr = run_command(
+            f"DBRetina interactome -i {self.prefix} -p {self.pw_file} "
+            f"--graphml -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_interactome.graphml")
+        self.assertFalse(os.path.exists(f"{out}_genenet.graphml"),
+                         "interactome still wrote a *_genenet.graphml file")
+
+
+# ============================================================
 # Main
 # ============================================================
 

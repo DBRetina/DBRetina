@@ -104,5 +104,10 @@ def main(ctx, data_path, group_name, metric, cutoff, top, output):
                 f'Showing top {len(df)} neighbors of "{group_name}" '
                 f"({metric} >= {cutoff})"
             )
+    except (ValueError, KeyError) as e:
+        # Expected user-input errors (e.g. unknown/unavailable metric from
+        # store._validate_metric) -> clean [ERROR] line, no traceback.
+        # LOGGER.ERROR exits nonzero; finally below still runs.
+        LOGGER.ERROR(str(e))
     finally:
         store.close()

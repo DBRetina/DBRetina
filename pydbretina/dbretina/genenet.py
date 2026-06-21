@@ -17,9 +17,13 @@ import pandas as pd
 import dbretina.dbretina_doc_url as dbretina_doc
 
 class GeneNet:
-    def __init__(self, output_prefix):
+    def __init__(self, output_prefix, net_kind="genenet"):
         self.graph = {}
         self.output_prefix = output_prefix
+        # net_kind drives output-file suffix and log strings so the same code
+        # can serve both the 'genenet' and 'interactome' commands without
+        # mislabeling one as the other.
+        self.net_kind = net_kind
 
     def add_edge(self, node1, node2):
         if node1 == node2:
@@ -44,8 +48,8 @@ class GeneNet:
                 if node1 < node2
             )
             
-        output_file_name = f"{self.output_prefix}_genenet.tsv"
-        ctx.obj.INFO(f"Exporting genenet to {output_file_name}")
+        output_file_name = f"{self.output_prefix}_{self.net_kind}.tsv"
+        ctx.obj.INFO(f"Exporting {self.net_kind} to {output_file_name}")
         with open(output_file_name, 'w') as file:
             file.write("\n".join(rows))
     
@@ -63,7 +67,7 @@ class GeneNet:
         df = pd.DataFrame(data)
 
         # Create a summary statistics table
-        print("Summary statistics of the genenet weights:")
+        print(f"Summary statistics of the {self.net_kind} weights:")
         summary_stats = df['Weight'].describe()
         print(pd.DataFrame.from_dict(dict(summary_stats), orient='index').to_string())
 
@@ -73,13 +77,13 @@ class GeneNet:
         plt.title('Histogram of Edge Weights')
         plt.xlabel('Edge Weight')
         plt.ylabel('Frequency')
-        plt.savefig(f"{self.output_prefix}_genenet_histogram.png", dpi=500)
+        plt.savefig(f"{self.output_prefix}_{self.net_kind}_histogram.png", dpi=500)
 
         # Boxplot to show spread of weights
         plt.figure(figsize=(10, 6))
         sns.boxplot(x=df['Weight'])
         plt.title('Boxplot of Edge Weights')
-        plt.savefig(f"{self.output_prefix}_genenet_boxplot.png", dpi=500)
+        plt.savefig(f"{self.output_prefix}_{self.net_kind}_boxplot.png", dpi=500)
 
         # Scatter plot to show any potential relationship between nodes and weights
         df['NodePair'] = df.apply(lambda row: f"{row['Node1']} - {row['Node2']}", axis=1)
@@ -87,7 +91,7 @@ class GeneNet:
         sns.scatterplot(x='NodePair', y='Weight', data=df)
         plt.title('Scatter Plot of Node Pairs and Weights')
         plt.xticks(rotation=90)
-        plt.savefig(f"{self.output_prefix}_genenet_scatter.png", dpi=500)
+        plt.savefig(f"{self.output_prefix}_{self.net_kind}_scatter.png", dpi=500)
     
     def graph_export(self, graphml, gexf, ctx):
         if not graphml and not gexf:
@@ -102,14 +106,14 @@ class GeneNet:
         self.G = nx.relabel_nodes(self.G, lambda x: x.upper())
 
         if graphml:
-            ctx.obj.INFO("Exporting genenet as graphml file")
-            nx.write_graphml(self.G, f"{self.output_prefix}_genenet.graphml")
-            nx.write_gml(self.G, f"{self.output_prefix}_genenet.gml")
-            nx.write_weighted_edgelist(self.G, f"{self.output_prefix}_genenet_weighted.edgelist")
-            nx.write_graphml_xml(self.G, f"{self.output_prefix}_genenet.graphml.xml")
+            ctx.obj.INFO(f"Exporting {self.net_kind} as graphml file")
+            nx.write_graphml(self.G, f"{self.output_prefix}_{self.net_kind}.graphml")
+            nx.write_gml(self.G, f"{self.output_prefix}_{self.net_kind}.gml")
+            nx.write_weighted_edgelist(self.G, f"{self.output_prefix}_{self.net_kind}_weighted.edgelist")
+            nx.write_graphml_xml(self.G, f"{self.output_prefix}_{self.net_kind}.graphml.xml")
         if gexf:
-            ctx.obj.INFO("Exporting genenet as gexf file")
-            nx.write_gexf(self.G, f"{self.output_prefix}_genenet.gexf")
+            ctx.obj.INFO(f"Exporting {self.net_kind} as gexf file")
+            nx.write_gexf(self.G, f"{self.output_prefix}_{self.net_kind}.gexf")
 
 
 def get_command():
@@ -212,8 +216,12 @@ def main(ctx, index_prefix, pairwise_file, output_prefix, graphml, gexf):
     #3. Build the genenet
     ##############################################
     
-    ctx.obj.INFO("Building the genenet. Please wait...")
-    genenet = GeneNet(output_prefix)
+    # 'genenet' and 'interactome' are the same callback; distinguish by the
+    # invoked command name so outputs/log strings aren't mislabeled.
+    net_kind = ctx.info_name if ctx.info_name in ("genenet", "interactome") else "genenet"
+
+    ctx.obj.INFO(f"Building the {net_kind}. Please wait...")
+    genenet = GeneNet(output_prefix, net_kind=net_kind)
     
     for geneSet_pair in tqdm(geneSet_pairs):
         geneSet1_features = supergroups_to_features[geneSet_pair[0]]
@@ -226,5 +234,6 @@ def main(ctx, index_prefix, pairwise_file, output_prefix, graphml, gexf):
                 
     genenet.export(ctx)
     genenet.graph_export(graphml, gexf, ctx)
-    ctx.obj.SUCCESS("Gene Network has been constructed successfully.")
+    label = "Interactome" if net_kind == "interactome" else "Gene Network"
+    ctx.obj.SUCCESS(f"{label} has been constructed successfully.")
     # genenet.plot_statistics()
