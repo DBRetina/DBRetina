@@ -451,6 +451,15 @@ class Clusters:
         cluster_sizes = []
 
         if self.community:
+            # 'linear' feeds raw gene-set sizes into the CPM node_sizes; the size penalty
+            # then dominates and typically blocks all merging at the default --resolution
+            # (log2/sqrt compress the sizes). Warn rather than silently return all-singletons.
+            if self.node_weight_transform == 'linear':
+                self.Logger.WARNING(
+                    "--node-weight-transform 'linear' uses raw gene-set sizes as CPM node "
+                    "weights, which often yields one cluster per node at the default "
+                    "--resolution; tune --resolution (lower) or use 'log2'/'sqrt'."
+                )
             # Use Leiden algorithm with CPM (Constant Potts Model) partition
             # Resolution parameter controls cluster granularity:
             #   - Higher resolution = more, smaller clusters
@@ -505,7 +514,8 @@ class Clusters:
               help="Resolution parameter for Leiden CPM partition (higher = more clusters)")
 @click.option('--node-weight-transform', 'node_weight_transform',
               type=click.Choice(['log2', 'linear', 'sqrt']), default='log2', show_default=True,
-              help="Transform for node weights based on gene set size")
+              help="Transform for node weights based on gene set size. 'linear' (raw size) "
+                   "usually needs a tuned --resolution or it leaves every node its own cluster.")
 @click.pass_context
 def main(ctx, pairwise_file, cutoff, metric, output_prefix, community, resolution, node_weight_transform):
     """Graph-based clustering of the pairwise TSV file.

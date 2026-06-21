@@ -835,6 +835,27 @@ class TestCluster(unittest.TestCase):
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, f"{out}_clusters.tsv")
 
+    def test_cluster_linear_transform_warns(self):
+        """ISSUE-024: --node-weight-transform linear (community) warns it needs tuned
+        --resolution (raw sizes -> all-singletons at default); log2 does not warn."""
+        out = os.path.join(self.tmpdir, "cl_lin")
+        rc, stdout, stderr = run_command(
+            f"DBRetina cluster -p {self.pw_file} -m ochiai -c 30 --community "
+            f"--node-weight-transform linear -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        out_all = (stdout + stderr).lower()
+        self.assertIn("linear", out_all)
+        self.assertIn("resolution", out_all)
+        # log2 (default) must NOT emit the linear advisory
+        out2 = os.path.join(self.tmpdir, "cl_log2")
+        rc2, stdout2, stderr2 = run_command(
+            f"DBRetina cluster -p {self.pw_file} -m ochiai -c 30 --community "
+            f"--node-weight-transform log2 -o {out2}"
+        )
+        self.assertEqual(rc2, 0, stderr2)
+        self.assertNotIn("raw gene-set sizes", (stdout2 + stderr2).lower())
+
     def test_cluster_file_format(self):
         """Cluster output has correct TSV format."""
         out = os.path.join(self.tmpdir, "cl")
