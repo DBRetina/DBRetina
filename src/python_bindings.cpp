@@ -33,6 +33,7 @@ NB_MODULE(_dbretina_internal, m) {
     m.def("dbretina_append", &dbretina::dbretina_append,
           nb::arg("existing_dbri_path"),
           nb::arg("new_json_file"),
+          nb::arg("new_raw_json_file"),
           nb::arg("output_dbri_path"));
 
     m.def("dbretina_merge", &dbretina::dbretina_merge,

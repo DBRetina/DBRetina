@@ -54,6 +54,7 @@ def main(ctx, existing_index, asc_file, gmt_file, output_path):
         os.remove(asc_file[0])
 
     json_file = f"{output_prefix}_hashes.json"
+    raw_json_file = f"{output_prefix}_raw.json"
     ctx.obj.INFO(f"Appending to existing index {existing_index}...")
-    dbretina_internal.dbretina_append(existing_index, json_file, output_path)
+    dbretina_internal.dbretina_append(existing_index, json_file, raw_json_file, output_path)
     ctx.obj.SUCCESS(f"Updated index written to {output_path}")

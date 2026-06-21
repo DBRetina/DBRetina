@@ -20,7 +20,7 @@ using namespace std;
 
 namespace dbretina {
 
-    void dbretina_append(string existing_dbri_path, string new_json_file, string output_dbri_path) {
+    void dbretina_append(string existing_dbri_path, string new_json_file, string new_raw_json_file, string output_dbri_path) {
 
         // 1. Load existing index
         auto dbri = DBRetinaIndex::open(existing_dbri_path);
@@ -304,14 +304,35 @@ namespace dbretina {
             out.write_group_to_feature_set(allFeatureSets);
         }
 
-        // Embed JSON files if they exist
+        // Embed JSON files, merging the newly-appended groups into the
+        // RAW_GENE_SETS / HASHED_GENE_SETS sections so downstream consumers
+        // (e.g. geneinfo, which reads RAW_GENE_SETS) see the new groups.
+        auto read_file_to_string = [](const std::string& path) -> std::string {
+            std::ifstream in(path, std::ios::binary);
+            if (!in.is_open()) return std::string();
+            return std::string((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+        };
+
+        // Only add the new groups to RAW/HASHED if the new RAW names are available, so the
+        // RAW and HASHED key sets never diverge (the invariant geneinfo/pairwise rely on).
+        std::string new_raw = read_file_to_string(new_raw_json_file);
+        const bool can_add_new = !new_raw.empty();
+        if (!can_add_new) {
+            cerr << "[append] WARNING: raw gene-set JSON for new groups not found ('"
+                 << new_raw_json_file << "'); the appended groups will NOT be added to "
+                 << "RAW_GENE_SETS or HASHED_GENE_SETS (sections kept consistent)." << endl;
+        }
         if (dbri.has_section(DBRISection::RAW_GENE_SETS)) {
             std::string existing_raw = dbri.load_raw_gene_sets();
-            out.write_raw_gene_sets(existing_raw);
+            out.write_raw_gene_sets(can_add_new
+                ? merge_gene_sets_json(existing_raw, new_raw) : existing_raw);
         }
         if (dbri.has_section(DBRISection::HASHED_GENE_SETS)) {
             std::string existing_hashed = dbri.load_hashed_gene_sets();
-            out.write_hashed_gene_sets(existing_hashed);
+            std::string new_hashed = read_file_to_string(new_json_file);
+            out.write_hashed_gene_sets((can_add_new && !new_hashed.empty())
+                ? merge_gene_sets_json(existing_hashed, new_hashed) : existing_hashed);
         }
 
         out.finalize_write();

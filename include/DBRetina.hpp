@@ -45,5 +45,9 @@ void load_tsv_to_map(string filename, str_vec_map* map);
 void load_tsv_to_map_no_names(string filename, str_vec_map* map);
 void load_names_tsv_to_map(string filename, str_str_map* map);
 void parse_dbretina_json(string json_file, str_hashed_set_map* map);
+// Merge the "data" objects of two DBRetina gene-set JSON strings (raw or hashed),
+// returning a new JSON string with the union of groups. Groups in new_json win on
+// name collision. Used by append/merge to keep RAW/HASHED gene-set sections in sync.
+string merge_gene_sets_json(const string& existing_json, const string& new_json);
 void sketch_dbretina(string asc_file, string names_file, string user_prefix = "NA");
 void query(string index_prefix, string inverted_index_prefix, string query_file, string output_prefix, string commands);

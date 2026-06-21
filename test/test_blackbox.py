@@ -1488,6 +1488,176 @@ class TestIndexManagement(unittest.TestCase):
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, out)
 
+    # --- Regression tests: RAW_GENE_SETS / HASHED_GENE_SETS must include
+    #     newly-added groups after append/merge (ISSUE-013, ISSUE-014). ---
+
+    def _raw_data(self, dbri_path):
+        """Return the RAW_GENE_SETS 'data' dict embedded in a .dbri."""
+        import _dbretina_internal as dbi
+        return json.loads(dbi.dbri_load_raw_gene_sets(dbri_path))["data"]
+
+    def test_append_updates_raw_gene_sets(self):
+        """ISSUE-014: append must add the new groups to RAW_GENE_SETS."""
+        idx = self._create_index("base",
+            "gene_set\tgene\nGroupA\tAlpha\nGroupA\tBeta\nGroupA\tGamma\n")
+        before = self._raw_data(f"{idx}.dbri")
+
+        gmt = write_file(os.path.join(self.tmpdir, "new.gmt"),
+            "append_set_alpha\tdesc\tTP53\tBRCA1\tEGFR\n"
+            "append_set_beta\tdesc\tMYC\tKRAS\tPTEN\n")
+        out = os.path.join(self.tmpdir, "appended.dbri")
+        rc, _, stderr = run_command(
+            f"DBRetina append -i {idx}.dbri -g {gmt} -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+
+        after = self._raw_data(out)
+        # (a) count grew by exactly the 2 appended groups
+        self.assertEqual(len(after), len(before) + 2,
+                         f"raw gene sets should grow by 2; before={len(before)} after={len(after)}")
+        # ...and the original group survived
+        self.assertIn("groupa", after)
+        # (b) the new group names are present with their raw gene names
+        self.assertIn("append_set_alpha", after)
+        self.assertIn("append_set_beta", after)
+        self.assertEqual(set(after["append_set_alpha"]), {"tp53", "brca1", "egfr"})
+        self.assertEqual(set(after["append_set_beta"]), {"myc", "kras", "pten"})
+
+    def test_append_geneinfo_returns_rows(self):
+        """ISSUE-014: geneinfo on an appended group must return gene rows."""
+        idx = self._create_index("base",
+            "gene_set\tgene\nGroupA\tAlpha\nGroupA\tBeta\nGroupA\tGamma\n")
+        gmt = write_file(os.path.join(self.tmpdir, "new.gmt"),
+            "append_set_alpha\tdesc\tTP53\tBRCA1\tEGFR\n"
+            "append_set_beta\tdesc\tMYC\tKRAS\tPTEN\n")
+        out_prefix = os.path.join(self.tmpdir, "appended")
+        rc, _, stderr = run_command(
+            f"DBRetina append -i {idx}.dbri -g {gmt} -o {out_prefix}.dbri"
+        )
+        self.assertEqual(rc, 0, stderr)
+
+        groups = write_file(os.path.join(self.tmpdir, "appended_groups.txt"),
+                            "append_set_alpha\n")
+        # Use a relative -i prefix (run from tmpdir) to avoid the unrelated
+        # geneinfo abspath bug when it builds the inverted index.
+        rc, _, stderr = run_command(
+            "DBRetina geneinfo -i appended -g appended_groups.txt -o gi_appended",
+            cwd=self.tmpdir
+        )
+        self.assertEqual(rc, 0, stderr)
+        gi_tsv = os.path.join(self.tmpdir, "gi_appended_feature_to_groups.tsv")
+        assert_file_exists(self, gi_tsv)
+        n_rows = count_tsv_data_rows(gi_tsv)
+        self.assertEqual(n_rows, 3,
+                         f"geneinfo on appended group should return 3 feature rows, got {n_rows}")
+
+    def test_append_pairwise_includes_new_groups(self):
+        """Pairwise on the appended index must work and see the new groups."""
+        idx = self._create_index("base",
+            "gene_set\tgene\nGroupA\tAlpha\nGroupA\tBeta\nGroupA\tGamma\n")
+        # New groups share genes with each other so pairwise yields a row.
+        gmt = write_file(os.path.join(self.tmpdir, "new.gmt"),
+            "append_set_alpha\tdesc\tTP53\tBRCA1\tEGFR\n"
+            "append_set_beta\tdesc\tTP53\tBRCA1\tMYC\n")
+        out_prefix = os.path.join(self.tmpdir, "appended")
+        rc, _, stderr = run_command(
+            f"DBRetina append -i {idx}.dbri -g {gmt} -o {out_prefix}.dbri"
+        )
+        self.assertEqual(rc, 0, stderr)
+        rc, _, stderr = run_command(
+            f"DBRetina pairwise -i {out_prefix} -m containment -c 1"
+        )
+        self.assertEqual(rc, 0, stderr)
+        pw_file = f"{out_prefix}_DBRetina_pairwise.tsv"
+        assert_file_exists(self, pw_file)
+        rows = parse_pairwise_tsv(pw_file)
+        names = set()
+        for r in rows:
+            names.add(r["group_1_name"])
+            names.add(r["group_2_name"])
+        self.assertIn("append_set_alpha", names)
+        self.assertIn("append_set_beta", names)
+
+    def test_merge_updates_raw_gene_sets(self):
+        """ISSUE-013: merge must include B's groups in RAW_GENE_SETS."""
+        idx_a = self._create_index("a",
+            "gene_set\tgene\nGroupA\tAlpha\nGroupA\tBeta\nGroupA\tGamma\n")
+        idx_b = self._create_index("b",
+            "gene_set\tgene\n"
+            "bgroup_one\tTP53\nbgroup_one\tBRCA1\nbgroup_one\tEGFR\n"
+            "bgroup_two\tMYC\nbgroup_two\tKRAS\n")
+        a_raw = self._raw_data(f"{idx_a}.dbri")
+        b_raw = self._raw_data(f"{idx_b}.dbri")
+
+        out = os.path.join(self.tmpdir, "merged.dbri")
+        rc, _, stderr = run_command(
+            f"DBRetina merge -a {idx_a}.dbri -b {idx_b}.dbri -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+
+        merged = self._raw_data(out)
+        # merged raw = union of A and B
+        self.assertEqual(len(merged), len(a_raw) + len(b_raw),
+                         f"merged raw should be union; A={len(a_raw)} B={len(b_raw)} merged={len(merged)}")
+        self.assertIn("groupa", merged)          # from A
+        self.assertIn("bgroup_one", merged)      # from B
+        self.assertIn("bgroup_two", merged)      # from B
+        self.assertEqual(set(merged["bgroup_one"]), {"tp53", "brca1", "egfr"})
+
+    def test_merge_geneinfo_on_b_group(self):
+        """ISSUE-013: geneinfo on a B-group must return rows after merge."""
+        idx_a = self._create_index("a",
+            "gene_set\tgene\nGroupA\tAlpha\nGroupA\tBeta\nGroupA\tGamma\n")
+        idx_b = self._create_index("b",
+            "gene_set\tgene\n"
+            "bgroup_one\tTP53\nbgroup_one\tBRCA1\nbgroup_one\tEGFR\n")
+        out_prefix = os.path.join(self.tmpdir, "merged")
+        rc, _, stderr = run_command(
+            f"DBRetina merge -a {idx_a}.dbri -b {idx_b}.dbri -o {out_prefix}.dbri"
+        )
+        self.assertEqual(rc, 0, stderr)
+
+        write_file(os.path.join(self.tmpdir, "bgroup.txt"), "bgroup_one\n")
+        # Use a relative -i prefix (run from tmpdir) to avoid the unrelated
+        # geneinfo abspath bug when it builds the inverted index.
+        rc, _, stderr = run_command(
+            "DBRetina geneinfo -i merged -g bgroup.txt -o gi_merged",
+            cwd=self.tmpdir
+        )
+        self.assertEqual(rc, 0, stderr)
+        gi_tsv = os.path.join(self.tmpdir, "gi_merged_feature_to_groups.tsv")
+        assert_file_exists(self, gi_tsv)
+        n_rows = count_tsv_data_rows(gi_tsv)
+        self.assertEqual(n_rows, 3,
+                         f"geneinfo on merged B-group should return 3 feature rows, got {n_rows}")
+
+    def test_merge_pairwise_includes_b_groups(self):
+        """Pairwise on the merged index must work and include B's groups."""
+        idx_a = self._create_index("a",
+            "gene_set\tgene\nGroupA\tAlpha\nGroupA\tBeta\nGroupA\tGamma\n")
+        idx_b = self._create_index("b",
+            "gene_set\tgene\n"
+            "bgroup_one\tTP53\nbgroup_one\tBRCA1\nbgroup_one\tEGFR\n"
+            "bgroup_two\tTP53\nbgroup_two\tBRCA1\nbgroup_two\tMYC\n")
+        out_prefix = os.path.join(self.tmpdir, "merged")
+        rc, _, stderr = run_command(
+            f"DBRetina merge -a {idx_a}.dbri -b {idx_b}.dbri -o {out_prefix}.dbri"
+        )
+        self.assertEqual(rc, 0, stderr)
+        rc, _, stderr = run_command(
+            f"DBRetina pairwise -i {out_prefix} -m containment -c 1"
+        )
+        self.assertEqual(rc, 0, stderr)
+        pw_file = f"{out_prefix}_DBRetina_pairwise.tsv"
+        assert_file_exists(self, pw_file)
+        rows = parse_pairwise_tsv(pw_file)
+        names = set()
+        for r in rows:
+            names.add(r["group_1_name"])
+            names.add(r["group_2_name"])
+        self.assertIn("bgroup_one", names)
+        self.assertIn("bgroup_two", names)
+
 
 # ============================================================
 # SECTION 16: Edge Case Tests

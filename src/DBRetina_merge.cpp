@@ -271,14 +271,28 @@ namespace dbretina {
         }
         out.write_group_to_feature_set(allFeatureSets);
 
-        // Carry forward embedded JSON from A (B's data would need separate handling)
+        // Merge embedded JSON from A and B so the RAW_GENE_SETS / HASHED_GENE_SETS
+        // sections contain groups from BOTH indexes. geneinfo reads RAW_GENE_SETS,
+        // so without B's entries it would return empty for B's groups.
         if (dbriA.has_section(DBRISection::RAW_GENE_SETS)) {
-            std::string existing_raw = dbriA.load_raw_gene_sets();
-            out.write_raw_gene_sets(existing_raw);
+            std::string a_raw = dbriA.load_raw_gene_sets();
+            if (dbriB.has_section(DBRISection::RAW_GENE_SETS)) {
+                std::string b_raw = dbriB.load_raw_gene_sets();
+                out.write_raw_gene_sets(merge_gene_sets_json(a_raw, b_raw));
+            } else {
+                cerr << "[merge] WARNING: index B has no RAW_GENE_SETS section; "
+                     << "merged RAW_GENE_SETS will not include B's groups." << endl;
+                out.write_raw_gene_sets(a_raw);
+            }
         }
         if (dbriA.has_section(DBRISection::HASHED_GENE_SETS)) {
-            std::string existing_hashed = dbriA.load_hashed_gene_sets();
-            out.write_hashed_gene_sets(existing_hashed);
+            std::string a_hashed = dbriA.load_hashed_gene_sets();
+            if (dbriB.has_section(DBRISection::HASHED_GENE_SETS)) {
+                std::string b_hashed = dbriB.load_hashed_gene_sets();
+                out.write_hashed_gene_sets(merge_gene_sets_json(a_hashed, b_hashed));
+            } else {
+                out.write_hashed_gene_sets(a_hashed);
+            }
         }
 
         out.finalize_write();
