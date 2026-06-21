@@ -1558,6 +1558,23 @@ class TestGeneinfo(unittest.TestCase):
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, os.path.join(self.geneinfo_dir, "gi_feature_to_groups.tsv"))
 
+    def test_geneinfo_absolute_index_prefix(self):
+        """ISSUE-005: geneinfo must accept an absolute / dir-qualified -i prefix
+        (was FileNotFoundError from the mangled 'inverted_<abspath>' path)."""
+        abs_prefix = os.path.join(self.geneinfo_dir, "test_idx")
+        groups = write_file(os.path.join(self.tmpdir, "g.txt"), "GroupA\nGroupB\n")
+        out = os.path.join(self.tmpdir, "gi_abs")
+        rc, _, stderr = run_command(
+            f"DBRetina geneinfo -i {abs_prefix} -g {groups} -o {out}", cwd=self.tmpdir
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("FileNotFoundError", stderr)
+        self.assertNotIn("Traceback", stderr)
+        assert_file_exists(self, f"{out}_feature_to_groups.tsv")
+        # inverted index must land NEXT TO the index (the index dir), not at a mangled/cwd path
+        assert_file_exists(self, os.path.join(self.geneinfo_dir, "inverted_test_idx_raw.json"))
+        self.assertFalse(os.path.exists(os.path.join(self.tmpdir, "inverted_test_idx_raw.json")))
+
     def test_geneinfo_clusters(self):
         """Geneinfo with clusters file."""
         # First create clusters

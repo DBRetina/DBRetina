@@ -100,8 +100,11 @@ Detailed description:
     # INVERTED INDEX
     # ---------------------------
 
-    # Inverting the index
-    inverted_index_prefix = f"inverted_{index_prefix}"
+    # Inverting the index. Prefix the BASENAME (not the whole path) with "inverted_" so an
+    # absolute or dir-qualified -i prefix (e.g. /abs/dir/omim) yields /abs/dir/inverted_omim
+    # rather than the nonexistent "inverted_/abs/dir/omim" (which FileNotFound'd on write).
+    _idx_dir, _idx_base = os.path.split(index_prefix)
+    inverted_index_prefix = os.path.join(_idx_dir, f"inverted_{_idx_base}")
     inverted_dbri_file = f"{inverted_index_prefix}.dbri"
     if not os.path.exists(inverted_dbri_file):
         # inverted index not found
