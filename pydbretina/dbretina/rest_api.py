@@ -6,12 +6,12 @@ import threading
 import time
 from collections import OrderedDict
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .pairwise_store import PairwiseStore
 from .api_errors import (
@@ -602,12 +602,20 @@ def create_app(
 
     # ── Gene Importance & Analysis ─────────────────────────────────
 
+    # Allowed gene-importance scoring methods (mirrors gene_importance.hub_genes
+    # dispatch). Declared as a Literal so an unknown method is a clean 422 at the
+    # request boundary instead of silently falling through to projection.
+    GeneMethod = Literal["hypergraph", "edge_weighted", "projection"]
+
     class HubGenesRequest(BaseModel):
         """Request for hub genes analysis."""
         group_name: str
-        method: str = "hypergraph"  # hypergraph, edge_weighted, projection
-        hops: int = 2
-        top_n: int = 30
+        method: GeneMethod = "hypergraph"
+        # hops feeds igraph neighborhood order (must be non-negative); bound it
+        # like the sibling neighborhood endpoint (ge=1, le=5).
+        hops: int = Field(2, ge=1, le=5)
+        # top_n slices the ranked list; a negative value silently truncates.
+        top_n: int = Field(30, ge=1)
         metric: str = "ochiai"
         cutoff: float = 20.0
 
@@ -615,13 +623,14 @@ def create_app(
         """Request to explain gene connection between two groups."""
         group_a: str
         group_b: str
-        method: str = "hypergraph"  # hypergraph, edge_weighted, projection
+        method: GeneMethod = "hypergraph"
 
     class ClusterGenesRequest(BaseModel):
         """Request for cluster gene analysis."""
         node_names: list[str]
-        method: str = "hypergraph"
-        top_n: int = 50
+        method: GeneMethod = "hypergraph"
+        # top_n slices the ranked list; a negative value silently truncates.
+        top_n: int = Field(50, ge=1)
 
     def _get_gene_importance():
         """Get or create GeneImportance instance."""
@@ -644,6 +653,11 @@ def create_app(
         - **projection**: PageRank on gene co-occurrence graph
         """
         gi = _get_gene_importance()
+        # The edge_weighted method is the only one that consumes ``metric``;
+        # reject an unknown metric up front as a 400 (otherwise the ValueError
+        # from edge_weighted_scores would surface as a 500).
+        if body.method == "edge_weighted":
+            _validate_metric(body.metric, store.available_metrics)
         try:
             df = gi.hub_genes(
                 group_name=body.group_name,
@@ -666,6 +680,10 @@ def create_app(
                 resource_type="group",
                 resource_id=body.group_name,
             )
+        except ValueError as e:
+            # Bad user input the model couldn't catch (e.g. an unknown metric
+            # reaching the scorer) is a client error, not a server fault.
+            raise ValidationError(detail=str(e))
         except Exception as e:
             raise DBRetinaAPIError(detail=f"Hub genes analysis failed: {e}")
 
@@ -1130,6 +1148,15 @@ def create_app(
                 algorithm=body.algorithm,
                 weights=weights,
                 **body.parameters,
+            )
+        except (TypeError, ValueError) as e:
+            # ``parameters`` is a free-form, user-supplied dict forwarded into
+            # igraph. A bad value (e.g. resolution="notanum") or unexpected key
+            # is a client error, so report 400 instead of a 500 ALGORITHM_ERROR.
+            raise ValidationError(
+                detail=f"Invalid clustering parameter: {e}",
+                field="parameters",
+                value=body.parameters,
             )
         except Exception as e:
             raise AlgorithmError(

@@ -2758,6 +2758,170 @@ class TestRestGraph(unittest.TestCase):
             store.close()
 
 
+@unittest.skipUnless(_HAS_REST_TEST, "REST validation tests need [server] extra + httpx")
+class TestRestValidation(unittest.TestCase):
+    """Bad user input on REST endpoints must return a 4xx client error, never a
+    500. Guards ISSUE-022 (hub-genes invalid metric), ISSUE-037 (hub-genes
+    negative hops / unknown method / non-positive top_n) and ISSUE-038
+    (graph/cluster bad-type algorithm parameter)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_validate_")
+        self.prefix, self.pw = setup_index_and_pairwise(self.tmpdir)
+        self.parquet = f"{self.prefix}_DBRetina_pairwise"
+        self.dbri = f"{self.prefix}.dbri"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _client(self):
+        from dbretina.compat import open_pairwise
+        from dbretina.pairwise_store import PairwiseStore
+        from dbretina.rest_api import create_app
+        store = open_pairwise(self.parquet)
+        if store is None:
+            store = PairwiseStore(self.parquet, dbri_path=self.dbri)
+        else:
+            store._dbri_path = self.dbri
+        # raise_server_exceptions=False so a 500 surfaces as a status code we can
+        # assert on, instead of re-raising into the test (we WANT to see 4xx vs 500).
+        return _TestClient(create_app(store, dbri_path=self.dbri),
+                           raise_server_exceptions=False), store
+
+    def _a_group(self, store):
+        names = list(store.get_names_map().values())
+        self.assertTrue(names, "store has no groups")
+        return names[0]
+
+    @staticmethod
+    def _is_4xx(code):
+        return 400 <= code < 500
+
+    # ── ISSUE-022: hub-genes invalid metric ────────────────────────
+    def test_hub_genes_invalid_metric_is_4xx(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.post("/api/v1/genes/hub-genes",
+                            json={"group_name": group, "method": "edge_weighted",
+                                  "metric": "bogus"})
+            self.assertTrue(self._is_4xx(r.status_code),
+                            f"invalid metric should be 4xx, got {r.status_code}: {r.text[:200]}")
+            self.assertNotEqual(r.status_code, 500,
+                                "invalid metric still maps to 500 INTERNAL_ERROR (ISSUE-022)")
+        finally:
+            store.close()
+
+    # ── ISSUE-037a: hub-genes negative hops ────────────────────────
+    def test_hub_genes_negative_hops_is_4xx(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.post("/api/v1/genes/hub-genes",
+                            json={"group_name": group, "hops": -1})
+            self.assertTrue(self._is_4xx(r.status_code),
+                            f"negative hops should be 4xx, got {r.status_code}: {r.text[:200]}")
+            self.assertNotEqual(r.status_code, 500,
+                                "negative hops still maps to 500 (ISSUE-037a)")
+        finally:
+            store.close()
+
+    # ── ISSUE-037c: hub-genes non-positive top_n ───────────────────
+    def test_hub_genes_negative_top_n_is_4xx(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            for bad in (-1, 0):
+                r = client.post("/api/v1/genes/hub-genes",
+                                json={"group_name": group, "top_n": bad})
+                self.assertTrue(self._is_4xx(r.status_code),
+                                f"top_n={bad} should be 4xx, got {r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    # ── ISSUE-037b: hub-genes unknown method (no silent fallback) ──
+    def test_hub_genes_unknown_method_is_4xx(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.post("/api/v1/genes/hub-genes",
+                            json={"group_name": group, "method": "nonsense"})
+            self.assertTrue(self._is_4xx(r.status_code),
+                            f"unknown method should be 4xx, got {r.status_code}: {r.text[:200]}")
+            # Must NOT silently succeed with mislabeled projection results.
+            self.assertNotEqual(r.status_code, 200,
+                                "unknown method silently fell back to projection (ISSUE-037b)")
+        finally:
+            store.close()
+
+    # ── ISSUE-037c: cluster-analysis non-positive top_n ────────────
+    def test_cluster_analysis_negative_top_n_is_4xx(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            for bad in (-1, 0):
+                r = client.post("/api/v1/genes/cluster-analysis",
+                                json={"node_names": [group], "top_n": bad})
+                self.assertTrue(self._is_4xx(r.status_code),
+                                f"cluster top_n={bad} should be 4xx, got {r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_cluster_analysis_unknown_method_is_4xx(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.post("/api/v1/genes/cluster-analysis",
+                            json={"node_names": [group], "method": "nonsense"})
+            self.assertTrue(self._is_4xx(r.status_code),
+                            f"cluster unknown method should be 4xx, got {r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    # ── ISSUE-038: graph/cluster bad-type parameter ────────────────
+    def test_graph_cluster_bad_type_param_is_4xx(self):
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/graph/cluster",
+                            json={"algorithm": "leiden",
+                                  "parameters": {"resolution": "notanum"},
+                                  "metric": "ochiai", "cutoff": 0.0})
+            self.assertTrue(self._is_4xx(r.status_code),
+                            f"bad-type resolution should be 4xx, got {r.status_code}: {r.text[:200]}")
+            self.assertNotEqual(r.status_code, 500,
+                                "bad-type param still maps to 500 ALGORITHM_ERROR (ISSUE-038)")
+        finally:
+            store.close()
+
+    # ── Regression guard: valid calls must still return 200 ────────
+    def test_valid_calls_still_succeed(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.post("/api/v1/genes/hub-genes",
+                            json={"group_name": group, "method": "edge_weighted",
+                                  "metric": "jaccard", "hops": 2, "top_n": 5})
+            self.assertEqual(r.status_code, 200,
+                             f"valid hub-genes broke: {r.status_code} {r.text[:200]}")
+            self.assertIn("genes", r.json())
+
+            r = client.post("/api/v1/genes/cluster-analysis",
+                            json={"node_names": [group], "top_n": 5})
+            self.assertEqual(r.status_code, 200,
+                             f"valid cluster-analysis broke: {r.status_code} {r.text[:200]}")
+            self.assertIn("genes", r.json())
+
+            r = client.post("/api/v1/graph/cluster",
+                            json={"algorithm": "leiden",
+                                  "parameters": {"resolution": 1.0},
+                                  "metric": "ochiai", "cutoff": 0.0})
+            self.assertEqual(r.status_code, 200,
+                             f"valid graph/cluster broke: {r.status_code} {r.text[:200]}")
+            self.assertIn("membership", r.json())
+        finally:
+            store.close()
+
+
 class TestAlgorithmsModule(unittest.TestCase):
     """dbretina.algorithms.run_clustering (igraph-backed) — no server needed."""
 
