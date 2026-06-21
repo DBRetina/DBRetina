@@ -85,12 +85,16 @@ export default function QueryPanel() {
 
   function handleFocusNodes() {
     if (state.highlightNodes.size > 0) {
+      // Clear any Advanced Filter edge filter so focusing isn't intersected with a stale one.
+      dispatch({ type: "CLEAR_EDGE_FILTER" });
       dispatch({ type: "SET_NODE_FILTER", nodes: new Set(state.highlightNodes) });
     }
   }
 
   function handleResetFilter() {
+    // Full reset: clear both the node focus and any Advanced Filter edge filter.
     dispatch({ type: "CLEAR_NODE_FILTER" });
+    dispatch({ type: "CLEAR_EDGE_FILTER" });
   }
 
   function handleToggle() {

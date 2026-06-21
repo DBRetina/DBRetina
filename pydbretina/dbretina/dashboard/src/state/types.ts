@@ -30,6 +30,16 @@ export interface GraphEdge {
   target: string;
   weight: number;
   shared_features: number;
+  // Per-metric values carried by the backend so the client can filter on any
+  // metric without re-querying. Present only for metrics the dataset has
+  // (pvalue is absent when it was not computed).
+  containment?: number;
+  ochiai?: number;
+  jaccard?: number;
+  csi?: number;
+  dice?: number;
+  odds_ratio?: number;
+  pvalue?: number;
 }
 
 export interface GraphData {
@@ -230,6 +240,11 @@ export interface DashboardState {
   // Node filter — when set, only these nodes (and edges between them) are shown
   nodeFilter: Set<string> | null;
 
+  // Edge filter — when set, only edges whose "source|target" key is in this set
+  // are shown (and only the nodes those edges touch). Driven by the Advanced
+  // Filter. Composes with nodeFilter (both intersect).
+  edgeFilter: Set<string> | null;
+
   // Legacy fields (kept for backwards compatibility)
   loading: Record<string, boolean>;
   error: string | null;
@@ -286,4 +301,7 @@ export type DashboardAction =
   | { type: "SET_DETAIL_PANEL_OPEN"; open: boolean }
   // Node filter actions
   | { type: "SET_NODE_FILTER"; nodes: Set<string> }
-  | { type: "CLEAR_NODE_FILTER" };
+  | { type: "CLEAR_NODE_FILTER" }
+  // Edge filter actions (Advanced Filter)
+  | { type: "SET_EDGE_FILTER"; edges: Set<string> }
+  | { type: "CLEAR_EDGE_FILTER" };

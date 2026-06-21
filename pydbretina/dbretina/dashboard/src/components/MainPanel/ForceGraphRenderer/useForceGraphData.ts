@@ -13,16 +13,37 @@ import { COMMUNITY_COLORS } from "./constants";
  */
 export function useForceGraphData(state: DashboardState): ForceGraphData | null {
   return useMemo(() => {
-    const { graphData, pathResult, nodeFilter } = state;
+    const { graphData, pathResult, nodeFilter, edgeFilter } = state;
     if (!graphData) return null;
 
-    // Apply node filter — when set, only show these nodes and edges between them
-    const filteredNodes = nodeFilter
+    // Apply edge filter first (Advanced Filter): keep only edges whose
+    // "source|target" key is in the set, then keep only the nodes they touch.
+    // Then intersect with the node filter (both may be active).
+    let filteredEdges = graphData.edges;
+    if (edgeFilter) {
+      filteredEdges = filteredEdges.filter((e) =>
+        edgeFilter.has(`${e.source}|${e.target}`)
+      );
+    }
+    if (nodeFilter) {
+      filteredEdges = filteredEdges.filter(
+        (e) => nodeFilter.has(e.source) && nodeFilter.has(e.target)
+      );
+    }
+
+    // Node visibility: start from the node filter (or all nodes), then — when an
+    // edge filter is active — keep only nodes touched by a surviving edge.
+    let filteredNodes = nodeFilter
       ? graphData.nodes.filter((n) => nodeFilter.has(n.id))
       : graphData.nodes;
-    const filteredEdges = nodeFilter
-      ? graphData.edges.filter((e) => nodeFilter.has(e.source) && nodeFilter.has(e.target))
-      : graphData.edges;
+    if (edgeFilter) {
+      const touched = new Set<string>();
+      for (const e of filteredEdges) {
+        touched.add(e.source);
+        touched.add(e.target);
+      }
+      filteredNodes = filteredNodes.filter((n) => touched.has(n.id));
+    }
 
     // Build path lookup sets for efficient checking
     const pathNodeIds = new Set<string>();
@@ -86,5 +107,5 @@ export function useForceGraphData(state: DashboardState): ForceGraphData | null 
     }));
 
     return { nodes, links };
-  }, [state.graphData, state.pathResult, state.nodeFilter]);
+  }, [state.graphData, state.pathResult, state.nodeFilter, state.edgeFilter]);
 }

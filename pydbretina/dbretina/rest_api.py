@@ -888,15 +888,24 @@ def create_app(
 
         # The graph's edge weights ARE this metric; read them back per edge.
         weights = g.es["weight"] if g.ecount() > 0 else None
+        # Every metric the dataset carries is also stored as an edge attribute
+        # (see PairwiseGraph). Expose each one so the client can filter on any
+        # metric without re-querying. ``available_metrics`` excludes pvalue when
+        # it wasn't computed, so no pvalue field appears on those datasets.
+        edge_attrs = set(g.es.attributes()) if g.ecount() > 0 else set()
+        metric_cols = [m for m in store.available_metrics if m in edge_attrs]
         edge_data = []
         for e in g.es:
             src = all_ids[e.source]
             dst = all_ids[e.target]
-            edge_data.append({
+            ed = {
                 "source": str(src), "target": str(dst),
                 "weight": round(float(e["weight"]), 2),
                 "shared_features": int(e["shared_features"]),
-            })
+            }
+            for m in metric_cols:
+                ed[m] = round(float(e[m]), 6)
+            edge_data.append(ed)
 
         degrees = g.degree()
         try:

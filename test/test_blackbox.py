@@ -2340,6 +2340,29 @@ class TestRestGraph(unittest.TestCase):
         finally:
             store.close()
 
+    def test_graph_data_edges_carry_all_metrics(self):
+        # Each edge must carry EVERY available metric value so the dashboard can
+        # filter client-side without re-querying. pvalue must be ABSENT here
+        # (the test substrate has no pvalue) — available_metrics excludes it.
+        client, store = self._client()
+        try:
+            self.assertFalse(store.has_pvalue, "test substrate unexpectedly has pvalue")
+            r = client.get("/api/v1/graph/data?metric=ochiai&cutoff=0.0")
+            self.assertEqual(r.status_code, 200, f"got {r.status_code}: {r.text[:200]}")
+            edges = r.json()["edges"]
+            self.assertGreater(len(edges), 0, "graph/data returned no edges")
+            e0 = edges[0]
+            for m in store.available_metrics:
+                self.assertIn(m, e0, f"edge missing metric '{m}'")
+                self.assertIsInstance(e0[m], (int, float))
+            # The active metric value must agree with the legacy 'weight' field
+            # (weight is rounded to 2dp).
+            self.assertAlmostEqual(e0["weight"], round(e0["ochiai"], 2), places=2)
+            # pvalue absent because it wasn't computed.
+            self.assertNotIn("pvalue", e0, "pvalue leaked onto edges without a pvalue dataset")
+        finally:
+            store.close()
+
     def test_graph_neighborhood_shape(self):
         client, store = self._client()
         try:

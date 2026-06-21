@@ -63,6 +63,9 @@ export const initialState: DashboardState = {
   // Node filter
   nodeFilter: null,
 
+  // Edge filter (Advanced Filter)
+  edgeFilter: null,
+
   // Legacy fields
   loading: {},
   error: null,
@@ -88,9 +91,10 @@ export function dashboardReducer(
       return {
         ...state,
         graphData: action.data,
-        // Exit compare mode and clear node filter when graph data changes
+        // Exit compare mode and clear filters when graph data changes
         compareState: { active: false, nodeA: null, nodeB: null },
         nodeFilter: null,
+        edgeFilter: null,
       };
     case "SET_ACTIVE_VIEW":
       return { ...state, activeView: action.view };
@@ -312,6 +316,12 @@ export function dashboardReducer(
       return { ...state, nodeFilter: action.nodes };
     case "CLEAR_NODE_FILTER":
       return { ...state, nodeFilter: null };
+
+    // Edge filter actions (Advanced Filter)
+    case "SET_EDGE_FILTER":
+      return { ...state, edgeFilter: action.edges };
+    case "CLEAR_EDGE_FILTER":
+      return { ...state, edgeFilter: null };
 
     default:
       return state;

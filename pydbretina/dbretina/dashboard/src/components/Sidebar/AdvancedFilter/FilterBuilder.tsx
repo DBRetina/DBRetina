@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useDashboard } from "../../../state/context";
 import { VALID_METRICS } from "../../../utils/validation";
 import { genId } from "../../../utils/uid";
@@ -15,9 +15,12 @@ interface FilterConditionRowProps {
   onChange: (condition: FilterCondition) => void;
   onRemove: () => void;
   canRemove: boolean;
+  /** Metrics the dataset actually has (drives the dropdown; excludes pvalue
+   * when it wasn't computed). */
+  metricOptions: string[];
 }
 
-function FilterConditionRow({ condition, onChange, onRemove, canRemove }: FilterConditionRowProps) {
+function FilterConditionRow({ condition, onChange, onRemove, canRemove, metricOptions }: FilterConditionRowProps) {
   const operators = [
     { value: ">=", label: ">=" },
     { value: "<=", label: "<=" },
@@ -57,11 +60,15 @@ function FilterConditionRow({ condition, onChange, onRemove, canRemove }: Filter
             background: "white",
           }}
         >
-          {VALID_METRICS.map((metric) => (
+          {metricOptions.map((metric) => (
             <option key={metric} value={metric}>
               {metric}
             </option>
           ))}
+          {/* Keep a controlled value even if it's not an available option. */}
+          {!metricOptions.includes(condition.metric) && (
+            <option value={condition.metric}>{condition.metric}</option>
+          )}
         </select>
 
         {/* Operator selector */}
@@ -176,13 +183,30 @@ interface FilterBuilderProps {
 
 export default function FilterBuilder({ onApply, onClear }: FilterBuilderProps) {
   const { state } = useDashboard();
+
+  // Metrics the dataset actually has — drives the dropdowns and gates presets.
+  // Before /info loads, fall back to the non-pvalue metrics (pvalue is dataset-specific
+  // and would otherwise flash in the dropdown on a no-pvalue dataset).
+  const metricOptions = useMemo<string[]>(
+    () =>
+      state.info?.valid_metrics && state.info.valid_metrics.length > 0
+        ? state.info.valid_metrics
+        : VALID_METRICS.filter((m) => m !== "pvalue"),
+    [state.info]
+  );
+  const hasPvalue = metricOptions.includes("pvalue");
+  const defaultMetric = metricOptions.includes("ochiai")
+    ? "ochiai"
+    : metricOptions[0] ?? "ochiai";
+
   const [conditions, setConditions] = useState<FilterCondition[]>([
     { id: genId(), metric: "ochiai", operator: ">=", value: 50 },
   ]);
   const [logic, setLogic] = useState<"AND" | "OR">("AND");
   const [expanded, setExpanded] = useState(false);
 
-  // Presets
+  // Presets — "Significant Only" uses pvalue, so it's hidden when the dataset
+  // has no pvalue.
   const presets = [
     {
       name: "High Confidence",
@@ -192,11 +216,15 @@ export default function FilterBuilder({ onApply, onClear }: FilterBuilderProps) 
       ],
       logic: "AND" as const,
     },
-    {
-      name: "Significant Only",
-      conditions: [{ metric: "pvalue", operator: "<=", value: 0.05 }],
-      logic: "AND" as const,
-    },
+    ...(hasPvalue
+      ? [
+          {
+            name: "Significant Only",
+            conditions: [{ metric: "pvalue", operator: "<=", value: 0.05 }],
+            logic: "AND" as const,
+          },
+        ]
+      : []),
     {
       name: "Strong Overlap",
       conditions: [{ metric: "containment", operator: ">=", value: 80 }],
@@ -207,9 +235,9 @@ export default function FilterBuilder({ onApply, onClear }: FilterBuilderProps) 
   const addCondition = useCallback(() => {
     setConditions((prev) => [
       ...prev,
-      { id: genId(), metric: "ochiai", operator: ">=", value: 50 },
+      { id: genId(), metric: defaultMetric, operator: ">=", value: 50 },
     ]);
-  }, []);
+  }, [defaultMetric]);
 
   const updateCondition = useCallback((id: string, updated: FilterCondition) => {
     setConditions((prev) => prev.map((c) => (c.id === id ? updated : c)));
@@ -237,11 +265,11 @@ export default function FilterBuilder({ onApply, onClear }: FilterBuilderProps) 
 
   const handleClear = useCallback(() => {
     setConditions([
-      { id: genId(), metric: "ochiai", operator: ">=", value: 50 },
+      { id: genId(), metric: defaultMetric, operator: ">=", value: 50 },
     ]);
     setLogic("AND");
     onClear();
-  }, [onClear]);
+  }, [onClear, defaultMetric]);
 
   return (
     <div className="sidebar-section">
@@ -352,6 +380,7 @@ export default function FilterBuilder({ onApply, onClear }: FilterBuilderProps) 
                   onChange={(updated) => updateCondition(condition.id, updated)}
                   onRemove={() => removeCondition(condition.id)}
                   canRemove={conditions.length > 1}
+                  metricOptions={metricOptions}
                 />
               </div>
             ))}

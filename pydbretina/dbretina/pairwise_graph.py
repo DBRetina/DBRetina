@@ -53,8 +53,16 @@ class PairwiseGraph:
         self._names_map = store.get_names_map()
         self._name_to_id = {v: k for k, v in self._names_map.items()}
 
-        edge_cols = ["group_1_id", "group_2_id", "shared_features", metric]
-        df = store.to_pandas(metric=metric, cutoff=cutoff, columns=edge_cols)
+        # Carry *every* metric the dataset has as an edge attribute so the
+        # client can filter on any metric without re-querying. ``weight`` stays
+        # the active filter metric (the graph algorithms use it); the active
+        # metric is ALSO kept as its own named attribute so the client can
+        # filter on it like any other.
+        self._metric_cols = list(store.available_metrics)
+        if metric not in self._metric_cols:
+            self._metric_cols.append(metric)
+        sel_cols = ["group_1_id", "group_2_id", "shared_features"] + self._metric_cols
+        df = store.to_pandas(metric=metric, cutoff=cutoff, columns=sel_cols)
         self._build_from_frame(df)
 
     def _build_from_frame(self, df: pd.DataFrame):
@@ -70,21 +78,35 @@ class PairwiseGraph:
         g.vs["gid"] = gids
         g.vs["name"] = [self._names_map[gid] for gid in gids]
 
-        edges, weights, shared = [], [], []
-        idx = self._gid_to_idx
+        # Which metric columns are actually present in this frame? (subgraph
+        # rebuilds carry whatever edges_dataframe() produced.)
         metric = self._metric
+        cols = set(df.columns)
+        metric_cols = [m for m in getattr(self, "_metric_cols", []) if m in cols]
+        # The active filter metric must always be readable for ``weight``.
+        if metric not in cols and metric in metric_cols:
+            metric_cols.remove(metric)
+        self._metric_cols = metric_cols
+
+        edges, weights, shared = [], [], []
+        metric_vals = {m: [] for m in metric_cols}
+        idx = self._gid_to_idx
         for row in df.itertuples(index=False):
             s = int(row.group_1_id)
             d = int(row.group_2_id)
             if s in idx and d in idx:
                 edges.append((idx[s], idx[d]))
-                weights.append(float(getattr(row, metric)))
+                weights.append(float(getattr(row, metric)) if metric in cols else 0.0)
                 shared.append(int(row.shared_features))
+                for m in metric_cols:
+                    metric_vals[m].append(float(getattr(row, m)))
 
         if edges:
             g.add_edges(edges)
             g.es["weight"] = weights
             g.es["shared_features"] = shared
+            for m in metric_cols:
+                g.es[m] = metric_vals[m]
 
         self._g = g
         self._num_nodes = g.vcount()
@@ -126,33 +148,38 @@ class PairwiseGraph:
         """Return this graph's edges as a DataFrame keyed by group id.
 
         Columns: ``src``/``dst`` (int group ids), ``weight`` (float, the filter
-        metric value) and ``shared_features`` (int). One row per undirected edge.
+        metric value), ``shared_features`` (int), plus one float column per
+        available metric (``ochiai``, ``jaccard``, …). One row per undirected
+        edge. The extra metric columns let ``subgraph`` round-trip every metric.
         """
         g = self._g
         idx_to_gid = self._idx_to_gid
+        metric_cols = list(getattr(self, "_metric_cols", []))
         if g.ecount() == 0:
-            return pd.DataFrame(
-                {
-                    "src": pd.Series([], dtype="int64"),
-                    "dst": pd.Series([], dtype="int64"),
-                    "weight": pd.Series([], dtype="float64"),
-                    "shared_features": pd.Series([], dtype="int64"),
-                }
-            )
+            data = {
+                "src": pd.Series([], dtype="int64"),
+                "dst": pd.Series([], dtype="int64"),
+                "weight": pd.Series([], dtype="float64"),
+                "shared_features": pd.Series([], dtype="int64"),
+            }
+            for m in metric_cols:
+                data[m] = pd.Series([], dtype="float64")
+            return pd.DataFrame(data)
         weights = g.es["weight"]
         shared = g.es["shared_features"]
         src, dst = [], []
         for e in g.es:
             src.append(idx_to_gid[e.source])
             dst.append(idx_to_gid[e.target])
-        return pd.DataFrame(
-            {
-                "src": pd.array(src, dtype="int64"),
-                "dst": pd.array(dst, dtype="int64"),
-                "weight": pd.array([float(w) for w in weights], dtype="float64"),
-                "shared_features": pd.array([int(s) for s in shared], dtype="int64"),
-            }
-        )
+        data = {
+            "src": pd.array(src, dtype="int64"),
+            "dst": pd.array(dst, dtype="int64"),
+            "weight": pd.array([float(w) for w in weights], dtype="float64"),
+            "shared_features": pd.array([int(s) for s in shared], dtype="int64"),
+        }
+        for m in metric_cols:
+            data[m] = pd.array([float(v) for v in g.es[m]], dtype="float64")
+        return pd.DataFrame(data)
 
     def to_igraph(self):
         """Return the underlying :class:`igraph.Graph` (vertices carry ``gid``/``name``)."""
@@ -338,7 +365,9 @@ class PairwiseGraph:
         """Build a PairwiseGraph directly from an edges DataFrame (internal).
 
         ``edges_df`` must have columns ``src``, ``dst``, ``weight``,
-        ``shared_features`` keyed by group id. Used by ``subgraph``.
+        ``shared_features`` keyed by group id, plus one float column per available
+        metric (e.g. ``ochiai``, ``jaccard``, …) which are carried onto the edges.
+        Used by ``subgraph``.
         """
         obj = object.__new__(cls)
         obj._store = store
@@ -347,20 +376,28 @@ class PairwiseGraph:
         obj._names_map = dict(names_map)
         obj._name_to_id = {v: k for k, v in names_map.items()}
 
+        # Per-metric columns carried by edges_dataframe() (anything that isn't a
+        # structural column). _build_from_frame reads these back as edge attrs.
+        structural = {"src", "dst", "weight", "shared_features"}
+        metric_cols = [c for c in edges_df.columns if c not in structural]
+        obj._metric_cols = metric_cols
+
         # Reshape to the gid-column layout _build_from_frame expects.
         if edges_df.empty:
             frame = pd.DataFrame(
                 columns=["group_1_id", "group_2_id", "shared_features", metric]
+                + [m for m in metric_cols if m != metric]
             )
         else:
-            frame = pd.DataFrame(
-                {
-                    "group_1_id": edges_df["src"].to_numpy(),
-                    "group_2_id": edges_df["dst"].to_numpy(),
-                    "shared_features": edges_df["shared_features"].to_numpy(),
-                    metric: edges_df["weight"].to_numpy(),
-                }
-            )
+            cols = {
+                "group_1_id": edges_df["src"].to_numpy(),
+                "group_2_id": edges_df["dst"].to_numpy(),
+                "shared_features": edges_df["shared_features"].to_numpy(),
+                metric: edges_df["weight"].to_numpy(),
+            }
+            for m in metric_cols:
+                cols[m] = edges_df[m].to_numpy()
+            frame = pd.DataFrame(cols)
         obj._build_from_frame(frame)
         return obj
 
