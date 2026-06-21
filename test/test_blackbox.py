@@ -507,6 +507,39 @@ class TestPairwise(unittest.TestCase):
         assert_file_exists(self, f"{prefix}_DBRetina_similarity_metrics_plot_log.png")
         self.assertEqual(count_tsv_data_rows(pw_file), 11)
 
+    def test_pairwise_rerun_clears_stale_parquet_parts(self):
+        """Regression: re-running pairwise with fewer threads must not leave stale
+        parquet parts that silently inflate glob-based row counts."""
+        import json, glob, duckdb
+        d = self.tmpdir
+        genes = [f"g{i}" for i in range(40)]
+        rows = ["grp_%02d\tdesc\t%s" % (k, "\t".join(genes[(k % 10):(k % 10) + 12]))
+                for k in range(30)]
+        gmt = os.path.join(d, "many.gmt")
+        with open(gmt, "w") as f:
+            f.write("\n".join(rows) + "\n")
+        rc, _, err = run_command("DBRetina index -g many.gmt -o idx", cwd=d)
+        self.assertEqual(rc, 0, err)
+        rc, _, err = run_command("DBRetina pairwise -i idx -m containment -c 0 -t 4", cwd=d)
+        self.assertEqual(rc, 0, err)
+        pwdir = os.path.join(d, "idx_DBRetina_pairwise")
+        parts1 = glob.glob(os.path.join(pwdir, "data", "part_*.parquet"))
+        self.assertGreaterEqual(len(parts1), 2, "need a multi-part run to test stale-part clearing")
+        # re-run with fewer threads (1 part); stale parts from run 1 must be cleared
+        rc, _, err = run_command("DBRetina pairwise -i idx -m containment -c 0 -t 1", cwd=d)
+        self.assertEqual(rc, 0, err)
+        with open(os.path.join(pwdir, "manifest.json")) as mf:
+            manifest = json.load(mf)
+        glob_count = duckdb.connect().execute(
+            f"select count(*) from read_parquet('{pwdir}/data/part_*.parquet', union_by_name=true)"
+        ).fetchone()[0]
+        self.assertEqual(glob_count, manifest["num_pairs"],
+                         f"stale parquet parts: glob={glob_count} != manifest {manifest['num_pairs']}")
+        # No leftover parts of any kind (also covers the --pvalue schema-mix variant):
+        parts2 = glob.glob(os.path.join(pwdir, "data", "part_*.parquet"))
+        self.assertEqual(len(parts2), manifest["num_partitions"],
+                         f"stale part files left: {len(parts2)} != num_partitions {manifest['num_partitions']}")
+
     def test_pairwise_metric_values(self):
         """All metric values match hand-computed expectations."""
         prefix, pw_file = setup_index_and_pairwise(self.tmpdir)

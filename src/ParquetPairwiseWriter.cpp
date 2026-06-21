@@ -74,6 +74,22 @@ ParquetPairwiseWriter::ParquetPairwiseWriter(
     // Create output directory structure
     fs::create_directories(output_dir_ + "/data");
 
+    // Clear any stale part files from a previous run. Leftover parts (from a run with
+    // a higher thread count, or a different schema when --pvalue is toggled) otherwise
+    // survive and corrupt glob-based readers — silently inflating row counts, or crashing
+    // DuckDB on a mixed schema. The directory must contain only this run's parts.
+    // Invariant: data/ holds ONLY part_*.parquet (sidecars are written to the parent dir),
+    // so clearing part_*.parquet leaves the dir clean for the new run.
+    {
+        std::error_code ec;
+        for (const auto& entry : fs::directory_iterator(output_dir_ + "/data", ec)) {
+            const std::string fname = entry.path().filename().string();
+            if (fname.rfind("part_", 0) == 0 && entry.path().extension() == ".parquet") {
+                fs::remove(entry.path(), ec);
+            }
+        }
+    }
+
     // Initialize per-thread writers
     thread_writers_.resize(num_threads_);
     for (int i = 0; i < num_threads_; i++) {
