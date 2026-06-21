@@ -1260,6 +1260,107 @@ class TestGraph(unittest.TestCase):
         )
         self.assertEqual(rc, 0, stderr)
 
+    # ---- Regression: ISSUE-006 (graph -p <parquet DIRECTORY>) ----
+
+    def _parquet_dir(self):
+        """The Parquet pairwise directory sibling of the .tsv (a valid -p form)."""
+        d = self.pw_file[:-len(".tsv")] if self.pw_file.endswith(".tsv") else self.pw_file
+        self.assertTrue(
+            os.path.isdir(d), f"expected Parquet pairwise dir at {d}"
+        )
+        return d
+
+    def test_graph_parquet_dir_input(self):
+        """ISSUE-006: graph -p <parquet DIRECTORY> succeeds (like genenet/bipartite).
+
+        A complete intra+inter target partition (GroupA/B/E/F + GroupC/D) avoids the
+        unrelated no/partial-targets path. Pre-fix this crashed with
+        'RuntimeError: Invalid .dbrp file (bad magic bytes)'.
+        """
+        pw_dir = self._parquet_dir()
+        out = os.path.join(self.tmpdir, "gdir")
+        rc, _, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {pw_dir} "
+            f"--intra-targets {self.intra1} --inter-targets {self.inter1} "
+            f"-m ochiai -c 20 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("bad magic bytes", stderr)
+        assert_file_exists(self, f"{out}_edges.tsv")
+        assert_file_exists(self, f"{out}_nodes.tsv")
+
+    def test_graph_dir_matches_tsv_output(self):
+        """ISSUE-006: -p <DIR> and -p <.tsv> must produce identical graph output."""
+        pw_dir = self._parquet_dir()
+        out_dir = os.path.join(self.tmpdir, "from_dir")
+        out_tsv = os.path.join(self.tmpdir, "from_tsv")
+
+        rc_d, _, err_d = run_command(
+            f"DBRetina graph -i {self.prefix} -p {pw_dir} "
+            f"--intra-targets {self.intra1} --inter-targets {self.inter1} "
+            f"-m ochiai -c 20 -o {out_dir}"
+        )
+        rc_t, _, err_t = run_command(
+            f"DBRetina graph -i {self.prefix} -p {self.pw_file} "
+            f"--intra-targets {self.intra1} --inter-targets {self.inter1} "
+            f"-m ochiai -c 20 -o {out_tsv}"
+        )
+        self.assertEqual(rc_d, 0, err_d)
+        self.assertEqual(rc_t, 0, err_t)
+
+        def _read_sorted(path):
+            with open(path) as f:
+                return sorted(line.rstrip("\n") for line in f)
+
+        self.assertEqual(
+            _read_sorted(f"{out_dir}_edges.tsv"),
+            _read_sorted(f"{out_tsv}_edges.tsv"),
+            "edges differ between -p <DIR> and -p <.tsv>",
+        )
+        self.assertEqual(
+            _read_sorted(f"{out_dir}_nodes.tsv"),
+            _read_sorted(f"{out_tsv}_nodes.tsv"),
+            "nodes differ between -p <DIR> and -p <.tsv>",
+        )
+
+    def test_graph_tsv_input_still_works(self):
+        """ISSUE-006: the legacy -p <.tsv> form keeps working after the fix."""
+        out = os.path.join(self.tmpdir, "gtsv")
+        rc, _, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {self.pw_file} "
+            f"--intra-targets {self.intra1} --inter-targets {self.inter1} "
+            f"-m ochiai -c 20 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_edges.tsv")
+        assert_file_exists(self, f"{out}_nodes.tsv")
+
+    # ---- Regression: ISSUE-030 (invalid -m metric) ----
+
+    def test_graph_invalid_metric_clean_error(self):
+        """ISSUE-030: graph -m FOO exits nonzero with a clean error, not a KeyError traceback."""
+        out = os.path.join(self.tmpdir, "gbadm")
+        rc, _, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {self.pw_file} "
+            f"--intra-targets {self.intra1} --inter-targets {self.inter1} "
+            f"-m FOO -c 20 -o {out}"
+        )
+        self.assertNotEqual(rc, 0, "invalid metric should exit nonzero")
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("KeyError", stderr)
+        # mentions the bad value and/or how to fix it
+        self.assertIn("FOO", stderr)
+        self.assertIn("metric", stderr.lower())
+        # the "NA" sentinel also bypasses the option callback -> must still be clean
+        rc2, _, stderr2 = run_command(
+            f"DBRetina graph -i {self.prefix} -p {self.pw_file} "
+            f"--intra-targets {self.intra1} --inter-targets {self.inter1} "
+            f"-m NA -c 20 -o {out}_na"
+        )
+        self.assertNotEqual(rc2, 0, "-m NA should exit nonzero")
+        self.assertNotIn("Traceback", stderr2)
+        self.assertNotIn("KeyError", stderr2)
+
 
 # ============================================================
 # SECTION 12: Interactome Tests

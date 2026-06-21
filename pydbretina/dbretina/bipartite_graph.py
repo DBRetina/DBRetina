@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import dbretina.dbretina_doc_url as dbretina_doc
 from dbretina.setcov import main as setcov_main
+from dbretina.validators import validate_metric
 import networkx as nx
 from collections import defaultdict
 
@@ -104,6 +105,11 @@ class DBRetinaGraph:
     
     
     def __init__(self, pairwise_file, index_prefix, metric, cutoff, LOGGER, inter_targets, intra_targets, output_prefix):
+        # Guard the lookup: the -m callback validates real metrics but lets the "NA"
+        # sentinel through, and a bare metric_to_col[...] would raise a raw KeyError.
+        if metric not in self.metric_to_col:
+            LOGGER.ERROR(f"Invalid metric '{metric}'. Choose from: {', '.join(self.metric_to_col)}")
+            sys.exit(1)
         self.metric_col = self.metric_to_col[metric]
         self.pairwise_file = pairwise_file
         self.index_prefix = index_prefix
@@ -248,13 +254,50 @@ class DBRetinaGraph:
             "containment": 0, "ochiai": 1, "jaccard": 2, "csi": 3,
             "dice": 4, "odds_ratio": 5, "pvalue": 6,
         }
+
+        # 1. Prefer Parquet/PairwiseStore (handles the parquet pairwise DIRECTORY
+        #    form and a .tsv with a sibling Parquet dir), matching how genenet /
+        #    bipartite / query route their pairwise input.
+        try:
+            from dbretina.compat import open_pairwise
+            store = open_pairwise(self.pairwise_file)
+        except Exception:
+            store = None
+
+        if store is not None:
+            self.LOGGER.INFO("using Parquet pairwise data via PairwiseStore")
+            names_map = store.get_names_map()
+            try:
+                reader = store.filter_pairs(
+                    self.metric, self.cutoff,
+                    columns=["group_1_id", "group_2_id", self.metric],
+                )
+                for batch in reader:
+                    d = batch.to_pydict()
+                    ids1 = d["group_1_id"]
+                    ids2 = d["group_2_id"]
+                    sims = d[self.metric]
+                    for gid1, gid2, sim in zip(ids1, ids2, sims):
+                        yield names_map[gid1], names_map[gid2], float(sim)
+            finally:
+                store.close()
+            return
+
+        # 2. .dbrp fast-path: only for a real .tsv file with a sibling .dbrp
+        #    (guard against directory args ever reaching the C++ .dbrp reader).
         dbrp_path = self.pairwise_file.replace(".tsv", ".dbrp")
-        if os.path.exists(dbrp_path) and self.metric in metric_name_to_id:
+        if (
+            os.path.isfile(self.pairwise_file)
+            and os.path.isfile(dbrp_path)
+            and dbrp_path != self.pairwise_file
+            and self.metric in metric_name_to_id
+        ):
             mid = metric_name_to_id[self.metric]
             records = dbretina_internal.dbrp_filter_pairs(dbrp_path, mid, self.cutoff)
             for rec in records:
                 yield rec['group_1_name'], rec['group_2_name'], float(rec[self.metric])
         else:
+            # 3. TSV fallback.
             with open(self.pairwise_file) as pairwise_tsv:
                 while True:
                     pos = pairwise_tsv.tell()
@@ -331,8 +374,8 @@ def process_targets_option(ctx, param, value):
 @click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
 @click.option('--intra-targets', "intra_targets", multiple=True, callback=process_targets_option, required=False, help="comma separated list of TSV files with first column as gene sets")
 @click.option('--inter-targets', "inter_targets", multiple=True, callback=process_targets_option, required=False, help="comma separated list of TSV files with first column as gene sets")
-@click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="Similarity metric ['containment', 'ochiai', 'jaccard', 'pvalue']")
-@click.option('-c', '--cutoff', 'cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default = True, help="Include comparisons (similarity > cutoff)")
+@click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="Similarity metric ['containment', 'ochiai', 'jaccard', 'csi', 'dice', 'odds_ratio', 'pvalue']")
+@click.option('-c', '--cutoff', 'cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default = True, help="Include comparisons (similarity >= cutoff)")
 @click.option('-o', '--output', "output_prefix", required=True, type=click.STRING, help="output file prefix")
 @click.option('--include-isolates', "include_isolates", is_flag=True, default=False, show_default = True, help="Include isolate nodes")
 @click.option('--visualize', "visualize", is_flag=True, default=False, show_default = True, help="Visualize the graph")
