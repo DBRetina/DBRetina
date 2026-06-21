@@ -156,6 +156,14 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
     # convert to dataframe
     df = pd.DataFrame.from_dict(gene_sets_nodes_data, orient='index')
     df.index.name = 'gene_set'
+    # When no pair passes the cutoff, gene_sets_nodes_data is empty and the
+    # DataFrame has no columns. Seed the expected columns so every group is
+    # still written with modularity/fragmentation/heterogeneity = 0 (the
+    # intent of the unincluded-groups loop below) instead of crashing.
+    if df.empty:
+        df = pd.DataFrame(columns=['fragmentation', 'heterogeneity'])
+        df.index.name = 'gene_set'
+        LOGGER.WARNING(f"no pairs passed the cutoff ({cutoff}); all groups get modularity 0")
     # add modularity
     df['modularity'] = abs(df['fragmentation'] + df['heterogeneity'])
     # add unincluded gene sets with modularity, fragmentation and heterogeneity of 0

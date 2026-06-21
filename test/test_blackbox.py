@@ -3191,6 +3191,169 @@ class TestInteractomeNaming(unittest.TestCase):
 
 
 # ============================================================
+# SECTION: Empty / sparse graph (zero pairs above cutoff)
+#   Issues 001 (modularity), 003 (cluster --community),
+#   004 (cluster connected-components), 012 (setcov).
+#   All four crashed with a raw traceback when no pair/edge
+#   passed the cutoff. They must now degrade gracefully:
+#   clean exit + no 'Traceback', and a valid output where one
+#   is expected.
+# ============================================================
+
+# Four pairwise-disjoint groups: no two share any gene, so the
+# pairwise file has ZERO data rows and every graph is edge-less
+# at any cutoff > 0. This is the guaranteed-empty substrate.
+DISJOINT_ASC_CONTENT = (
+    "gene_set\tgene\n"
+    "G1\ta1\n"
+    "G1\ta2\n"
+    "G2\tb1\n"
+    "G2\tb2\n"
+    "G3\tc1\n"
+    "G3\tc2\n"
+    "G4\td1\n"
+    "G4\td2\n"
+)
+
+DISJOINT_GROUP_NAMES = {"g1", "g2", "g3", "g4"}
+
+
+def assert_no_traceback(test_case, stderr, context=""):
+    """A graceful failure must never print a Python traceback."""
+    test_case.assertNotIn(
+        "Traceback", stderr,
+        f"{context}: command emitted a Python traceback:\n{stderr}"
+    )
+
+
+class TestEmptyGraphCrashes(unittest.TestCase):
+    """Empty/sparse-graph regression guards (issues 001/003/004/012).
+
+    The disjoint fixture yields zero pairs, so every metric/cutoff gives an
+    edge-less graph -- the exact condition that used to traceback.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_empty_")
+        # Disjoint (zero-pair) index + pairwise.
+        self.prefix, self.pw_file = setup_index_and_pairwise(
+            self.tmpdir, asc_content=DISJOINT_ASC_CONTENT
+        )
+        # Sanity: the pairwise file really has no data rows.
+        self.assertEqual(
+            count_tsv_data_rows(self.pw_file), 0,
+            "disjoint fixture unexpectedly produced pairs"
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    # ---- 001: modularity ----
+    def test_modularity_empty_graph_no_traceback(self):
+        """modularity with zero qualifying pairs must not traceback and must
+        still write every group with modularity/fragmentation/heterogeneity=0."""
+        out = os.path.join(self.tmpdir, "mod_empty")
+        rc, _, stderr = run_command(
+            f"DBRetina modularity -i {self.prefix} -p {self.pw_file} -c 50 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "modularity empty graph")
+        self.assertEqual(rc, 0, stderr)
+        out_tsv = f"{out}_modularity.tsv"
+        assert_file_exists(self, out_tsv)
+        with open(out_tsv) as f:
+            header = f.readline().strip().split("\t")
+            self.assertEqual(
+                header, ["gene_set", "fragmentation", "heterogeneity", "modularity"]
+            )
+            gene_sets = {}
+            for line in f:
+                if not line.strip():
+                    continue
+                parts = line.strip().split("\t")
+                gene_sets[parts[0].lower()] = parts[1:]
+        # Every group present, all metrics zero.
+        self.assertEqual(set(gene_sets), DISJOINT_GROUP_NAMES)
+        for name, vals in gene_sets.items():
+            for v in vals:
+                self.assertEqual(float(v), 0.0, f"{name} expected 0, got {v}")
+
+    # ---- 003 + 012 share the community empty-edge path ----
+    def test_cluster_community_empty_graph_no_traceback(self):
+        """cluster --community with no edges (Leiden weight attr missing) must
+        not traceback; output clusters file should exist."""
+        out = os.path.join(self.tmpdir, "clu_comm_empty")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.pw_file} -m ochiai -c 50 --community -o {out}"
+        )
+        assert_no_traceback(self, stderr, "cluster --community empty graph")
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_clusters.tsv")
+
+    # ---- 004: connected-components empty ----
+    def test_cluster_cc_empty_graph_no_traceback(self):
+        """cluster (connected-components) with no edges must not traceback on the
+        empty cluster_sizes histogram."""
+        out = os.path.join(self.tmpdir, "clu_cc_empty")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.pw_file} -m ochiai -c 50 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "cluster connected-components empty graph")
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_clusters.tsv")
+
+    # ---- 012: setcov on a sparse substrate ----
+    def test_setcov_empty_graph_no_traceback(self):
+        """setcov on sparse data routes through community detection on an
+        edge-less graph; it must not traceback."""
+        asc_path = os.path.join(self.tmpdir, "dj_setcov.asc")
+        with open(asc_path, "w") as f:
+            f.write(DISJOINT_ASC_CONTENT)
+        rc, _, stderr = run_command(
+            "DBRetina index -a dj_setcov.asc -o sc_idx", cwd=self.tmpdir
+        )
+        self.assertEqual(rc, 0, stderr)
+        rc, _, stderr = run_command(
+            "DBRetina pairwise -i sc_idx", cwd=self.tmpdir
+        )
+        self.assertEqual(rc, 0, stderr)
+        rc, _, stderr = run_command(
+            "DBRetina setcov -i sc_idx -o sc_out", timeout=300, cwd=self.tmpdir
+        )
+        assert_no_traceback(self, stderr, "setcov sparse graph")
+        # Disjoint fixture (0 pairs): deterministically a clean [ERROR] exit, never a traceback.
+        self.assertEqual(rc, 1, stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertIn("[ERROR]", stderr, stderr)
+
+    # ---- normal (non-empty) cases must be unchanged ----
+    def test_normal_cutoff_still_works(self):
+        """Same commands on the shared (overlapping) fixture must still succeed,
+        proving the empty-graph guards do not change normal behaviour."""
+        prefix, pw_file = _ensure_shared_fixture()
+        # modularity
+        out_m = os.path.join(self.tmpdir, "mod_ok")
+        rc, _, stderr = run_command(
+            f"DBRetina modularity -i {prefix} -p {pw_file} -c 40 -o {out_m}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertGreater(count_tsv_data_rows(f"{out_m}_modularity.tsv"), 0)
+        # cluster --community
+        out_cm = os.path.join(self.tmpdir, "clu_comm_ok")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {pw_file} -m ochiai -c 30 --community -o {out_cm}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertGreater(count_tsv_data_rows(f"{out_cm}_clusters.tsv"), 0)
+        # cluster connected-components
+        out_cc = os.path.join(self.tmpdir, "clu_cc_ok")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {pw_file} -m ochiai -c 50 -o {out_cc}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertGreater(count_tsv_data_rows(f"{out_cc}_clusters.tsv"), 0)
+
+
+# ============================================================
 # Main
 # ============================================================
 

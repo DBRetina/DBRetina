@@ -565,10 +565,23 @@ class DeduplicateGroups():
         self.LOGGER.INFO(f"Detecting communities with ochiai cutoff {self.ochiai_community_cutoff}")
         _communities_file_prefix = f"{output_prefix}_communities"
         self.communities_clusters_file = self.perform_cli_community_detection(
-            self.main_pairwise_file, 
-            self.containment_cutoff, 
+            self.main_pairwise_file,
+            self.containment_cutoff,
             _communities_file_prefix)
-        
+
+        # When the data is too sparse, the inner community detection returns zero clusters
+        # (the clustering empty-edge guard already prevented its own crash and wrote a
+        # header-only file). The downstream GPI/CSI math would then divide by the cluster
+        # count (== 0), so bail out cleanly here instead of crashing.
+        if len(self.cluster_to_groups(self.communities_clusters_file)) == 0:
+            if os.path.exists(self.communities_clusters_file):
+                os.remove(self.communities_clusters_file)
+            self.LOGGER.ERROR(
+                f"no communities detected at the containment cutoff "
+                f"({self.containment_cutoff}); the data is too sparse for setcov. "
+                f"Lower --modularity/--community or use a denser index."
+            )
+
         if self.df_associations is None:
             self.process_associations()
         self.build_group_to_gpi()

@@ -351,6 +351,12 @@ class Clusters:
                     self.add_edges(edges_tuples)
     
     def plot_histogram(self, cluster_sizes, filename):
+        # np.min/np.max have no identity on an empty array; skip the plot when
+        # there are no clusters rather than crashing.
+        if len(cluster_sizes) == 0:
+            self.Logger.WARNING("no clusters found; skipping cluster-size histogram")
+            return
+
         # Create a figure and a set of subplots
         fig, ax = plt.subplots()
 
@@ -449,6 +455,29 @@ class Clusters:
     def cluster_graph(self):
 
         cluster_sizes = []
+
+        # No edge passed the cutoff -> edge-less graph. Both the community
+        # (Leiden) path (the 'weight' edge attribute is never created) and the
+        # connected-components path (empty cluster_sizes -> np.min([])) crash
+        # here. Degrade gracefully: emit a clean warning and write a valid
+        # header-only clusters file with no clusters.
+        # igraph (community) exposes ecount(); rustworkx (cc) exposes num_edges().
+        edge_count = self.graph.ecount() if self.community else self.graph.num_edges()
+        if edge_count == 0:
+            self.Logger.WARNING(
+                f"no pairs passed the cutoff ({self.cut_off_threshold}) for "
+                f"metric '{self.metric}'; no clusters"
+            )
+            self.connected_components = []
+            retworkx_export = f"{self.output_prefix}_clusters.tsv"
+            self.Logger.INFO(f"writing {retworkx_export}")
+            with open(retworkx_export, 'w') as CLUSTERS:
+                for metadata_line in self.metadata:
+                    CLUSTERS.write(metadata_line)
+                CLUSTERS.write("cluster_id\tcluster_size\tcluster_members\n")
+            self.Logger.INFO("Total number of clustered supergroups: 0")
+            self.Logger.INFO("number of clusters: 0")
+            return
 
         if self.community:
             # 'linear' feeds raw gene-set sizes into the CPM node_sizes; the size penalty
