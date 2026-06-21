@@ -1150,12 +1150,20 @@ class TestBipartite(unittest.TestCase):
             f"DBRetina bipartite -p {self.pw_file} --group1 {self.g1} "
             f"--group2 {self.g2} -m ochiai -c 0 --no-plot -o {out}"
         )
-        # May fail due to plotly/kaleido issues; check TSV was at least created
-        if rc != 0 and "kaleido" in stderr.lower() or "nan" in stderr.lower():
-            # Plotting failure - check if TSV was still written
-            if os.path.exists(f"{out}_bipartite_pairwise.tsv"):
-                return  # TSV written, plotting failed - acceptable
         self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("Traceback", stderr)
+        assert_file_exists(self, f"{out}_bipartite_pairwise.tsv")
+
+    def test_bipartite_default_plot_no_kaleido_clean(self):
+        """ISSUE-002: default (plotting on) with kaleido absent must NOT crash —
+        warn and still produce the data output."""
+        out = os.path.join(self.tmpdir, "bipdef")
+        rc, _, stderr = run_command(
+            f"DBRetina bipartite -p {self.pw_file} --group1 {self.g1} "
+            f"--group2 {self.g2} -m ochiai -c 0 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("Traceback", stderr)
         assert_file_exists(self, f"{out}_bipartite_pairwise.tsv")
 
     def test_bipartite_no_plot(self):
@@ -1165,12 +1173,9 @@ class TestBipartite(unittest.TestCase):
             f"DBRetina bipartite -p {self.pw_file} --group1 {self.g1} "
             f"--group2 {self.g2} -m ochiai --no-plot -o {out}"
         )
-        # --no-plot only skips the interactive bipartite graph, not other plots
-        # May still fail due to plotly/kaleido for pivot table export
-        if rc != 0 and ("kaleido" in stderr.lower() or "nan" in stderr.lower()):
-            if os.path.exists(f"{out}_bipartite_pairwise.tsv"):
-                return
+        # ISSUE-015: --no-plot must skip ALL plotting (incl the pivot table) -> clean exit.
         self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("Traceback", stderr)
 
     def test_bipartite_no_1_1(self):
         """Bipartite with --no-1-1 excludes 1-to-1 mappings."""

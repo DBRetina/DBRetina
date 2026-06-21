@@ -493,16 +493,18 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
 
 
     if not no_plot:
-        LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.html")
-        LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.png")
-        plot_bipartite(df_bipartite, metric, f"{output_prefix}_bipartite")
-
-
-    ###########################################################
-
-
-    # Create a pivot table
-    LOGGER.INFO(f"Writing the pivot table to {output_prefix}_pivot_table.html")
-    plot_pivot_table(df_bipartite, metric, f"{output_prefix}_pivot_table")
+        # Static image (PNG) export needs the optional 'kaleido' package; if plotting fails
+        # (kaleido missing, or empty/degenerate data) warn and continue — the bipartite data
+        # outputs are already written above, so a plotting failure must not crash the command.
+        try:
+            LOGGER.INFO(f"Writing the bipartite graph to {output_prefix}_bipartite.html / .png")
+            plot_bipartite(df_bipartite, metric, f"{output_prefix}_bipartite")
+            LOGGER.INFO(f"Writing the pivot table to {output_prefix}_pivot_table.html / .png")
+            plot_pivot_table(df_bipartite, metric, f"{output_prefix}_pivot_table")
+        except Exception as e:
+            LOGGER.WARNING(
+                f"plotting skipped (image export failed: {e}). "
+                f"Install 'kaleido' for PNG export, or pass --no-plot to skip plotting."
+            )
 
     LOGGER.SUCCESS("Done!")
