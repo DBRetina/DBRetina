@@ -329,9 +329,16 @@ class DBRetinaGraph:
         with open(f"{self.output_prefix}_edges.tsv", 'w') as f_edges:
             f_edges.write(f"from\tto\t{self.metric}\n")
             for gene_set_1, gene_set_2, similarity in pairwise_iter:
-                gene_set_1_targetArgumentID = self.geneSetToTargetsArgumentID[gene_set_1]
-                gene_set_2_targetArgumentID = self.geneSetToTargetsArgumentID[gene_set_2]
-                
+                # Groups absent from every target file (no targets at all -> the
+                # documented default, or a partial target list) are "ungrouped".
+                # A bare dict subscript here would raise a raw KeyError on the first
+                # such edge; default them instead so the run stays graceful.
+                gene_set_1_targetArgumentID = self.geneSetToTargetsArgumentID.get(gene_set_1, 'ungrouped')
+                gene_set_2_targetArgumentID = self.geneSetToTargetsArgumentID.get(gene_set_2, 'ungrouped')
+                # Record ungrouped endpoints so they still appear as nodes.
+                self.geneSetToTargetsArgumentID.setdefault(gene_set_1, gene_set_1_targetArgumentID)
+                self.geneSetToTargetsArgumentID.setdefault(gene_set_2, gene_set_2_targetArgumentID)
+
                 group1_len = self.node_to_size[gene_set_1]
                 group2_len = self.node_to_size[gene_set_2]
 
@@ -344,8 +351,12 @@ class DBRetinaGraph:
 
                 both_same_intra = gene_set_1_targetArgumentID == gene_set_2_targetArgumentID and gene_set_1_targetArgumentID.startswith('intra') and gene_set_2_targetArgumentID.startswith('intra')
                 coming_from_differnt_arguments = gene_set_1_targetArgumentID != gene_set_2_targetArgumentID
+                # Ungrouped nodes (no targets / partial targets) are not subject to
+                # the inter-group suppression: keep any edge that touches one so the
+                # no-targets default yields a full graph instead of an empty one.
+                touches_ungrouped = 'ungrouped' in (gene_set_1_targetArgumentID, gene_set_2_targetArgumentID)
 
-                if both_same_intra or coming_from_differnt_arguments:
+                if both_same_intra or coming_from_differnt_arguments or touches_ungrouped:
                     f_edges.write(f"{gene_set_1}\t{gene_set_2}\t{similarity}\n")
                     self.nodes_with_edges.add(gene_set_1)
                     self.nodes_with_edges.add(gene_set_2)
@@ -414,7 +425,19 @@ def main(ctx, index_prefix, pairwise_file, intra_targets, inter_targets, metric,
     db_graph.export_node_attributes(include_isolates)
     
     if visualize:
-        from dbretina.dbretina_viz import DBRetinaViz
+        # dash/visdcc are optional, undeclared deps used only by --visualize.
+        # Guard the import so a missing dep is a clean actionable error, not a
+        # raw ModuleNotFoundError traceback. The edges/nodes TSVs are already
+        # written above, so they are unaffected.
+        try:
+            from dbretina.dbretina_viz import DBRetinaViz
+        except ImportError as e:
+            LOGGER.ERROR(
+                f"--visualize requires the optional 'dash' and 'visdcc' packages "
+                f"(missing: {e.name}). Install them with: "
+                f"pip install dash visdcc dash-bootstrap-components"
+            )
+            sys.exit(1)
 
         edge_df = pd.read_csv(f"{output_prefix}_edges.tsv", sep='\t')
         node_df = pd.read_csv(f"{output_prefix}_nodes.tsv", sep='\t')

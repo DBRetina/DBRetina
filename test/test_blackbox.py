@@ -1382,6 +1382,84 @@ class TestGraph(unittest.TestCase):
         self.assertNotIn("Traceback", stderr2)
         self.assertNotIn("KeyError", stderr2)
 
+    # ---- Regression: ISSUE-009 (graph with NO targets, the documented default) ----
+
+    def test_graph_no_targets_does_not_crash(self):
+        """ISSUE-009: graph with no --intra/--inter targets is the documented default.
+
+        --intra-targets/--inter-targets are NOT [required] in --help, so a
+        targets-free invocation is valid documented usage. Pre-fix it crashed with a
+        raw 'KeyError' at the first edge because geneSetToTargetsArgumentID was empty.
+        It must now succeed (all nodes ungrouped) with no traceback.
+        """
+        out = os.path.join(self.tmpdir, "gnotarg")
+        rc, _, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {self.pw_file} "
+            f"-m ochiai -c 20 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("KeyError", stderr)
+        assert_file_exists(self, f"{out}_edges.tsv")
+        assert_file_exists(self, f"{out}_nodes.tsv")
+        # The default must actually produce a graph (edges present), not an empty one.
+        self.assertGreater(
+            count_tsv_data_rows(f"{out}_edges.tsv"), 0,
+            "no-targets default should still produce edges (all nodes ungrouped)",
+        )
+
+    # ---- Regression: ISSUE-008 (partial target coverage) ----
+
+    def test_graph_partial_targets_does_not_crash(self):
+        """ISSUE-008: a target list covering only SOME groups must be graceful.
+
+        The shared fixture has 6 groups (GroupA..GroupF); here we target only two of
+        them. Pre-fix any pairwise edge touching an untargeted group raised a raw
+        'KeyError'. Untargeted groups are now handled (treated as ungrouped), so the
+        run succeeds with no traceback.
+        """
+        partial = write_file(
+            os.path.join(self.tmpdir, "partial.tsv"),
+            "GroupA\nGroupB\n"
+        )
+        out = os.path.join(self.tmpdir, "gpartial")
+        rc, _, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {self.pw_file} "
+            f"--intra-targets {partial} -m ochiai -c 20 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("KeyError", stderr)
+        assert_file_exists(self, f"{out}_edges.tsv")
+        assert_file_exists(self, f"{out}_nodes.tsv")
+
+    # ---- Regression: ISSUE-007 (graph --visualize, optional dash dep missing) ----
+
+    def test_graph_visualize_missing_dep_clean_error(self):
+        """ISSUE-007: --visualize without the optional dash/visdcc deps fails cleanly.
+
+        'dash' is not a declared dependency (not even in [all]). Pre-fix the import
+        raised a raw 'ModuleNotFoundError' traceback. It must now emit a clean,
+        actionable [ERROR] naming the install and exit nonzero.
+        """
+        try:
+            import dash  # noqa: F401
+            self.skipTest("dash is installed; cannot test the missing-dep path")
+        except ImportError:
+            pass
+
+        out = os.path.join(self.tmpdir, "gviz")
+        rc, _, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {self.pw_file} "
+            f"--intra-targets {self.intra1} -m ochiai -c 50 -o {out} --visualize"
+        )
+        self.assertNotEqual(rc, 0, "missing viz dep should exit nonzero")
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("ModuleNotFoundError", stderr)
+        # actionable: tells the user how to install
+        self.assertIn("pip install", stderr.lower())
+        self.assertIn("dash", stderr.lower())
+
 
 # ============================================================
 # SECTION 12: Interactome Tests
