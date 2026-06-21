@@ -158,7 +158,6 @@ def create_app(
 
     # ── Helpers ──────────────────────────────────────────────────
 
-    VALID_METRICS = ("containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio", "pvalue")
     DEFAULT_TIMEOUT = 30.0  # seconds
     MAX_PAIRS_RESPONSE = 100000
     MAX_GRAPH_NODES = 50000
@@ -175,8 +174,8 @@ def create_app(
     }
 
     def validate_metric(metric: str):
-        """Validate metric name using structured error."""
-        _validate_metric(metric, VALID_METRICS)
+        """Validate metric name (respects this dataset's available metrics, e.g. pvalue)."""
+        _validate_metric(metric, store.available_metrics)
 
     def validate_cutoff(cutoff: float, metric: str = "ochiai"):
         """Validate cutoff value based on metric type."""
@@ -245,7 +244,7 @@ def create_app(
             "has_genes": dbri_path is not None,
             "default_metric": app.state.default_metric,
             "default_cutoff": app.state.default_cutoff,
-            "valid_metrics": list(VALID_METRICS),
+            "valid_metrics": list(store.available_metrics),
             "manifest": store.manifest,
         }
 

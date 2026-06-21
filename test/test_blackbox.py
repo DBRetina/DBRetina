@@ -2449,6 +2449,69 @@ class TestAlgorithmsModule(unittest.TestCase):
             )
 
 
+@unittest.skipUnless(_HAS_REST_TEST, "pairs-schema tests need [server] extra + httpx")
+class TestRestPairsSchema(unittest.TestCase):
+    """serve: pairs exposes names (bug3) and metrics respect has_pvalue (bug2)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_schema_")
+        self.prefix, self.pw = setup_index_and_pairwise(self.tmpdir)
+        self.parquet = f"{self.prefix}_DBRetina_pairwise"
+        self.dbri = f"{self.prefix}.dbri"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _client(self):
+        from dbretina.compat import open_pairwise
+        from dbretina.pairwise_store import PairwiseStore
+        from dbretina.rest_api import create_app
+        store = open_pairwise(self.parquet)
+        if store is None:
+            store = PairwiseStore(self.parquet, dbri_path=self.dbri)
+        else:
+            store._dbri_path = self.dbri
+        return _TestClient(create_app(store, dbri_path=self.dbri)), store
+
+    def test_metric_profile_no_pvalue_dataset(self):
+        # bug2: a dataset without pvalue must not 500 on metric-profile.
+        client, store = self._client()
+        try:
+            name = next(iter(store._id_to_name.values()))
+            r = client.get(f"/api/v1/groups/{name}/metric-profile")
+            self.assertEqual(r.status_code, 200, f"metric-profile failed: {r.text[:200]}")
+            metrics = [m["metric"] for m in r.json()["metrics"]]
+            self.assertIn("ochiai", metrics)
+            if not store.has_pvalue:
+                self.assertNotIn("pvalue", metrics, "pvalue reported on a no-pvalue dataset")
+        finally:
+            store.close()
+
+    def test_info_valid_metrics_respects_has_pvalue(self):
+        # bug2: /info must not advertise pvalue when the dataset lacks it.
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/info")
+            self.assertEqual(r.status_code, 200)
+            if not store.has_pvalue:
+                self.assertNotIn("pvalue", r.json().get("valid_metrics", []))
+        finally:
+            store.close()
+
+    def test_sql_pairs_exposes_group_names(self):
+        # bug3: pairs must expose group_1_name/group_2_name for the SQL editor.
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/sql", json={
+                "query": "SELECT group_1_name, group_2_name, ochiai FROM pairs LIMIT 3"})
+            self.assertEqual(r.status_code, 200, f"pairs name query failed: {r.text[:200]}")
+            cols = r.json()["columns"]
+            self.assertIn("group_1_name", cols)
+            self.assertIn("group_2_name", cols)
+        finally:
+            store.close()
+
+
 # ============================================================
 # Main
 # ============================================================

@@ -99,7 +99,9 @@ class PairwiseStore:
         self._con = duckdb.connect()
         self._parquet_glob = str(data_dir / "*.parquet")
 
-        # Register a view for convenience
+        # Lazy 'pairs' view over the parquet (ids + metrics only; cheap, no joins). The
+        # served store re-materializes pairs WITH group names in harden_readonly() so the
+        # /sql endpoint can query by name; CLI paths add names post-query via resolve_names().
         self._con.execute(
             f"CREATE VIEW pairs AS SELECT * FROM read_parquet('{self._parquet_glob}')"
         )
@@ -119,6 +121,22 @@ class PairwiseStore:
     def __exit__(self, *args):
         self.close()
 
+    def _pairs_select_sql(self) -> str:
+        """SELECT defining the served ``pairs`` table (built once in harden_readonly()).
+        Joins the names map (when present) so ``pairs`` exposes ``group_1_name``/``group_2_name``
+        next to the raw id/metric columns, for the /sql endpoint. The CLI lazy view stays raw."""
+        names_path = self._dir / "names.parquet"
+        if names_path.exists():
+            return (
+                f"SELECT p.*, "
+                f"n1.group_name AS group_1_name, "
+                f"n2.group_name AS group_2_name "
+                f"FROM read_parquet('{self._parquet_glob}') p "
+                f"LEFT JOIN read_parquet('{names_path}') n1 ON p.group_1_id = n1.group_id "
+                f"LEFT JOIN read_parquet('{names_path}') n2 ON p.group_2_id = n2.group_id"
+            )
+        return f"SELECT * FROM read_parquet('{self._parquet_glob}')"
+
     def harden_readonly(self):
         """Sandbox the DuckDB connection for untrusted SQL (the ``serve`` /sql endpoint).
 
@@ -130,9 +148,7 @@ class PairwiseStore:
         if getattr(self, "_hardened", False):
             return
         self._con.execute("DROP VIEW IF EXISTS pairs")
-        self._con.execute(
-            f"CREATE TABLE pairs AS SELECT * FROM read_parquet('{self._parquet_glob}')"
-        )
+        self._con.execute(f"CREATE TABLE pairs AS {self._pairs_select_sql()}")
         self._con.execute("SET enable_external_access=false")
         self._hardened = True
 
@@ -157,6 +173,11 @@ class PairwiseStore:
     @property
     def has_pvalue(self) -> bool:
         return self._manifest.get("has_pvalue", False)
+
+    @property
+    def available_metrics(self) -> tuple:
+        """Metrics actually present in this dataset (pvalue only if it was computed)."""
+        return tuple(m for m in self.METRICS if m != "pvalue" or self.has_pvalue)
 
     @property
     def manifest(self) -> dict:
@@ -461,7 +482,7 @@ class PairwiseStore:
             raise KeyError(f"Group not found: {group_name}")
 
         parts = []
-        for m in self.METRICS:
+        for m in self.available_metrics:
             parts.append(
                 f"SELECT '{m}' AS metric, "
                 f"AVG({m}) AS avg, "
@@ -522,9 +543,9 @@ class PairwiseStore:
         return self._gene_index
 
     def _validate_metric(self, metric: str):
-        if metric not in self.METRICS:
+        if metric not in self.available_metrics:
             raise ValueError(
-                f"Unknown metric '{metric}'. Valid: {self.METRICS}"
+                f"Unknown metric '{metric}'. Valid: {', '.join(self.available_metrics)}"
             )
 
     def __repr__(self):
