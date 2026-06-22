@@ -5911,6 +5911,250 @@ class TestPartialDbriOpen(unittest.TestCase):
 
 
 # ============================================================
+# SECTION: Data-layer robustness / determinism
+#   issue 052 (remaining raw .dbrp .replace sites),
+#   issue 044 (cluster bare-TSV node-count parse),
+#   issue 050 (setcov nondeterministic output).
+# ============================================================
+
+class TestDataLayerRobustness(unittest.TestCase):
+    """Regression guards for issues 052 / 044 / 050.
+
+    052: query/bipartite given a parquet *directory* with no usable store
+         (no manifest.json) and no sibling .dbrp used to leak the directory
+         path into the C++ .dbrp reader ("bad magic bytes") or open() it as
+         text (IsADirectoryError). They must now emit a clean error.
+    044: cluster on a bare pairwise.tsv (no .dbrp/parquet sibling) parsed the
+         node count from line 1, but '#nodes:N' moved to a later header line,
+         so it crashed with "invalid literal for int()". It must now parse the
+         count robustly and cluster without a traceback.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        # Reuse the module-shared (overlapping) index + pairwise fixture.
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_datalayer_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _no_manifest_dir(self):
+        """A directory that mimics a pairwise parquet dir but has NO manifest.json
+        and NO sibling .dbrp -> open_pairwise() returns None and resolve_dbrp_path()
+        returns None, exercising the bare fallback path of each command."""
+        d = os.path.join(self.tmpdir, "p_DBRetina_pairwise")
+        os.makedirs(d, exist_ok=True)
+        # A stray file so it's a non-empty dir, but still no manifest.json.
+        write_file(os.path.join(d, "part-0.parquet"), "not a real parquet")
+        return d
+
+    # ---- 052: query on a parquet dir without a usable store/.dbrp ----
+    def test_052_query_dir_no_store_clean_error(self):
+        """query -p <dir-without-manifest> -m ochiai -c: clean error, never a
+        'bad magic bytes' RuntimeError or a raw traceback (issue 052)."""
+        d = self._no_manifest_dir()
+        out = os.path.join(self.tmpdir, "qout")
+        rc, stdout, stderr = run_command(
+            f"DBRetina query -p {d} -m ochiai -c 50 -o {out}"
+        )
+        combined = stdout + stderr
+        assert_no_traceback(self, combined, "query dir-no-store")
+        self.assertNotIn("bad magic bytes", combined, combined)
+        self.assertNotIn("IsADirectoryError", combined, combined)
+        self.assertNotEqual(rc, 0, "expected a clean non-zero exit, not success")
+        self.assertIn("[ERROR]", combined, combined)
+
+    def test_052_query_dir_no_store_pvalue_clean_error(self):
+        """query -m pvalue on a dir-without-manifest must not IsADirectoryError in
+        the compat pvalue probe (issue 052, compat.pairwise_has_pvalue dir guard)."""
+        d = self._no_manifest_dir()
+        out = os.path.join(self.tmpdir, "qoutpv")
+        rc, stdout, stderr = run_command(
+            f"DBRetina query -p {d} -m pvalue -c 50 -o {out}"
+        )
+        combined = stdout + stderr
+        assert_no_traceback(self, combined, "query dir-no-store pvalue")
+        self.assertNotIn("IsADirectoryError", combined, combined)
+        self.assertNotEqual(rc, 0)
+
+    # ---- 052: bipartite on a parquet dir without a usable store/.dbrp ----
+    def test_052_bipartite_dir_no_store_clean_error(self):
+        """bipartite -p <dir-without-manifest>: clean error, no bad-magic /
+        IsADirectoryError / traceback (issue 052)."""
+        d = self._no_manifest_dir()
+        g1 = write_file(os.path.join(self.tmpdir, "g1.txt"), "groupa\ngroupb\n")
+        g2 = write_file(os.path.join(self.tmpdir, "g2.txt"), "groupc\ngroupe\n")
+        out = os.path.join(self.tmpdir, "bout")
+        rc, stdout, stderr = run_command(
+            f"DBRetina bipartite -p {d} --group1 {g1} --group2 {g2} "
+            f"-m ochiai -c 0 --no-plot -o {out}"
+        )
+        combined = stdout + stderr
+        assert_no_traceback(self, combined, "bipartite dir-no-store")
+        self.assertNotIn("bad magic bytes", combined, combined)
+        self.assertNotIn("IsADirectoryError", combined, combined)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("[ERROR]", combined, combined)
+
+    # ---- 052: the valid parquet-dir store path must still work ----
+    def test_052_bipartite_valid_parquet_dir_still_works(self):
+        """A real parquet directory (with manifest.json) must still be accepted
+        via the store path -- the dir guard only rejects unusable dirs."""
+        pdir = self.prefix + "_DBRetina_pairwise"
+        self.assertTrue(
+            os.path.isdir(pdir) and os.path.exists(os.path.join(pdir, "manifest.json")),
+            "shared fixture is missing its parquet dir/manifest",
+        )
+        g1 = write_file(os.path.join(self.tmpdir, "g1.txt"), "groupa\ngroupb\n")
+        g2 = write_file(os.path.join(self.tmpdir, "g2.txt"), "groupc\ngroupe\n")
+        out = os.path.join(self.tmpdir, "bvalid")
+        rc, _, stderr = run_command(
+            f"DBRetina bipartite -p {pdir} --group1 {g1} --group2 {g2} "
+            f"-m ochiai -c 0 --no-plot -o {out}"
+        )
+        assert_no_traceback(self, stderr, "bipartite valid parquet dir")
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_bipartite_pairwise.tsv")
+
+    # ---- 044: cluster on a bare pairwise.tsv (no .dbrp/parquet sibling) ----
+    def test_044_cluster_bare_tsv_only_node_count(self):
+        """cluster on a copied pairwise.tsv with NO .dbrp/parquet sibling must
+        parse '#nodes:N' from its real header line (not line 1) and cluster
+        without crashing on int() (issue 044)."""
+        bare = os.path.join(self.tmpdir, "bare")
+        os.makedirs(bare, exist_ok=True)
+        bare_tsv = os.path.join(bare, "p_DBRetina_pairwise.tsv")
+        shutil.copy(self.pw_file, bare_tsv)
+        # Guarantee the bare-TSV-only layout: no .dbrp, no parquet dir sibling.
+        self.assertFalse(os.path.exists(os.path.join(bare, "p_DBRetina_pairwise.dbrp")))
+        self.assertFalse(os.path.isdir(os.path.join(bare, "p_DBRetina_pairwise")))
+        # Sanity: the header really puts '#nodes:' past line 1 (the bug premise).
+        with open(bare_tsv) as f:
+            first = f.readline()
+        self.assertFalse(first.startswith("#nodes:"),
+                         "fixture changed: #nodes is on line 1, bug no longer reproducible")
+
+        out = os.path.join(bare, "clu")
+        rc, stdout, stderr = run_command(
+            f"DBRetina cluster -p {bare_tsv} -m ochiai -c 50 -o {out}"
+        )
+        combined = stdout + stderr
+        assert_no_traceback(self, combined, "cluster bare-TSV")
+        self.assertNotIn("invalid literal for int", combined, combined)
+        self.assertEqual(rc, 0, combined)
+        clusters_tsv = f"{out}_clusters.tsv"
+        assert_file_exists(self, clusters_tsv)
+        # The correct node count (6 groups) is used: the b/f/a connected
+        # component (the only edges above ochiai 50 in this fixture) is present.
+        members = []
+        with open(clusters_tsv) as f:
+            for line in f:
+                if line.startswith("#") or line.lower().startswith("cluster_id"):
+                    continue
+                if line.strip():
+                    members.append(line.strip().split("\t")[2])
+        joined = "|".join(members)
+        for g in ("groupa", "groupb", "groupf"):
+            self.assertIn(g, joined, f"{g} missing from clusters:\n{joined}")
+
+    def test_044_cluster_bare_tsv_missing_nodes_header_clean_error(self):
+        """A bare TSV with no '#nodes:' line at all must give a clean error,
+        not a traceback (robust-parse fallback)."""
+        bare_tsv = os.path.join(self.tmpdir, "nonodes_DBRetina_pairwise.tsv")
+        # Header without a #nodes line, plus the column header (no data rows).
+        write_file(
+            bare_tsv,
+            "# DBRetina pairwise output\n"
+            "# population_size: 12\n"
+            "group_1_ID\tgroup_2_ID\tgroup_1_name\tgroup_2_name\tshared_features\t"
+            "containment\tochiai\tjaccard\tcsi\tdice\todds_ratio\n",
+        )
+        out = os.path.join(self.tmpdir, "clu_nonodes")
+        rc, stdout, stderr = run_command(
+            f"DBRetina cluster -p {bare_tsv} -m ochiai -c 50 -o {out}"
+        )
+        combined = stdout + stderr
+        assert_no_traceback(self, combined, "cluster bare-TSV no #nodes")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("[ERROR]", combined, combined)
+
+
+class TestSetcovDeterminism(unittest.TestCase):
+    """issue 050: setcov output must be byte-identical for identical inputs.
+
+    The selection iterated Python sets and the associations file was written by
+    iterating sets directly, so identical commands produced byte-different output
+    (order + set-iteration). The fix sorts the written collections and uses a
+    stable sort with a deterministic tie-break in the set-cover selection. Vary
+    PYTHONHASHSEED across runs to force different set-iteration orders -- only a
+    truly order-independent writer stays byte-identical.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_setcov_det_")
+        asc_path = os.path.join(self.tmpdir, "test_input.asc")
+        write_file(asc_path, TEST_ASC_CONTENT)
+        rc, _, stderr = run_command(
+            "DBRetina index -a test_input.asc -o test_idx", cwd=self.tmpdir
+        )
+        assert rc == 0, f"index failed: {stderr}"
+        rc, _, stderr = run_command("DBRetina pairwise -i test_idx", cwd=self.tmpdir)
+        assert rc == 0, f"pairwise failed: {stderr}"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _run_setcov(self, outdir, hashseed):
+        os.makedirs(os.path.join(self.tmpdir, outdir), exist_ok=True)
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = str(hashseed)
+        result = subprocess.run(
+            "DBRetina setcov -i ../test_idx --modularity 80 --dedup 100 "
+            "--stop-cov 100 -o sc",
+            shell=True, capture_output=True, text=True, timeout=300,
+            cwd=os.path.join(self.tmpdir, outdir), env=env,
+        )
+        assert result.returncode == 0, f"setcov failed: {result.stderr}"
+        return os.path.join(self.tmpdir, outdir)
+
+    def test_050_setcov_byte_identical_across_runs(self):
+        """Two setcov runs with identical args (different PYTHONHASHSEED) produce
+        byte-identical output files, with the same number of representatives."""
+        d1 = self._run_setcov("run1", hashseed=1)
+        d2 = self._run_setcov("run2", hashseed=12345)
+
+        # The previously-nondeterministic outputs (and the rest) must match byte-for-byte.
+        for fname in (
+            "sc_associations.tsv",
+            "sc_new.gmt",
+            "sc_original.gmt",
+            "sc_groups_metadata.tsv",
+            "sc_remaining_groups_metadata.tsv",
+            "sc_removed_groups_metadata.tsv",
+            "sc_item_to_GPI_CSI.tsv",
+        ):
+            f1 = os.path.join(d1, fname)
+            f2 = os.path.join(d2, fname)
+            assert_file_exists(self, f1)
+            assert_file_exists(self, f2)
+            with open(f1, "rb") as a, open(f2, "rb") as b:
+                self.assertEqual(
+                    a.read(), b.read(),
+                    f"{fname} differs between two identical setcov runs (issue 050)",
+                )
+
+        # Same number of representatives (quality unchanged): both files identical
+        # already implies this, but assert the count explicitly for clarity.
+        def _rep_count(d):
+            with open(os.path.join(d, "sc_remaining_groups_metadata.tsv")) as f:
+                return sum(1 for i, line in enumerate(f) if i > 0 and line.strip())
+        self.assertEqual(_rep_count(d1), _rep_count(d2))
+
+
+# ============================================================
 # Main
 # ============================================================
 

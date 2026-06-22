@@ -363,13 +363,28 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
         store.close()
     else:
         metadata = []
-        dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
+        # Resolve the canonical .dbrp via resolve_dbrp_path (an existing *file*
+        # or None) instead of the raw str.replace, which no-op'd for a
+        # directory/.dbrp form and then leaked the directory path into the
+        # binary reader -> "Invalid .dbrp file (bad magic bytes)" (issue 052).
+        from dbretina.compat import resolve_dbrp_path
+        dbrp_path = resolve_dbrp_path(pairwise_file)
         metric_name_to_id = {
             "containment": 0, "ochiai": 1, "jaccard": 2, "csi": 3,
             "dice": 4, "odds_ratio": 5, "pvalue": 6,
         }
 
-        if os.path.exists(dbrp_path):
+        if dbrp_path is None and os.path.isdir(pairwise_file):
+            # A directory with no usable parquet store (open_pairwise returned
+            # None: no manifest.json) and no sibling .dbrp; the TSV open() below
+            # would IsADirectoryError.
+            LOGGER.ERROR(
+                f"'{pairwise_file}' is a pairwise directory without a usable "
+                f"parquet store (no manifest.json) and no sibling .dbrp; pass "
+                f"the pairwise TSV, its parquet directory, or the .dbrp to -p.")
+            sys.exit(1)
+
+        if dbrp_path is not None:
             LOGGER.INFO(f"found .dbrp file: {dbrp_path}, using binary pairwise reader")
             mid = metric_name_to_id.get(metric, 0)
             records = dbretina_internal.dbrp_filter_pairs(dbrp_path, mid, cutoff)

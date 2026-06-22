@@ -144,6 +144,13 @@ def pairwise_has_pvalue(pairwise_path: str) -> bool:
         return _dbrp_has_pvalue(dbrp_path)
 
     # 3. Plain text TSV: scan the first non-comment (header) line.
+    #
+    # A directory with neither a manifest.json (step 1) nor a sibling .dbrp
+    # (step 2) reaches here; opening it as text would raise IsADirectoryError
+    # (issue 052). It cannot carry a pvalue column, so report False cleanly and
+    # let the caller fall through to its own format handling / error.
+    if os.path.isdir(pairwise_path):
+        return False
     with open(pairwise_path) as fh:
         for line in fh:
             if not line.startswith("#"):

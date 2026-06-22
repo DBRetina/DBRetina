@@ -123,35 +123,6 @@ class DBRetinaGraph:
         self.output_prefix = output_prefix
 
         
-    def load_all_pairwise(self):
-        # Try Parquet/PairwiseStore first
-        try:
-            from dbretina.compat import open_pairwise
-            store = open_pairwise(self.pairwise_file)
-        except Exception:
-            store = None
-
-        if store is not None:
-            names_map = store.get_names_map()
-            pdf = store.to_pandas(columns=["group_1_id", "group_2_id", self.metric])
-            pdf["group_1_name"] = pdf["group_1_id"].map(names_map)
-            pdf["group_2_name"] = pdf["group_2_id"].map(names_map)
-            self.pairwise_df = pdf[["group_1_name", "group_2_name", self.metric]]
-            store.close()
-        else:
-            # Fallback: existing .dbrp / TSV code
-            dbrp_path = self.pairwise_file.replace(".tsv", ".dbrp")
-            if os.path.exists(dbrp_path):
-                records = dbretina_internal.dbrp_iterate_all(dbrp_path)
-                rows = [(rec['group_1_name'], rec['group_2_name'], float(rec[self.metric])) for rec in records]
-                self.pairwise_df = pd.DataFrame(rows, columns=['group_1_name', 'group_2_name', self.metric])
-            else:
-                self.pairwise_df = pd.read_csv(self.pairwise_file, sep='\t', comment='#', usecols=['group_1_name','group_2_name', self.metric])
-
-    def filter_by_cutoff(self):
-        self.pairwise_df = self.pairwise_df[self.pairwise_df[self.metric] >= self.cutoff]
-
-        
     def load_all_targets(self):
         self.LOGGER.INFO("Loading all targets")
 

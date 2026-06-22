@@ -281,8 +281,15 @@ class DeduplicateGroups():
                     group_metrics[group2]['fragmentation'] -= 1
             store.close()
         else:
-            dbrp_path = tsv_file.replace(".tsv", ".dbrp")
-            if os.path.exists(dbrp_path):
+            # Resolve the canonical .dbrp via resolve_dbrp_path (an existing
+            # *file* or None) rather than the raw str.replace, for uniform
+            # parquet-dir/.dbrp handling across the CLI (issue 052). tsv_file
+            # here is the internally-built main_pairwise_file (always a .tsv),
+            # so this resolves the same .dbrp; the guard just prevents a
+            # directory leaking into the binary reader if that ever changes.
+            from dbretina.compat import resolve_dbrp_path
+            dbrp_path = resolve_dbrp_path(tsv_file)
+            if dbrp_path is not None:
                 records = dbretina_internal.dbrp_iterate_all(dbrp_path)
                 for rec in records:
                     group1 = rec['group_1_name']
@@ -396,8 +403,10 @@ class DeduplicateGroups():
                 continue
             
             # sort the groups by lowest average_CSI and highest no_of_items
-            # modified to reflect `DBRetina dedup`
-            sorted_groups = self.df_groups_metadata[self.df_groups_metadata['group'].isin(component_groups)].sort_values(by=['total_edges', 'no_of_items'], ascending=[False, False])
+            # modified to reflect `DBRetina dedup`. Append 'group' as a final
+            # tie-break key with a stable sort so the representative kept for a
+            # tied (total_edges, no_of_items) component is deterministic (issue 050).
+            sorted_groups = self.df_groups_metadata[self.df_groups_metadata['group'].isin(component_groups)].sort_values(by=['total_edges', 'no_of_items', 'group'], ascending=[False, False, True], kind='mergesort')
             selected_groups.add(sorted_groups.iloc[0]['group'])
             unselected_groups.update(sorted_groups.iloc[1:]['group'].tolist())
                 
@@ -442,11 +451,16 @@ class DeduplicateGroups():
             uncovered_items = self.unique_set_of_items()
             total_items = len(uncovered_items)
             items_covered = 0
+            # Tie-break deterministically: append 'group' as a final sort key and
+            # use a stable sort (mergesort) so equal (modularity, CSI, no_of_items)
+            # rows always resolve to the same order regardless of the incoming row
+            # order -> identical set-cover selection run-to-run (issue 050).
             sorted_groups_df = self.df_groups_metadata[
                 self.df_groups_metadata['status'] != 'exact_ochiai'].sort_values(
-                    by=['modularity', 'average_CSI', 'no_of_items'], ascending=[True, False, False]
+                    by=['modularity', 'average_CSI', 'no_of_items', 'group'],
+                    ascending=[True, False, False, True], kind='mergesort'
                     )
-            
+
             # Iterate through sorted groups
             for _, group_row in sorted_groups_df.iterrows():
                 group = group_row['group']
@@ -475,11 +489,15 @@ class DeduplicateGroups():
             ~self.df_groups_metadata['group'].isin(self.removed_exact_ochiai_groups), 'status'] = 'set-cov'
 
     def write_new_associations_file(self, new_associations_file):
+        # final_remaining_groups and groups_to_items[...] are Python sets, whose
+        # iteration order varies run-to-run (PYTHONHASHSEED), so identical inputs
+        # produced byte-different associations files (issue 050). Sort both the
+        # groups and the items per group for deterministic, reproducible output.
         with open(new_associations_file, 'w') as NEW_ASSOCIATIONS_FILE:
             NEW_ASSOCIATIONS_FILE.write('group\titem\n')
-            for group in self.final_remaining_groups:
-                for item in self.groups_to_items[group]:
-                    NEW_ASSOCIATIONS_FILE.write(f'{group}\t{item}\n')    
+            for group in sorted(self.final_remaining_groups):
+                for item in sorted(self.groups_to_items[group]):
+                    NEW_ASSOCIATIONS_FILE.write(f'{group}\t{item}\n')
 
 
     def export_split_group_metadata(self, file_name):
@@ -715,9 +733,14 @@ class GraphBasedDeduplication(DeduplicateGroups):
             df_edges = pdf[["group_1_name", "group_2_name", "ochiai"]]
             store2.close()
         else:
-            # Fallback: existing .dbrp / TSV code
-            dbrp_path = self.main_pairwise_file.replace(".tsv", ".dbrp")
-            if os.path.exists(dbrp_path):
+            # Fallback: existing .dbrp / TSV code. Resolve the canonical .dbrp
+            # via resolve_dbrp_path (an existing *file* or None) rather than the
+            # raw str.replace, for uniform parquet-dir/.dbrp handling (issue
+            # 052). main_pairwise_file is the internally-built .tsv, so this
+            # resolves the same .dbrp.
+            from dbretina.compat import resolve_dbrp_path
+            dbrp_path = resolve_dbrp_path(self.main_pairwise_file)
+            if dbrp_path is not None:
                 records = dbretina_internal.dbrp_iterate_all(dbrp_path)
                 rows = [(rec['group_1_name'], rec['group_2_name'], float(rec['ochiai'])) for rec in records]
                 df_edges = pd.DataFrame(rows, columns=['group_1_name', 'group_2_name', 'ochiai'])

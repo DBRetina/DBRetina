@@ -181,8 +181,24 @@ class Clusters:
                     f"parquet store (no manifest.json) and no sibling .dbrp; pass "
                     f"the pairwise TSV, its parquet directory, or the .dbrp to -p.")
             else:
-                total_nodes_no = int(
-                    next(open(pairwise_file, 'r')).strip().split(':')[-1])
+                # Bare-TSV fallback: scan the comment header for the '#nodes:N'
+                # line. It used to be the first line, but the .dbri-format commit
+                # moved it below '# DBRetina pairwise output' (now line 5), so the
+                # old `int(next(open(...))...)` parsed the wrong line and crashed
+                # with "invalid literal for int()" (issue 044). Scan all comment
+                # lines instead of assuming a position.
+                total_nodes_no = None
+                with open(pairwise_file, 'r') as _pw:
+                    for _line in _pw:
+                        if not _line.startswith('#'):
+                            break  # past the header; stop before data rows
+                        if _line.startswith('#nodes:'):
+                            total_nodes_no = int(_line.strip().split(':')[-1])
+                            break
+                if total_nodes_no is None:
+                    logger_obj.ERROR(
+                        f"could not find the '#nodes:N' header line in "
+                        f"'{pairwise_file}'; is it a valid pairwise TSV?")
         nodes_range = range(1, total_nodes_no + 1)
         self.nodes_indeces = self.add_nodes(list(nodes_range))
     

@@ -335,13 +335,26 @@ Detailed description:
                     out.write('\t'.join(fields) + '\n')
             store.close()
         else:
-            # Fallback: existing .dbrp / TSV code
-            dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
+            # Fallback: existing .dbrp / TSV code. Resolve the canonical .dbrp
+            # via resolve_dbrp_path (an existing *file* or None) instead of the
+            # raw str.replace, which no-op'd for a directory/.dbrp form and then
+            # leaked the directory path into the binary reader -> "Invalid .dbrp
+            # file (bad magic bytes)" (issue 052).
+            from dbretina.compat import resolve_dbrp_path
+            dbrp_path = resolve_dbrp_path(pairwise_file)
             metric_name_to_id = {
                 "containment": 0, "ochiai": 1, "jaccard": 2, "csi": 3,
                 "dice": 4, "odds_ratio": 5, "pvalue": 6,
             }
-            if os.path.exists(dbrp_path) and metric in metric_name_to_id:
+            if dbrp_path is None and os.path.isdir(pairwise_file):
+                # A directory with no usable parquet store (open_pairwise
+                # returned None: no manifest.json) and no sibling .dbrp; the awk
+                # TSV fallback below would also fail on a directory.
+                ctx.obj.ERROR(
+                    f"'{pairwise_file}' is a pairwise directory without a usable "
+                    f"parquet store (no manifest.json) and no sibling .dbrp; pass "
+                    f"the pairwise TSV, its parquet directory, or the .dbrp to -p.")
+            if dbrp_path is not None and metric in metric_name_to_id:
                 mid = metric_name_to_id[metric]
                 records = dbretina_internal.dbrp_filter_pairs(dbrp_path, mid, cutoff)
                 with open(output_file, 'a') as out:
