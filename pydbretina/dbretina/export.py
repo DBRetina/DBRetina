@@ -137,14 +137,6 @@ def tree_to_newick(node, leaf_names):
     return f"({left_child}:{node.dist:.2f},{right_child}:{node.dist:.2f})"
 
 
-def check_if_there_is_a_pvalue(pairwise_file):
-    with open(pairwise_file) as F:
-        for line in F:
-            if not line.startswith("#"):
-                return "pvalue" in line
-            else:
-                continue
-
 def export_heatmap(df, filename):
     plt.figure(figsize=(10,8)) # Adjust size as needed
     
@@ -201,8 +193,11 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
         LOGGER.ERROR("unknown metric!")
         
     
-    # check if pvalue
-    if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+    # check if pvalue (format-aware: handles the .tsv / parquet-dir / .dbrp
+    # forms; the old text open() crashed with IsADirectoryError on a parquet
+    # directory, issue 053).
+    from dbretina.compat import pairwise_has_pvalue
+    if metric == "pvalue" and not pairwise_has_pvalue(pairwise_file):
         LOGGER.ERROR("pvalue not found in pairwise file!")
 
     dist_col = metric_to_col[metric]    

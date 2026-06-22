@@ -77,3 +77,75 @@ def resolve_dbrp_path(pairwise_path: str) -> Optional[str]:
     if os.path.isfile(dbrp):
         return dbrp
     return None
+
+
+# .dbrp header layout (see include/DBRetinaPairwise.hpp / src/DBRetinaPairwise.cpp::begin_write):
+#   4  magic "DBRP" | 4 version | 8 toc_offset | 8 num_pairs | 4 num_groups
+#   then a 1-byte metric_flags bitfield at offset 28, where bit 6 (0x40) == PVALUE.
+_DBRP_MAGIC = b"DBRP"
+_DBRP_METRIC_FLAGS_OFFSET = 28
+_DBRP_PVALUE_BIT = 0x40  # DBRPMetric::PVALUE == 6
+
+
+def _dbrp_has_pvalue(dbrp_path: str) -> bool:
+    """Read the pvalue bit from a .dbrp header (O(1), no full materialization).
+
+    Reads the fixed-offset ``metric_flags`` byte rather than scanning records, so
+    it is cheap on large pairwise files. Falls back to probing the decoded records
+    (``'pvalue'`` is only present per-record when the metric was computed) if the
+    header is unexpectedly short or lacks the magic bytes.
+    """
+    try:
+        with open(dbrp_path, "rb") as fh:
+            head = fh.read(_DBRP_METRIC_FLAGS_OFFSET + 1)
+        if len(head) > _DBRP_METRIC_FLAGS_OFFSET and head[:4] == _DBRP_MAGIC:
+            return bool(head[_DBRP_METRIC_FLAGS_OFFSET] & _DBRP_PVALUE_BIT)
+    except OSError:
+        pass
+    # Fallback: ask the C++ reader. Records carry a 'pvalue' key only when stored.
+    import _dbretina_internal as dbretina_internal
+
+    records = dbretina_internal.dbrp_filter_pairs(dbrp_path, 0, 0.0)
+    return len(records) > 0 and "pvalue" in records[0]
+
+
+def pairwise_has_pvalue(pairwise_path: str) -> bool:
+    """Format-aware test for whether a pairwise input carries a pvalue column.
+
+    ``-p`` may be the pairwise TSV, the parquet directory, or the .dbrp binary.
+    Each command that supports ``-m pvalue`` must reject a pvalue request on a
+    dataset that lacks it with the SAME clean error, on EVERY input form. The old
+    per-module ``check_if_there_is_a_pvalue`` open()ed the path as text, which
+    crashed with ``IsADirectoryError`` on a parquet directory and
+    ``UnicodeDecodeError`` on a .dbrp before the format was resolved (issues
+    043/053). This helper resolves the format first:
+
+      - parquet directory / .tsv with a sibling parquet store -> ``PairwiseStore.has_pvalue``
+      - .dbrp (or a -p form whose canonical .dbrp sibling exists) -> the .dbrp metric flags
+      - plain .tsv -> scan the first non-comment line for a ``pvalue`` column
+
+    Returns True iff a pvalue column is present. Callers emit the canonical
+    ``"pvalue not found in pairwise file!"`` error when this is False.
+    """
+    # 1. Parquet store (the directory form, or a .tsv with a sibling parquet dir).
+    try:
+        store = open_pairwise(pairwise_path)
+    except Exception:
+        store = None
+    if store is not None:
+        try:
+            return store.has_pvalue
+        finally:
+            store.close()
+
+    # 2. .dbrp binary (a .dbrp passed directly, or a -p form whose .dbrp sibling exists).
+    dbrp_path = resolve_dbrp_path(pairwise_path)
+    if dbrp_path is not None:
+        return _dbrp_has_pvalue(dbrp_path)
+
+    # 3. Plain text TSV: scan the first non-comment (header) line.
+    with open(pairwise_path) as fh:
+        for line in fh:
+            if not line.startswith("#"):
+                return "pvalue" in line
+    return False

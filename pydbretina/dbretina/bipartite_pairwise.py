@@ -89,15 +89,6 @@ def plot_bipartite(df_bipartite, color_metric, output_prefix):
     fig.write_image(f"{output_prefix}.png", width=1920, height=1080, scale=5)
 
 
-def check_if_there_is_a_pvalue(pairwise_file):
-    with open(pairwise_file) as F:
-        for line in F:
-            if not line.startswith("#"):
-                return "pvalue" in line
-            else:
-                continue
-
-
 def similarities_distribution_histogram(df_bipartite, filename, json_output_file = None, log_scale = False):
     # Function to map values to ranges
     def map_value_to_range(value):
@@ -243,8 +234,12 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
     """
     LOGGER = ctx.obj
 
-    # check if pvalue
-    if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+    # check if pvalue (format-aware: handles the .tsv / parquet-dir / .dbrp
+    # forms; the old text open() crashed with IsADirectoryError on a parquet
+    # directory, issue 053). Resolve once and reuse for the schema below.
+    from dbretina.compat import pairwise_has_pvalue
+    input_has_pvalue = pairwise_has_pvalue(pairwise_file)
+    if metric == "pvalue" and not input_has_pvalue:
         LOGGER.ERROR("pvalue not found in pairwise file!")
 
 
@@ -323,7 +318,7 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
 
     df_rows = []
 
-    if check_if_there_is_a_pvalue(pairwise_file):
+    if input_has_pvalue:
         df_bipartite["pvalue"] = None
 
     # Try Parquet/PairwiseStore first

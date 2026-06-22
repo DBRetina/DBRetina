@@ -47,14 +47,6 @@ def path_to_absolute_path(ctx, param, value):
     with contextlib.suppress(Exception):
         return os.path.abspath(value) if value is not None else None
 
-def check_if_there_is_a_pvalue(pairwise_file):
-    with open(pairwise_file) as F:
-        for line in F:
-            if not line.startswith("#"):
-                return "pvalue" in line
-            else:
-                continue
-
 def validate_all_files_exist(ctx, param, value):
     if value is None:
         return None
@@ -110,6 +102,14 @@ class DBRetinaGraph:
         if metric not in self.metric_to_col:
             LOGGER.ERROR(f"Invalid metric '{metric}'. Choose from: {', '.join(self.metric_to_col)}")
             sys.exit(1)
+        # Reject -m pvalue on a dataset that lacks it BEFORE iterating, on every
+        # input form. The store/.dbrp routes otherwise crashed uncaught: the
+        # parquet route raised a raw ValueError ("Unknown metric 'pvalue'") from
+        # PairwiseStore._validate_metric and the .dbrp route silently yielded 0
+        # edges (issue 043). pairwise_has_pvalue is format-aware (tsv/dir/.dbrp).
+        from dbretina.compat import pairwise_has_pvalue
+        if metric == "pvalue" and not pairwise_has_pvalue(pairwise_file):
+            LOGGER.ERROR("pvalue not found in pairwise file!")
         self.metric_col = self.metric_to_col[metric]
         self.pairwise_file = pairwise_file
         self.index_prefix = index_prefix

@@ -14,14 +14,6 @@ import leidenalg as la
 import dbretina.dbretina_doc_url as dbretina_doc
 import _dbretina_internal as dbretina_internal
 
-def check_if_there_is_a_pvalue(pairwise_file):
-    with open(pairwise_file) as F:
-        for line in F:
-            if not line.startswith("#"):
-                return "pvalue" in line
-            else:
-                continue
-
 def get_command():
     _sys_argv = sys.argv
     for i in range(len(_sys_argv)):
@@ -151,8 +143,11 @@ class Clusters:
             logger_obj.ERROR("unknown metric!")
         self.metric_col = self.metric_to_col[metric]
         
-        # check if pvalue
-        if metric == "pvalue" and not check_if_there_is_a_pvalue(pairwise_file):
+        # check if pvalue (format-aware: handles the .tsv / parquet-dir / .dbrp
+        # forms; the old text open() crashed with IsADirectoryError on a parquet
+        # directory, issue 053).
+        from dbretina.compat import pairwise_has_pvalue
+        if metric == "pvalue" and not pairwise_has_pvalue(pairwise_file):
             logger_obj.ERROR("pvalue not found in pairwise file!")
 
         self.graph = ig.Graph() if community else rx.PyGraph()

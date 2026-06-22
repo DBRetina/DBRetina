@@ -429,6 +429,32 @@ def _cleanup_shared_fixture():
         _SHARED_DIR = None
 
 
+# Shared WITH-pvalue substrate (pairwise computed with --pvalue), used by the
+# cross-route pvalue tests below. The standard fixture above is computed WITHOUT
+# --pvalue, so it doubles as the "pvalue absent" case.
+_SHARED_PV_DIR = None
+_SHARED_PV_PREFIX = None
+_SHARED_PV_PW_FILE = None
+
+
+def _ensure_shared_pvalue_fixture():
+    """Index + pairwise(--pvalue). Returns (prefix, pw_tsv_path) with a pvalue column."""
+    global _SHARED_PV_DIR, _SHARED_PV_PREFIX, _SHARED_PV_PW_FILE
+    if _SHARED_PV_DIR is None:
+        _SHARED_PV_DIR = tempfile.mkdtemp(prefix="dbretina_shared_pv_")
+        _SHARED_PV_PREFIX, _SHARED_PV_PW_FILE = setup_index_and_pairwise(
+            _SHARED_PV_DIR, extra_pw_args="--pvalue"
+        )
+    return _SHARED_PV_PREFIX, _SHARED_PV_PW_FILE
+
+
+def _cleanup_shared_pvalue_fixture():
+    global _SHARED_PV_DIR
+    if _SHARED_PV_DIR is not None:
+        shutil.rmtree(_SHARED_PV_DIR, ignore_errors=True)
+        _SHARED_PV_DIR = None
+
+
 # ============================================================
 # SECTION 3: Index Tests
 # ============================================================
@@ -1675,6 +1701,232 @@ class TestGraph(unittest.TestCase):
         # actionable: tells the user how to install
         self.assertIn("pip install", stderr.lower())
         self.assertIn("dash", stderr.lower())
+
+
+# ============================================================
+# SECTION 11b: Cross-route -m pvalue handling (ISSUES 043 & 053)
+# ============================================================
+
+class TestPvalueCrossRoute(unittest.TestCase):
+    """`-m pvalue` must behave consistently across the .tsv / parquet-dir / .dbrp
+    input forms for every command that supports it:
+
+      (a) when a pvalue column IS present  -> the command works (exit 0);
+      (b) when it is ABSENT                -> the SAME clean error
+          '[ERROR] pvalue not found in pairwise file!' with no Python traceback
+          (no IsADirectoryError / UnicodeDecodeError / ValueError leak).
+
+    Pre-fix (issues 043 & 053) the non-.tsv routes crashed: cluster/export/bipartite
+    raised IsADirectoryError from check_if_there_is_a_pvalue() open()ing a parquet
+    DIRECTORY as text (053); graph raised an uncaught ValueError ("Unknown metric
+    'pvalue'") from PairwiseStore._validate_metric on the store route (043). The
+    .tsv route already gave the clean error; these tests pin every route to it.
+    """
+
+    PV_ABSENT_MSG = "pvalue not found in pairwise file"
+    TRACEBACK_MARKERS = (
+        "Traceback (most recent call last)",
+        "IsADirectoryError",
+        "UnicodeDecodeError",
+        "Unknown metric",
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        # NO-pvalue substrate (standard fixture) and WITH-pvalue substrate.
+        cls.prefix, cls.pw_tsv = _ensure_shared_fixture()
+        cls.pv_prefix, cls.pv_pw_tsv = _ensure_shared_pvalue_fixture()
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_pvxr_")
+        # Full target partition for the graph command (avoids the no-targets path).
+        self.intra1 = write_file(
+            os.path.join(self.tmpdir, "intra1.tsv"), "GroupA\nGroupB\nGroupE\nGroupF\n"
+        )
+        self.inter1 = write_file(
+            os.path.join(self.tmpdir, "inter1.tsv"), "GroupC\nGroupD\n"
+        )
+        # Two non-overlapping group files for the bipartite command.
+        self.bg1 = write_file(os.path.join(self.tmpdir, "bg1.txt"), "GroupA\nGroupB\n")
+        self.bg2 = write_file(os.path.join(self.tmpdir, "bg2.txt"), "GroupC\nGroupD\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    # ---- form helpers ----
+
+    @staticmethod
+    def _forms(pw_tsv):
+        """Return the three -p forms sharing a base: (.tsv, parquet dir, .dbrp)."""
+        base = pw_tsv[:-len(".tsv")] if pw_tsv.endswith(".tsv") else pw_tsv
+        return {"tsv": pw_tsv, "dir": base, ".dbrp": base + ".dbrp"}
+
+    def _assert_no_traceback(self, stderr, ctx):
+        for marker in self.TRACEBACK_MARKERS:
+            self.assertNotIn(
+                marker, stderr, f"{ctx}: raw '{marker}' leaked:\n{stderr}"
+            )
+
+    def _assert_clean_pvalue_absent(self, rc, stderr, ctx):
+        self.assertNotEqual(rc, 0, f"{ctx}: expected failure on pvalue-absent input")
+        self._assert_no_traceback(stderr, ctx)
+        self.assertIn(self.PV_ABSENT_MSG, stderr, f"{ctx}: missing clean error:\n{stderr}")
+
+    # ---- command runners (one per command, parametrized by -p) ----
+
+    def _run_cluster(self, p, out):
+        return run_command(f"DBRetina cluster -p {p} -m pvalue -c 20 -o {out}")
+
+    def _run_export(self, p, out):
+        return run_command(f"DBRetina export -p {p} -m pvalue -o {out}")
+
+    def _run_graph(self, p, out, prefix):
+        return run_command(
+            f"DBRetina graph -i {prefix} -p {p} "
+            f"--intra-targets {self.intra1} --inter-targets {self.inter1} "
+            f"-m pvalue -c 20 -o {out}"
+        )
+
+    def _run_bipartite(self, p, out):
+        return run_command(
+            f"DBRetina bipartite -p {p} --group1 {self.bg1} --group2 {self.bg2} "
+            f"-m pvalue --no-plot -o {out}"
+        )
+
+    # =====================================================================
+    # ISSUE 053: cluster / export -m pvalue on a parquet DIRECTORY
+    # =====================================================================
+
+    def test_053_cluster_parquet_dir_no_pvalue_clean_error(self):
+        """ISSUE-053: cluster -p <parquet dir> -m pvalue on a no-pvalue dataset
+        -> clean error, NOT IsADirectoryError."""
+        pw_dir = self._forms(self.pw_tsv)["dir"]
+        self.assertTrue(os.path.isdir(pw_dir))
+        rc, _, stderr = self._run_cluster(pw_dir, os.path.join(self.tmpdir, "c"))
+        self._assert_clean_pvalue_absent(rc, stderr, "cluster -p DIR (no pvalue)")
+
+    def test_053_export_parquet_dir_no_pvalue_clean_error(self):
+        """ISSUE-053: export -p <parquet dir> -m pvalue on a no-pvalue dataset
+        -> clean error, NOT IsADirectoryError."""
+        pw_dir = self._forms(self.pw_tsv)["dir"]
+        rc, _, stderr = self._run_export(pw_dir, os.path.join(self.tmpdir, "e"))
+        self._assert_clean_pvalue_absent(rc, stderr, "export -p DIR (no pvalue)")
+
+    def test_053_cluster_parquet_dir_with_pvalue_works(self):
+        """ISSUE-053: cluster -p <parquet dir> -m pvalue WITH pvalue -> exit 0."""
+        pw_dir = self._forms(self.pv_pw_tsv)["dir"]
+        out = os.path.join(self.tmpdir, "cok")
+        rc, _, stderr = self._run_cluster(pw_dir, out)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_clusters.tsv")
+
+    def test_053_export_parquet_dir_with_pvalue_works(self):
+        """ISSUE-053: export -p <parquet dir> -m pvalue WITH pvalue -> exit 0."""
+        pw_dir = self._forms(self.pv_pw_tsv)["dir"]
+        out = os.path.join(self.tmpdir, "eok")
+        rc, _, stderr = self._run_export(pw_dir, out)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_distmat.tsv")
+
+    # =====================================================================
+    # ISSUE 043: graph -m pvalue cross-route (store / parquet / .dbrp)
+    # =====================================================================
+
+    def test_043_graph_parquet_dir_no_pvalue_clean_error(self):
+        """ISSUE-043: graph -p <parquet dir> -m pvalue on a no-pvalue dataset
+        -> clean error, NOT an uncaught ValueError('Unknown metric')."""
+        pw_dir = self._forms(self.pw_tsv)["dir"]
+        rc, _, stderr = self._run_graph(pw_dir, os.path.join(self.tmpdir, "g"), self.prefix)
+        self._assert_clean_pvalue_absent(rc, stderr, "graph -p DIR (no pvalue)")
+
+    def test_043_graph_parquet_dir_with_pvalue_works(self):
+        """ISSUE-043: graph -p <parquet dir> -m pvalue WITH pvalue -> exit 0."""
+        pw_dir = self._forms(self.pv_pw_tsv)["dir"]
+        out = os.path.join(self.tmpdir, "gok")
+        rc, _, stderr = self._run_graph(pw_dir, out, self.pv_prefix)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_edges.tsv")
+
+    def test_043_graph_tsv_no_pvalue_clean_error(self):
+        """ISSUE-043: graph -p <.tsv> -m pvalue on a no-pvalue dataset is also
+        clean (the .tsv resolves to a sibling parquet store, so it took the same
+        unguarded store route pre-fix)."""
+        rc, _, stderr = self._run_graph(
+            self.pw_tsv, os.path.join(self.tmpdir, "gt"), self.prefix
+        )
+        self._assert_clean_pvalue_absent(rc, stderr, "graph -p .tsv (no pvalue)")
+
+    # =====================================================================
+    # 053 sibling: bipartite -m pvalue on a parquet DIRECTORY
+    # =====================================================================
+
+    def test_bipartite_parquet_dir_no_pvalue_clean_error(self):
+        """bipartite -p <parquet dir> -m pvalue (same check_if_there_is_a_pvalue
+        text-open bug as 053) -> clean error, NOT IsADirectoryError."""
+        pw_dir = self._forms(self.pw_tsv)["dir"]
+        rc, _, stderr = self._run_bipartite(pw_dir, os.path.join(self.tmpdir, "b"))
+        self._assert_clean_pvalue_absent(rc, stderr, "bipartite -p DIR (no pvalue)")
+
+    def test_bipartite_parquet_dir_with_pvalue_works(self):
+        """bipartite -p <parquet dir> -m pvalue WITH pvalue -> exit 0."""
+        pw_dir = self._forms(self.pv_pw_tsv)["dir"]
+        out = os.path.join(self.tmpdir, "bok")
+        rc, _, stderr = self._run_bipartite(pw_dir, out)
+        self.assertEqual(rc, 0, stderr)
+
+    # =====================================================================
+    # Cross-route PARITY: every form behaves the same
+    # =====================================================================
+
+    def test_parity_cluster_all_forms_no_pvalue(self):
+        """cluster -m pvalue: clean error on .tsv AND parquet dir AND .dbrp."""
+        forms = self._forms(self.pw_tsv)
+        for name, p in forms.items():
+            with self.subTest(form=name):
+                rc, _, stderr = self._run_cluster(
+                    p, os.path.join(self.tmpdir, f"par_{name.strip('.')}")
+                )
+                self._assert_clean_pvalue_absent(rc, stderr, f"cluster -p {name}")
+
+    def test_parity_cluster_all_forms_with_pvalue(self):
+        """cluster -m pvalue: works on .tsv AND parquet dir AND .dbrp (WITH pvalue)."""
+        forms = self._forms(self.pv_pw_tsv)
+        for name, p in forms.items():
+            with self.subTest(form=name):
+                out = os.path.join(self.tmpdir, f"parok_{name.strip('.')}")
+                rc, _, stderr = self._run_cluster(p, out)
+                self.assertEqual(rc, 0, f"cluster -p {name}: {stderr}")
+                assert_file_exists(self, f"{out}_clusters.tsv")
+
+    def test_parity_export_all_forms_no_pvalue(self):
+        """export -m pvalue: clean error on .tsv AND parquet dir AND .dbrp."""
+        forms = self._forms(self.pw_tsv)
+        for name, p in forms.items():
+            with self.subTest(form=name):
+                rc, _, stderr = self._run_export(
+                    p, os.path.join(self.tmpdir, f"epar_{name.strip('.')}")
+                )
+                self._assert_clean_pvalue_absent(rc, stderr, f"export -p {name}")
+
+    def test_parity_export_dbrp_with_pvalue_works(self):
+        """export -m pvalue on the .dbrp form WITH pvalue -> exit 0."""
+        dbrp = self._forms(self.pv_pw_tsv)[".dbrp"]
+        self.assertTrue(os.path.isfile(dbrp))
+        out = os.path.join(self.tmpdir, "edbrp")
+        rc, _, stderr = self._run_export(dbrp, out)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_distmat.tsv")
+
+    def test_pvalue_absent_does_not_affect_other_metrics(self):
+        """Regression guard: a non-pvalue metric (containment) still works on the
+        no-pvalue parquet dir (the new pvalue check must only fire for -m pvalue)."""
+        pw_dir = self._forms(self.pw_tsv)["dir"]
+        out = os.path.join(self.tmpdir, "cm")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {pw_dir} -m containment -c 50 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self._assert_no_traceback(stderr, "cluster -p DIR -m containment")
 
 
 # ============================================================
@@ -4645,3 +4897,4 @@ if __name__ == "__main__":
         unittest.main(verbosity=2)
     finally:
         _cleanup_shared_fixture()
+        _cleanup_shared_pvalue_fixture()

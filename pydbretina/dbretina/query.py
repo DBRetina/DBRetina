@@ -81,15 +81,6 @@ def check_cutoff_value(ctx, param, value):
         
 
 
-def check_if_there_is_a_pvalue(pairwise_file):
-    with open(pairwise_file) as F:
-        for line in F:
-            if not line.startswith("#"):
-                return "pvalue" in line
-            else:
-                continue
-
-
 def _classify_pairwise_input(pairwise_file):
     """Classify a query -p input as 'tsv', 'store', or 'dbri'.
 
@@ -218,9 +209,12 @@ Detailed description:
         "pvalue": 11,
     }
     
-     # check if pvalue (text TSV only; for the parquet/.dbrp store the
-     # cutoff-only branch validates pvalue availability against the store)
-    if metric == "pvalue" and input_kind == "tsv" and not check_if_there_is_a_pvalue(pairwise_file):
+    # check if pvalue (format-aware: covers the .tsv / parquet-dir / .dbrp forms
+    # up-front so a -m pvalue request on a pvalue-less dataset fails with the same
+    # clean error on every route, instead of crashing in (or silently skipping)
+    # the store/.dbrp branches below (issues 043/053).
+    from dbretina.compat import pairwise_has_pvalue
+    if metric == "pvalue" and not pairwise_has_pvalue(pairwise_file):
         ctx.obj.ERROR("pvalue not found in pairwise file!")
 
     if metric in metric_to_col:
