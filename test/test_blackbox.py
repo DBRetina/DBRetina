@@ -3090,6 +3090,125 @@ class TestRestSecurity(unittest.TestCase):
             store.close()
 
 
+@unittest.skipUnless(_HAS_REST_TEST, "REST concurrency tests need [server] extra + httpx")
+class TestRestConcurrency(unittest.TestCase):
+    """ISSUE-055: PairwiseStore shares ONE DuckDB connection across all endpoints.
+
+    FastAPI runs the sync route handlers in a threadpool with no synchronization,
+    so a concurrent burst (e.g. the dashboard Stats tab firing statistics/{metric}
+    + /top + /pairs at once) interleaves execute()/fetch on the single connection
+    and corrupts each other -> fetchone() returns None -> 500. Works serially.
+
+    The burst test MUST 500 pre-fix (RED) and be all-200 post-fix (GREEN); the
+    serial test is a sanity guard that each endpoint alone still returns a correct
+    body. Prefers the (larger) kegg substrate where queries interleave more, and
+    falls back to the synthetic fixture so the suite stays portable.
+    """
+
+    KEGG_PARQUET = "/home/mabuelanin/dbretina_scratch/out/kegg_DBRetina_pairwise"
+    KEGG_DBRI = "/home/mabuelanin/dbretina_scratch/out/kegg.dbri"
+
+    def setUp(self):
+        if (os.path.isdir(self.KEGG_PARQUET)
+                and os.path.exists(os.path.join(self.KEGG_PARQUET, "manifest.json"))):
+            self.tmpdir = None
+            self.parquet = self.KEGG_PARQUET
+            self.dbri = self.KEGG_DBRI if os.path.exists(self.KEGG_DBRI) else None
+        else:
+            self.tmpdir = tempfile.mkdtemp(prefix="dbretina_conc_")
+            self.prefix, _ = setup_index_and_pairwise(self.tmpdir)
+            self.parquet = f"{self.prefix}_DBRetina_pairwise"
+            self.dbri = f"{self.prefix}.dbri"
+
+    def tearDown(self):
+        if self.tmpdir:
+            shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _client(self):
+        from dbretina.compat import open_pairwise
+        from dbretina.pairwise_store import PairwiseStore
+        from dbretina.rest_api import create_app
+        store = open_pairwise(self.parquet)
+        if store is None:
+            store = PairwiseStore(self.parquet, dbri_path=self.dbri)
+        elif self.dbri:
+            store._dbri_path = self.dbri
+        # raise_server_exceptions=False so a corrupted-connection 500 surfaces as a
+        # status code we can count, instead of re-raising into a worker thread.
+        return _TestClient(create_app(store, dbri_path=self.dbri),
+                           raise_server_exceptions=False), store
+
+    def _metrics(self, store):
+        # Use the metrics actually present (pvalue only if computed).
+        return [m for m in store.available_metrics if m != "pvalue"]
+
+    def test_concurrent_burst_no_500(self):
+        """A concurrent burst across statistics/{metric} + /top + /pairs must be all-200.
+
+        Pre-fix (single shared connection, no lock) this intermittently 500s with
+        ``metric_summary row[0] -> NoneType`` from interleaved execute()/fetch.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        client, store = self._client()
+        try:
+            metrics = self._metrics(store)
+            self.assertTrue(metrics, "store exposes no metrics to query")
+            urls = [f"/api/v1/statistics/{m}" for m in metrics]
+            urls.append(f"/api/v1/top?metric={metrics[0]}&n=20")
+            urls.append(f"/api/v1/pairs?metric={metrics[0]}&cutoff=0&limit=200")
+            # ~size of a Stats-tab fan-out, amplified to reliably beat the race.
+            burst = urls * 8
+
+            failures = []  # (round, url, status, snippet)
+            rounds = 6
+            for rnd in range(rounds):
+                def fire(url):
+                    r = client.get(url)
+                    return url, r.status_code, ("" if r.status_code == 200 else r.text[:200])
+                with ThreadPoolExecutor(max_workers=16) as ex:
+                    results = list(ex.map(fire, burst))
+                for url, code, snippet in results:
+                    if code != 200:
+                        failures.append((rnd, url, code, snippet))
+
+            n_500 = sum(1 for f in failures if f[2] == 500)
+            self.assertEqual(
+                failures, [],
+                f"concurrent burst produced {len(failures)} non-200 "
+                f"({n_500} were 500) across {rounds} rounds of {len(burst)} reqs; "
+                f"first few: {failures[:3]}",
+            )
+        finally:
+            store.close()
+
+    def test_serial_endpoints_ok(self):
+        """Sanity: each endpoint alone returns 200 with a correctly-shaped body."""
+        client, store = self._client()
+        try:
+            metrics = self._metrics(store)
+            for m in metrics:
+                r = client.get(f"/api/v1/statistics/{m}")
+                self.assertEqual(r.status_code, 200,
+                                 f"statistics/{m} serial: {r.status_code} {r.text[:200]}")
+                body = r.json()
+                for k in ("count", "min", "max", "mean", "median", "stddev"):
+                    self.assertIn(k, body, f"statistics/{m} missing key {k}")
+                self.assertIsNotNone(body["count"], f"statistics/{m} count is None")
+
+            r = client.get(f"/api/v1/top?metric={metrics[0]}&n=5")
+            self.assertEqual(r.status_code, 200, f"/top serial: {r.status_code} {r.text[:200]}")
+            tb = r.json()
+            self.assertEqual(tb["metric"], metrics[0])
+            self.assertIn("pairs", tb)
+
+            r = client.get(f"/api/v1/pairs?metric={metrics[0]}&cutoff=0&limit=10")
+            self.assertEqual(r.status_code, 200, f"/pairs serial: {r.status_code} {r.text[:200]}")
+            self.assertIn("pairs", r.json())
+        finally:
+            store.close()
+
+
 @unittest.skipUnless(_HAS_REST_TEST, "graph endpoint tests need [server] extra + httpx")
 class TestRestGraph(unittest.TestCase):
     """serve graph + algorithms endpoints (igraph-backed)."""

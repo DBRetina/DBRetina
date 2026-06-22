@@ -2,6 +2,7 @@
 
 import json
 import pathlib
+import threading
 from typing import Optional
 
 try:
@@ -95,8 +96,24 @@ class PairwiseStore:
         else:
             self._group_partitions = {}
 
-        # DuckDB connection
+        # DuckDB connection.
+        #
+        # A single PairwiseStore is shared across every ``serve`` REST endpoint,
+        # and FastAPI runs the sync route handlers in a threadpool. A DuckDB
+        # *connection* keeps the most recent query's result as mutable state, so
+        # two threads interleaving execute()/fetch on the same connection corrupt
+        # each other (fetchone() returns None -> 500; issue 055). DuckDB *cursors*
+        # off one connection each carry independent result state, so per-query
+        # cursors give real concurrency. We still take a short lock around cursor
+        # creation (cursor() itself is not documented thread-safe) and release it
+        # immediately; the returned cursor — including any streaming reader built
+        # from it — is then safe to fetch from without holding the lock, which is
+        # exactly what the ``sql()`` / ``fetch_record_batch()`` callers do. The
+        # connection-level state set in harden_readonly() (the materialized
+        # ``pairs`` table and ``enable_external_access=false``) is inherited by
+        # every cursor, so the /sql sandbox is preserved.
         self._con = duckdb.connect()
+        self._con_lock = threading.Lock()
         self._parquet_glob = str(data_dir / "*.parquet")
 
         # Lazy 'pairs' view over the parquet (ids + metrics only; cheap, no joins). The
@@ -120,6 +137,18 @@ class PairwiseStore:
 
     def __exit__(self, *args):
         self.close()
+
+    def _cursor(self):
+        """Return a fresh DuckDB cursor with its own result state (thread-safe).
+
+        Every concurrent query path goes through here so interleaved requests no
+        longer clobber a shared connection's result (issue 055). The lock guards
+        only the brief ``cursor()`` creation; callers fetch from the returned
+        cursor without holding it, so streaming readers (``fetch_record_batch``)
+        and the ``sql()`` escape hatch stay correct under concurrency.
+        """
+        with self._con_lock:
+            return self._con.cursor()
 
     def _pairs_select_sql(self) -> str:
         """SELECT defining the served ``pairs`` table (built once in harden_readonly()).
@@ -162,7 +191,11 @@ class PairwiseStore:
     def num_pairs(self) -> int:
         if "num_pairs" in self._manifest:
             return self._manifest["num_pairs"]
-        return self._con.execute("SELECT COUNT(*) FROM pairs").fetchone()[0]
+        # COUNT(*) on a fresh cursor always yields one row, but mirror
+        # metric_summary's defensive None-handling so no fetchone() result is
+        # ever unconditionally subscripted (issue 055).
+        row = self._cursor().execute("SELECT COUNT(*) FROM pairs").fetchone()
+        return row[0] if row is not None else 0
 
     @property
     def num_groups(self) -> int:
@@ -219,7 +252,7 @@ class PairwiseStore:
             f"SELECT {col_clause} FROM pairs "
             f"WHERE {metric} >= {cutoff}"
         )
-        return self._con.execute(query).fetch_record_batch()
+        return self._cursor().execute(query).fetch_record_batch()
 
     def query_group(
         self,
@@ -250,7 +283,7 @@ class PairwiseStore:
             where += f" AND {metric} >= {cutoff}"
 
         query = f"SELECT {col_clause} FROM pairs {where}"
-        return self._con.execute(query).fetch_record_batch()
+        return self._cursor().execute(query).fetch_record_batch()
 
     def shared_features(self, group_a: str, group_b: str) -> set[str]:
         """Return the set of features (genes) shared between two groups.
@@ -333,7 +366,7 @@ class PairwiseStore:
     ) -> pa.RecordBatchReader:
         """Full streaming iteration with optional column projection."""
         col_clause = ", ".join(columns) if columns else "*"
-        return self._con.execute(f"SELECT {col_clause} FROM pairs").fetch_record_batch()
+        return self._cursor().execute(f"SELECT {col_clause} FROM pairs").fetch_record_batch()
 
     def sql(self, query: str) -> duckdb.DuckDBPyRelation:
         """Execute arbitrary SQL against the 'pairs' view.
@@ -345,7 +378,10 @@ class PairwiseStore:
 
             store.sql("SELECT group_1_id, AVG(jaccard) FROM pairs GROUP BY group_1_id")
         """
-        return self._con.execute(query)
+        # Fresh cursor: the returned relation is fetched by the caller (e.g. the
+        # /sql endpoint, gene_importance), possibly after another request has run,
+        # so it must own its result state rather than share the connection's.
+        return self._cursor().execute(query)
 
     # ── Materializers ─────────────────────────────────────────────────
 
@@ -376,7 +412,7 @@ class PairwiseStore:
             where = f"WHERE {metric} >= {cutoff}"
         limit_clause = f"LIMIT {limit}" if limit else ""
         query = f"SELECT {col_clause} FROM pairs {where} {limit_clause}"
-        return self._con.execute(query).fetchdf()
+        return self._cursor().execute(query).fetchdf()
 
     def to_arrow(
         self,
@@ -400,7 +436,7 @@ class PairwiseStore:
             self._validate_metric(metric)
             where = f"WHERE {metric} >= {cutoff}"
         query = f"SELECT {col_clause} FROM pairs {where}"
-        return self._con.execute(query).fetch_arrow_table()
+        return self._cursor().execute(query).fetch_arrow_table()
 
     # ── Name Resolution Helpers ───────────────────────────────────────
 
@@ -436,7 +472,7 @@ class PairwiseStore:
     def top_pairs(self, metric: str, n: int = 20):
         """Return top N pairs by a given metric as a named DataFrame."""
         self._validate_metric(metric)
-        df = self._con.execute(
+        df = self._cursor().execute(
             f"SELECT * FROM pairs ORDER BY {metric} DESC LIMIT {n}"
         ).fetchdf()
         return self.resolve_names(df)
@@ -444,7 +480,7 @@ class PairwiseStore:
     def metric_summary(self, metric: str) -> dict:
         """Return summary statistics for a metric."""
         self._validate_metric(metric)
-        row = self._con.execute(
+        row = self._cursor().execute(
             f"SELECT COUNT(*) as count, "
             f"MIN({metric}) as min, "
             f"MAX({metric}) as max, "
@@ -453,6 +489,12 @@ class PairwiseStore:
             f"STDDEV({metric}) as stddev "
             f"FROM pairs"
         ).fetchone()
+        # Defensive: an aggregate over a (possibly empty) table should always yield
+        # one row, but never unconditionally subscript a None fetchone() result —
+        # that was the 500 surface for the connection race (issue 055).
+        if row is None:
+            return {"count": 0, "min": None, "max": None,
+                    "mean": None, "median": None, "stddev": None}
         return {
             "count": row[0],
             "min": row[1],
@@ -492,7 +534,7 @@ class PairwiseStore:
                 f"WHERE group_1_id = {gid} OR group_2_id = {gid}"
             )
         query = " UNION ALL ".join(parts)
-        rows = self._con.execute(query).fetchall()
+        rows = self._cursor().execute(query).fetchall()
         return [
             {"metric": r[0], "avg": r[1], "max": r[2], "count": r[3]}
             for r in rows
@@ -500,7 +542,7 @@ class PairwiseStore:
 
     def group_pair_counts(self) -> dict[int, int]:
         """Count how many pairs each group participates in."""
-        rows = self._con.execute(
+        rows = self._cursor().execute(
             "SELECT gid, COUNT(*) as cnt FROM ("
             "  SELECT group_1_id as gid FROM pairs"
             "  UNION ALL"
