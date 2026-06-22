@@ -3,6 +3,7 @@
 import asyncio
 import math
 import pathlib
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -70,6 +71,49 @@ class _GraphCache:
             for g in self._cache.values():
                 g.close()
             self._cache.clear()
+
+
+# ── SQL result / query helpers ──────────────────────────────────
+
+# Strip SQL line (-- ...) and block (/* ... */) comments to tell whether a
+# query is effectively empty. Conservative: it ignores string literals, but a
+# blank/comment-only query never contains one, so it can only over-keep a real
+# statement (which is fine — that just runs and errors normally), never wrongly
+# reject one.
+_SQL_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
+
+
+def _is_blank_query(query: str) -> bool:
+    """True if ``query`` is empty/whitespace/comment-only (no executable statement)."""
+    if not query or not query.strip():
+        return True
+    return not _SQL_COMMENT_RE.sub("", query).strip()
+
+
+def _json_native(value: Any) -> Any:
+    """Coerce a DuckDB/pandas result cell to a JSON-serializable Python value.
+
+    ``fetchdf().to_dict(orient="records")`` returns numpy ndarrays for LIST/array
+    columns and numpy scalars (e.g. ``numpy.int32``) inside them; FastAPI's
+    ``jsonable_encoder`` cannot serialize those and raises *after* the handler
+    returns, surfacing as a 500. Recursively convert numpy types to native
+    Python so the response serializes. STRUCT (dict), scalars, and
+    ``pandas.Timestamp`` already serialize and pass through unchanged.
+    """
+    import numpy as np
+
+    if isinstance(value, np.ndarray):
+        return [_json_native(v) for v in value.tolist()]
+    if isinstance(value, np.generic):  # numpy scalar (int32/float64/bool_/…)
+        return value.item()
+    if isinstance(value, dict):  # STRUCT — values may themselves be ndarrays
+        return {k: _json_native(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_native(v) for v in value]
+    if isinstance(value, (bytes, bytearray)):  # BLOB — not JSON-native, would 500
+        import base64
+        return base64.b64encode(bytes(value)).decode("ascii")
+    return value
 
 
 # ── App factory ─────────────────────────────────────────────────
@@ -506,11 +550,27 @@ def create_app(
     @app.post("/api/v1/sql")
     def execute_sql(body: SQLQuery):
         """Execute SQL against the pairs view (read-only)."""
+        # Reject empty/blank/comment-only queries up front: DuckDB's execute()
+        # returns None for them, and None.fetchdf() would otherwise leak an
+        # internal AttributeError into the error detail (issue 059).
+        if _is_blank_query(body.query):
+            raise ValidationError(
+                detail="query is required (empty or comment-only query produced no statement)",
+                field="query",
+            )
+
         # Validate query safety
         validate_sql_safety(body.query)
 
         try:
             result = store.sql(body.query)
+            # Defensive: a statement that yields no relation (e.g. a no-op that
+            # slipped past the blank guard) returns None — guard before fetchdf().
+            if result is None:
+                raise ValidationError(
+                    detail="query produced no result set",
+                    field="query",
+                )
             df = result.fetchdf()
 
             # Check result size
@@ -522,12 +582,20 @@ def create_app(
                     suggestion="Add LIMIT clause to your query",
                 )
 
+            # Coerce numpy ndarray/scalar cells (from LIST/array columns) to
+            # JSON-native values so the response serializes; a serialization
+            # failure must never become a 500 (issue 057). Scalars/STRUCT/
+            # TIMESTAMP pass through unchanged.
+            rows = [
+                {k: _json_native(v) for k, v in row.items()}
+                for row in df.to_dict(orient="records")
+            ]
             return {
                 "columns": list(df.columns),
                 "row_count": len(df),
-                "rows": df.to_dict(orient="records"),
+                "rows": rows,
             }
-        except (DataTooLargeError, UnsafeQueryError):
+        except (DataTooLargeError, UnsafeQueryError, ValidationError):
             raise
         except Exception as e:
             raise QuerySyntaxError(

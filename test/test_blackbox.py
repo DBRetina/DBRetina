@@ -3090,6 +3090,168 @@ class TestRestSecurity(unittest.TestCase):
             store.close()
 
 
+@unittest.skipUnless(_HAS_REST_TEST, "REST /sql tests need [server] extra + httpx")
+class TestRestSql(unittest.TestCase):
+    """POST /api/v1/sql edge cases (issues 057 + 059).
+
+    057: a read-only SELECT whose result has a LIST/array column 500s because
+    fetchdf() yields numpy ndarrays that FastAPI's jsonable_encoder cannot
+    serialize -- and that failure happens AFTER the handler returns, so the
+    handler's try/except can't catch it and the catch-all turns it into a 500.
+    A serialization failure must never be a 500: list cells should serialize.
+
+    059: an empty / blank / comment-only query passes validate_sql_safety,
+    store.sql() returns None, and None.fetchdf() leaks
+    "'NoneType' object has no attribute 'fetchdf'" into the 400 detail. Such
+    queries must be rejected up front with a clean, meaningful 400.
+
+    Prefers the (larger) kegg substrate so list(group_1_id) FROM pairs returns
+    rows, and falls back to the synthetic fixture so the suite stays portable.
+    """
+
+    KEGG_PARQUET = "/home/mabuelanin/dbretina_scratch/out/kegg_DBRetina_pairwise"
+    KEGG_DBRI = "/home/mabuelanin/dbretina_scratch/out/kegg.dbri"
+
+    def setUp(self):
+        if (os.path.isdir(self.KEGG_PARQUET)
+                and os.path.exists(os.path.join(self.KEGG_PARQUET, "manifest.json"))):
+            self.tmpdir = None
+            self.parquet = self.KEGG_PARQUET
+            self.dbri = self.KEGG_DBRI if os.path.exists(self.KEGG_DBRI) else None
+        else:
+            self.tmpdir = tempfile.mkdtemp(prefix="dbretina_sql_")
+            self.prefix, _ = setup_index_and_pairwise(self.tmpdir)
+            self.parquet = f"{self.prefix}_DBRetina_pairwise"
+            self.dbri = f"{self.prefix}.dbri"
+
+    def tearDown(self):
+        if self.tmpdir:
+            shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _client(self):
+        from dbretina.compat import open_pairwise
+        from dbretina.pairwise_store import PairwiseStore
+        from dbretina.rest_api import create_app
+        store = open_pairwise(self.parquet)
+        if store is None:
+            store = PairwiseStore(self.parquet, dbri_path=self.dbri)
+        elif self.dbri:
+            store._dbri_path = self.dbri
+        # raise_server_exceptions=False so a serialization failure surfaces as a
+        # 500 status code we can assert on, instead of re-raising into the worker.
+        return _TestClient(create_app(store, dbri_path=self.dbri),
+                           raise_server_exceptions=False), store
+
+    # ── 057: LIST/array result must serialize, never 500 ──────────────
+    def test_sql_list_literal_serializes(self):
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/sql", json={"query": "SELECT [1,2,3] AS arr"})
+            self.assertEqual(r.status_code, 200,
+                             f"list-literal SELECT should be 200, got "
+                             f"{r.status_code}: {r.text[:300]}")
+            body = r.json()
+            self.assertEqual(body["row_count"], 1)
+            # The ndarray must come back as a JSON list with native ints.
+            self.assertEqual(body["rows"][0]["arr"], [1, 2, 3],
+                             f"list column not serialized to a JSON array: {body['rows'][0]}")
+        finally:
+            store.close()
+
+    def test_sql_list_aggregate_serializes(self):
+        client, store = self._client()
+        try:
+            r = client.post(
+                "/api/v1/sql",
+                json={"query": "SELECT list(group_1_id) AS ids FROM pairs LIMIT 1"},
+            )
+            self.assertEqual(r.status_code, 200,
+                             f"list(group_1_id) should be 200, got "
+                             f"{r.status_code}: {r.text[:300]}")
+            body = r.json()
+            self.assertEqual(body["columns"], ["ids"])
+            self.assertEqual(body["row_count"], 1)
+            ids = body["rows"][0]["ids"]
+            self.assertIsInstance(ids, list,
+                                  f"aggregate list column not serialized as a JSON array: {ids!r}")
+        finally:
+            store.close()
+
+    def test_sql_blob_serializes(self):
+        """A BLOB result column (bytes) must serialize (base64), not 500 — the /sql
+        endpoint runs arbitrary SELECTs so a BLOB-producing expression is valid input."""
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/sql", json={"query": "SELECT 'abc'::BLOB AS b"})
+            self.assertEqual(r.status_code, 200,
+                             f"BLOB SELECT should be 200, got {r.status_code}: {r.text[:300]}")
+            # base64(b'abc') == 'YWJj'
+            self.assertEqual(r.json()["rows"][0]["b"], "YWJj",
+                             f"BLOB not serialized to base64: {r.json()['rows'][0]}")
+        finally:
+            store.close()
+
+    def test_sql_scalar_result_unchanged(self):
+        # The serialization fix must keep ordinary scalar results byte-identical.
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/sql",
+                            json={"query": "SELECT 1 AS one, 2.5 AS two"})
+            self.assertEqual(r.status_code, 200, f"scalar SELECT: {r.text[:300]}")
+            self.assertEqual(
+                r.json(),
+                {"columns": ["one", "two"], "row_count": 1,
+                 "rows": [{"one": 1, "two": 2.5}]},
+            )
+        finally:
+            store.close()
+
+    # ── 059: empty / blank / comment-only query -> clean 400 ──────────
+    def test_sql_empty_query_clean_400(self):
+        client, store = self._client()
+        try:
+            for q in ("", "   ", "-- hi", "/* nothing */", "\n\t  \n"):
+                r = client.post("/api/v1/sql", json={"query": q})
+                self.assertEqual(r.status_code, 400,
+                                 f"empty query {q!r} should be a clean 400, got "
+                                 f"{r.status_code}: {r.text[:200]}")
+                # The internal AttributeError text must NOT leak.
+                self.assertNotIn("NoneType", r.text,
+                                 f"empty query {q!r} leaked internal error: {r.text[:200]}")
+                self.assertNotIn("fetchdf", r.text,
+                                 f"empty query {q!r} leaked internal error: {r.text[:200]}")
+                self.assertNotIn("Traceback", r.text)
+                body = r.json()
+                self.assertEqual(body["error_code"], "VALIDATION_ERROR",
+                                 f"empty query {q!r} wrong error_code: {body}")
+                self.assertTrue(body["detail"],
+                                f"empty query {q!r} has no detail message")
+        finally:
+            store.close()
+
+    # ── regression guard: the S1 SQL sandbox must stay intact ─────────
+    def test_sql_sandbox_still_blocks_file_read_and_ddl(self):
+        client, store = self._client()
+        try:
+            # read_text file exfiltration stays blocked (external access off).
+            r = client.post("/api/v1/sql",
+                            json={"query": "SELECT * FROM read_text('/etc/passwd')"})
+            self.assertNotIn("root:", r.text, "sandbox leaked /etc/passwd")
+            self.assertNotEqual(r.status_code, 200,
+                                f"file-read query unexpectedly succeeded: {r.text[:200]}")
+            # DDL/DML keywords stay blocked by the denylist.
+            for q in ("DROP TABLE pairs", "DELETE FROM pairs",
+                      "CREATE TABLE x AS SELECT 1"):
+                r = client.post("/api/v1/sql", json={"query": q})
+                self.assertEqual(r.status_code, 400,
+                                 f"dangerous query {q!r} not blocked: "
+                                 f"{r.status_code} {r.text[:200]}")
+                self.assertEqual(r.json()["error_code"], "UNSAFE_QUERY",
+                                 f"dangerous query {q!r} wrong error_code: {r.text[:200]}")
+        finally:
+            store.close()
+
+
 @unittest.skipUnless(_HAS_REST_TEST, "REST concurrency tests need [server] extra + httpx")
 class TestRestConcurrency(unittest.TestCase):
     """ISSUE-055: PairwiseStore shares ONE DuckDB connection across all endpoints.
