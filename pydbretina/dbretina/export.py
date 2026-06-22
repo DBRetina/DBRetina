@@ -6,7 +6,7 @@ import os
 import click
 import pandas as pd
 from dbretina.click_context import cli
-from dbretina.validators import validate_metric
+from dbretina.validators import validate_metric, validate_linkage
 from scipy.cluster.hierarchy import linkage, to_tree, ClusterWarning
 from warnings import simplefilter
 import seaborn as sns
@@ -175,7 +175,7 @@ def export_heatmap(df, filename):
 @click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('--newick', "newick", is_flag=True, help="Convert the distance matrix to newick tree format", default=False)
 @click.option('-l', '--labels', "labels_selection", callback = validate_labels, required=False, default="names", show_default=True, type=click.STRING, help="select from ['ids', 'names']")
-@click.option('--linkage', "linkage_method", required=False, default="ward", show_default=True, type=click.STRING, help="select from ['single', 'complete', 'average', 'weighted', 'centroid', 'median', 'ward']")
+@click.option('--linkage', "linkage_method", required=False, default="ward", show_default=True, type=click.STRING, callback=validate_linkage, help="select from ['single', 'complete', 'average', 'weighted', 'centroid', 'median', 'ward']")
 @click.option('-o', "--output", "output_prefix", required=True, type=click.STRING, help="output prefix")
 @click.pass_context
 def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, linkage_method):
@@ -212,6 +212,14 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
         if not os.path.exists(_file):
             LOGGER.ERROR(f"File {_file} is not found.")
 
+    # Ensure the output directory exists before doing any work, so we fail
+    # fast (and friendly) instead of crashing on the first file write.
+    out_dir = os.path.dirname(os.path.abspath(output_prefix))
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError as e:
+        # e.g. a path component is an existing file (NotADirectoryError/FileExistsError)
+        LOGGER.ERROR(f"cannot create output directory for prefix '{output_prefix}': {e}")
 
     # Parse DBRetina's pairwise
     
@@ -255,9 +263,15 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
             col2 = 'group_2_ID' if labels_selection == 'ids' else 'group_2_name'
             df = pd.DataFrame(rows, columns=[col1, col2, metric])
         else:
-            df = pd.read_csv(pairwise_file, sep='\t', usecols=[src1_label_col, src2_label_col, dist_col], comment='#')
-    
-    if labels_selection == "ids":    
+            try:
+                df = pd.read_csv(pairwise_file, sep='\t', usecols=[src1_label_col, src2_label_col, dist_col], comment='#')
+            except pd.errors.EmptyDataError:
+                LOGGER.ERROR(f"pairwise file {pairwise_file} contains no data rows.")
+
+    if df.empty:
+        LOGGER.ERROR(f"pairwise file {pairwise_file} contains no data rows.")
+
+    if labels_selection == "ids":
         df[df.columns[0]] = df[df.columns[0]].astype(str)
         df[df.columns[1]] = df[df.columns[1]].astype(str)
     else: # escape newick_str_escape
@@ -289,15 +303,9 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
     # convert to distance matrix
     distance_matrix_df = 100 - similarity_df
     
+    LOGGER.INFO(f"Writing heatmap to {output_prefix}_heatmap.png")
     export_heatmap(similarity_df, f"{output_prefix}_heatmap.png")
-    
-    LOGGER.INFO(f"Writing heatmap to {output_prefix}_heatmap.html")
-    # pio.write_html(fig, f"{output_prefix}_heatmap.html")
-    # fig.write_image(f"{output_prefix}_heatmap.png", width=2700, height=2800, scale=1)
 
-    ##################### PLOTLY END #####################
-    
-    
     # serialize distance matrix to binary format
     LOGGER.INFO(f"serializing the distance matrix to {output_prefix}_distmat.pkl")
     similarity_df.to_pickle(f"{output_prefix}_distmat.pkl")
@@ -306,6 +314,7 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
     newick_out = f"{output_prefix}.newick"
 
     if newick:
+        LOGGER.INFO(f"Writing newick tree to {newick_out}")
         # Call the function with your similarity DataFrame and 'single' linkage method
         try:
             newick_string = similarity_df_to_newick(similarity_df, linkage_method)

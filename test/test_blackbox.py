@@ -982,6 +982,135 @@ class TestExport(unittest.TestCase):
         for i in range(len(df)):
             self.assertAlmostEqual(df.iloc[i, i], 100.0, delta=0.01)
 
+    def test_export_invalid_linkage_clean_error(self):
+        """ISSUE-017: invalid --linkage exits cleanly (no raw scipy traceback),
+        and the error message lists the valid linkage methods."""
+        out = os.path.join(self.tmpdir, "exp_bogus")
+        rc, stdout, stderr = run_command(
+            f"DBRetina export -p {self.pw_file} -m containment "
+            f"--newick --linkage BOGUS -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "invalid --linkage should be a nonzero exit")
+        self.assertNotIn("Traceback", combined,
+                         f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("ValueError", combined,
+                         f"raw ValueError leaked:\n{combined}")
+        # Message should mention --linkage and list at least one valid method.
+        self.assertIn("linkage", combined.lower())
+        self.assertTrue(
+            any(m in combined for m in
+                ["single", "complete", "average", "weighted",
+                 "centroid", "median", "ward"]),
+            f"error should list valid linkage methods:\n{combined}"
+        )
+        # No partial output should be relied upon, but at minimum the run
+        # must not have produced a (stale) newick from the bogus method.
+        self.assertFalse(os.path.exists(f"{out}.newick"),
+                         "no newick should be written when --linkage is invalid")
+
+    def test_export_valid_linkage_still_works(self):
+        """ISSUE-017: a valid --linkage value (average) still succeeds."""
+        out = os.path.join(self.tmpdir, "exp_avg")
+        rc, _, stderr = run_command(
+            f"DBRetina export -p {self.pw_file} -m containment "
+            f"--newick --linkage average -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}.newick")
+
+    def test_export_empty_pairwise_clean_error(self):
+        """ISSUE-027: a truly empty pairwise TSV yields a clean error,
+        not a raw pandas EmptyDataError traceback."""
+        empty_tsv = os.path.join(self.tmpdir, "empty.tsv")
+        open(empty_tsv, "w").close()
+        out = os.path.join(self.tmpdir, "exp_empty")
+        rc, stdout, stderr = run_command(
+            f"DBRetina export -p {empty_tsv} -m containment -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "empty pairwise should be a nonzero exit")
+        self.assertNotIn("Traceback", combined,
+                         f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("EmptyDataError", combined,
+                         f"raw EmptyDataError leaked:\n{combined}")
+
+    def test_export_comments_only_pairwise_clean_error(self):
+        """ISSUE-027: a comments-only pairwise TSV yields a clean error."""
+        comments_tsv = os.path.join(self.tmpdir, "onlycomments.tsv")
+        with open(comments_tsv, "w") as f:
+            f.write("# DBRetina pairwise output\n# population_size: 10\n")
+        out = os.path.join(self.tmpdir, "exp_comments")
+        rc, stdout, stderr = run_command(
+            f"DBRetina export -p {comments_tsv} -m containment -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "comments-only pairwise should be a nonzero exit")
+        self.assertNotIn("Traceback", combined,
+                         f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("EmptyDataError", combined,
+                         f"raw EmptyDataError leaked:\n{combined}")
+
+    def test_export_nonexistent_output_dir(self):
+        """ISSUE-028: -o prefix in a nonexistent directory must not crash with a
+        raw FileNotFoundError. We auto-create the parent dir, so it succeeds and
+        the output files are present."""
+        out = os.path.join(self.tmpdir, "no_such_dir_xyz", "pref")
+        rc, stdout, stderr = run_command(
+            f"DBRetina export -p {self.pw_file} -m containment -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotIn("Traceback", combined,
+                         f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("FileNotFoundError", combined,
+                         f"raw FileNotFoundError leaked:\n{combined}")
+        # Chosen behavior: auto-create the parent directory -> success + output.
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_heatmap.png")
+        assert_file_exists(self, f"{out}_distmat.tsv")
+
+    def test_export_output_prefix_parent_is_file(self):
+        """ISSUE-028 follow-up: -o whose parent path component is an existing FILE
+        must fail with a clean error, not a raw OSError traceback."""
+        afile = write_file(os.path.join(self.tmpdir, "afile"), "x\n")
+        out = os.path.join(afile, "pref")  # parent component 'afile' is a regular file
+        rc, stdout, stderr = run_command(
+            f"DBRetina export -p {self.pw_file} -m containment -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0)
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertIn("[ERROR]", combined)
+
+    def test_export_heatmap_log_matches_reality(self):
+        """ISSUE-039: the heatmap log line must reference a file that is actually
+        written. Only a PNG is produced, so the log must not claim a .html file
+        that never appears on disk."""
+        out = os.path.join(self.tmpdir, "exp_log")
+        rc, stdout, stderr = run_command(
+            f"DBRetina export -p {self.pw_file} -m containment -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        combined = stdout + stderr
+        heatmap_lines = [ln for ln in combined.splitlines()
+                         if "heatmap" in ln.lower() and ("Writing" in ln or "writing" in ln.lower())]
+        self.assertTrue(heatmap_lines, f"expected a heatmap log line:\n{combined}")
+        for ln in heatmap_lines:
+            # Any file the log claims to write must exist on disk.
+            for token in ln.split():
+                if "_heatmap." in token:
+                    claimed = token.strip().strip("'\"")
+                    self.assertTrue(
+                        os.path.exists(claimed),
+                        f"log claims to write {claimed} but it does not exist; "
+                        f"log line: {ln}"
+                    )
+        # Specifically: no .html is written, so no log line may claim one.
+        self.assertFalse(
+            any("_heatmap.html" in ln for ln in heatmap_lines),
+            f"log claims a _heatmap.html that is never written:\n{combined}"
+        )
+
 
 # ============================================================
 # SECTION 8: Dedup Tests
