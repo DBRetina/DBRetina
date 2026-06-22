@@ -214,7 +214,8 @@ Detailed description:
     # clean error on every route, instead of crashing in (or silently skipping)
     # the store/.dbrp branches below (issues 043/053).
     from dbretina.compat import pairwise_has_pvalue
-    if metric == "pvalue" and not pairwise_has_pvalue(pairwise_file):
+    input_has_pvalue = pairwise_has_pvalue(pairwise_file)
+    if metric == "pvalue" and not input_has_pvalue:
         ctx.obj.ERROR("pvalue not found in pairwise file!")
 
     if metric in metric_to_col:
@@ -231,9 +232,16 @@ Detailed description:
     if groups_file != "NA" and not os.path.exists(groups_file):
         ctx.obj.ERROR(f"Groups file {groups_file} doesn't exist.")
 
-    # Copy the TSV header (comments + the column header) into the output. A
-    # parquet directory / .dbrp has no text header to copy, so just seed the
-    # output with the #command line for the store branch to append to (issue 020).
+    # The output's first non-comment line must be the canonical column header,
+    # identical across input forms. The .tsv form copies the source's full text
+    # header (comments + that header row). A parquet directory / .dbrp has no text
+    # header to copy, so we seed the #command line and then write the SAME column
+    # header explicitly -- otherwise the store/.dbrp output was headerless while
+    # the data rows matched, an inconsistency across forms (issue 047).
+    _COLUMN_HEADER = (
+        "group_1_ID\tgroup_2_ID\tgroup_1_name\tgroup_2_name\tshared_features\t"
+        "containment\tochiai\tjaccard\tcsi\tdice\todds_ratio"
+    )
     if input_kind == "tsv":
         with (open(pairwise_file) as f, open(output_file, 'w') as w):
             for line in f:
@@ -246,6 +254,8 @@ Detailed description:
     else:
         with open(output_file, 'w') as w:
             w.write(f"#command: {get_command()}\n")
+            header = _COLUMN_HEADER + ("\tpvalue" if input_has_pvalue else "")
+            w.write(header + "\n")
 
     ctx.obj.INFO(
         f"Querying the pairwise matrix on the {metric} column with a cutoff of {cutoff} and groups file {groups_file}."

@@ -6155,6 +6155,336 @@ class TestSetcovDeterminism(unittest.TestCase):
 
 
 # ============================================================
+# SECTION: output-consistency across input forms (issues 047, 048, 063)
+# ============================================================
+
+def _read_header_and_rows(path):
+    """Split a query/pairwise-style TSV into (column_header, data_rows).
+
+    Skips '#'-comment lines; the first remaining line is the column header
+    (group_1_ID...), the rest are tab-split data rows. Returns
+    (header_str_or_None, list_of_field_lists).
+    """
+    header = None
+    rows = []
+    with open(path) as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            if header is None:
+                header = line
+            else:
+                rows.append(line.split("\t"))
+    return header, rows
+
+
+class TestQueryHeaderConsistency(unittest.TestCase):
+    """issue 047: query output column-header must be identical across input forms.
+
+    The .tsv query path copies the source TSV's column-header row into the output;
+    the store (parquet dir) and .dbrp paths used to seed only a '#command:' line,
+    so dir/.dbrp query output was headerless. The DATA rows were already byte-
+    identical across forms; only the column-header row differed. After the fix all
+    three forms emit the same canonical 'group_1_ID...odds_ratio[,pvalue]' header.
+
+    Uses the shared fixture, which emits .tsv + parquet dir + .dbrp side by side.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.parquet_dir = f"{cls.prefix}_DBRetina_pairwise"
+        cls.dbrp = f"{cls.prefix}_DBRetina_pairwise.dbrp"
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_qhdr_")
+        self.assertTrue(os.path.isdir(self.parquet_dir),
+                        f"fixture missing parquet dir: {self.parquet_dir}")
+        self.assertTrue(os.path.isfile(self.dbrp),
+                        f"fixture missing .dbrp: {self.dbrp}")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    @staticmethod
+    def _sorted_rows(rows):
+        # Store/.dbrp/awk emit rows in a different order; compare as a set of tuples.
+        return sorted(tuple(r) for r in rows)
+
+    def test_047_query_header_identical_across_forms(self):
+        """query on .tsv / parquet dir / .dbrp -> identical column-header row AND
+        identical data rows (order-independent)."""
+        out_tsv = os.path.join(self.tmpdir, "q_tsv")
+        out_dir = os.path.join(self.tmpdir, "q_dir")
+        out_dbrp = os.path.join(self.tmpdir, "q_dbrp")
+        for src, out in ((self.pw_file, out_tsv),
+                         (self.parquet_dir, out_dir),
+                         (self.dbrp, out_dbrp)):
+            rc, _, stderr = run_command(
+                f"DBRetina query -p {src} -m ochiai -c 50 -o {out}"
+            )
+            assert_no_traceback(self, stderr, f"query {src}")
+            self.assertEqual(rc, 0, stderr)
+            assert_file_exists(self, f"{out}.tsv")
+
+        h_tsv, r_tsv = _read_header_and_rows(f"{out_tsv}.tsv")
+        h_dir, r_dir = _read_header_and_rows(f"{out_dir}.tsv")
+        h_dbrp, r_dbrp = _read_header_and_rows(f"{out_dbrp}.tsv")
+
+        # The .tsv form is the reference; its column header is the canonical one.
+        self.assertEqual(
+            h_tsv,
+            "group_1_ID\tgroup_2_ID\tgroup_1_name\tgroup_2_name\t"
+            "shared_features\tcontainment\tochiai\tjaccard\tcsi\tdice\todds_ratio",
+            f"unexpected canonical header from .tsv form:\n{h_tsv!r}",
+        )
+        # The fix: parquet-dir and .dbrp forms now emit the SAME column header.
+        self.assertEqual(h_dir, h_tsv,
+                         f"parquet-dir query header differs from .tsv:\n{h_dir!r}")
+        self.assertEqual(h_dbrp, h_tsv,
+                         f".dbrp query header differs from .tsv:\n{h_dbrp!r}")
+
+        # Data rows must be identical too (consistency, not just the header).
+        self.assertEqual(self._sorted_rows(r_dir), self._sorted_rows(r_tsv),
+                         "parquet-dir query data rows differ from .tsv")
+        self.assertEqual(self._sorted_rows(r_dbrp), self._sorted_rows(r_tsv),
+                         ".dbrp query data rows differ from .tsv")
+
+    def test_047_query_header_identical_with_pvalue(self):
+        """With a pvalue column present, the canonical header (incl trailing
+        'pvalue') is still identical across .tsv / parquet dir / .dbrp."""
+        prefix, pw = _ensure_shared_pvalue_fixture()
+        parquet_dir = f"{prefix}_DBRetina_pairwise"
+        dbrp = f"{prefix}_DBRetina_pairwise.dbrp"
+        self.assertTrue(os.path.isdir(parquet_dir), parquet_dir)
+        self.assertTrue(os.path.isfile(dbrp), dbrp)
+
+        out_tsv = os.path.join(self.tmpdir, "qp_tsv")
+        out_dir = os.path.join(self.tmpdir, "qp_dir")
+        out_dbrp = os.path.join(self.tmpdir, "qp_dbrp")
+        for src, out in ((pw, out_tsv), (parquet_dir, out_dir), (dbrp, out_dbrp)):
+            rc, _, stderr = run_command(
+                f"DBRetina query -p {src} -m ochiai -c 50 -o {out}"
+            )
+            assert_no_traceback(self, stderr, f"query(pvalue) {src}")
+            self.assertEqual(rc, 0, stderr)
+
+        h_tsv, _ = _read_header_and_rows(f"{out_tsv}.tsv")
+        h_dir, _ = _read_header_and_rows(f"{out_dir}.tsv")
+        h_dbrp, _ = _read_header_and_rows(f"{out_dbrp}.tsv")
+        self.assertTrue(h_tsv.endswith("\tpvalue"),
+                        f"pvalue fixture .tsv header lacks pvalue:\n{h_tsv!r}")
+        self.assertEqual(h_dir, h_tsv,
+                         f"parquet-dir pvalue header differs from .tsv:\n{h_dir!r}")
+        self.assertEqual(h_dbrp, h_tsv,
+                         f".dbrp pvalue header differs from .tsv:\n{h_dbrp!r}")
+
+
+class TestBipartiteMetricRestriction(unittest.TestCase):
+    """issue 048: bipartite -m must be restricted to the metrics it emits.
+
+    bipartite only carries containment/ochiai/jaccard (+ pvalue when present) in
+    its output; csi/dice/odds_ratio were accepted (exit 0) but silently produced
+    output WITHOUT those columns. The fix restricts -m to the genuinely supported
+    set with a clean Click error for the rest, matching the --help text
+    ['containment','ochiai','jaccard','pvalue'].
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_bipm_")
+        self.g1 = write_file(os.path.join(self.tmpdir, "g1.txt"), "GroupA\nGroupB\n")
+        self.g2 = write_file(os.path.join(self.tmpdir, "g2.txt"), "GroupC\nGroupD\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _bip(self, metric, out, pw=None):
+        return run_command(
+            f"DBRetina bipartite -p {pw or self.pw_file} --group1 {self.g1} "
+            f"--group2 {self.g2} -m {metric} -c 0 --no-plot -o {out}"
+        )
+
+    def test_048_unsupported_metric_clean_error(self):
+        """-m csi/dice/odds_ratio (computed columns bipartite does NOT emit) must
+        exit nonzero with a clean error that lists the supported metrics, never a
+        silent exit-0 with missing columns."""
+        for metric in ("csi", "dice", "odds_ratio"):
+            out = os.path.join(self.tmpdir, f"bip_{metric}")
+            rc, stdout, stderr = self._bip(metric, out)
+            combined = stdout + stderr
+            assert_no_traceback(self, stderr, f"bipartite -m {metric}")
+            self.assertNotEqual(
+                rc, 0, f"bipartite -m {metric} should be rejected, got exit 0")
+            self.assertIn(metric, combined,
+                          f"error should name the rejected metric '{metric}':\n{combined}")
+            # Lists the genuinely supported set so the user can pick a valid one.
+            for supported in ("containment", "ochiai", "jaccard"):
+                self.assertIn(supported, combined,
+                              f"error should list supported metric '{supported}':\n{combined}")
+            # No partial/silent output for a rejected metric.
+            self.assertFalse(
+                os.path.exists(f"{out}_bipartite_pairwise.tsv"),
+                f"rejected -m {metric} must not write a bipartite TSV",
+            )
+
+    def test_048_supported_metric_emits_its_column(self):
+        """-m containment/ochiai/jaccard still works and the metric column is
+        present in the output (no regression)."""
+        for metric in ("containment", "ochiai", "jaccard"):
+            out = os.path.join(self.tmpdir, f"bip_ok_{metric}")
+            rc, _, stderr = self._bip(metric, out)
+            assert_no_traceback(self, stderr, f"bipartite -m {metric}")
+            self.assertEqual(rc, 0, stderr)
+            tsv = f"{out}_bipartite_pairwise.tsv"
+            assert_file_exists(self, tsv)
+            header, _ = _read_header_and_rows(tsv)
+            self.assertIn(metric, header.split("\t"),
+                          f"bipartite output missing the '{metric}' column:\n{header}")
+
+    def test_048_pvalue_supported_when_present(self):
+        """pvalue IS carried in bipartite output when the input has it, so -m
+        pvalue must remain accepted (and emit the pvalue column)."""
+        prefix, pw = _ensure_shared_pvalue_fixture()
+        out = os.path.join(self.tmpdir, "bip_pv")
+        rc, _, stderr = self._bip("pvalue", out, pw=pw)
+        assert_no_traceback(self, stderr, "bipartite -m pvalue")
+        self.assertEqual(rc, 0, stderr)
+        tsv = f"{out}_bipartite_pairwise.tsv"
+        assert_file_exists(self, tsv)
+        header, _ = _read_header_and_rows(tsv)
+        self.assertIn("pvalue", header.split("\t"),
+                      f"bipartite -m pvalue output missing 'pvalue' column:\n{header}")
+
+    def test_048_bogus_metric_still_clean_error(self):
+        """A wholly-unknown metric (issue 023 guard) still errors cleanly under
+        the tightened validation."""
+        out = os.path.join(self.tmpdir, "bip_bogus")
+        rc, stdout, stderr = self._bip("BOGUS", out)
+        assert_no_traceback(self, stderr, "bipartite -m BOGUS")
+        self.assertNotEqual(rc, 0, "bogus metric should be rejected")
+        self.assertIn("BOGUS", stdout + stderr)
+
+
+class TestClusterBareTsvParity(unittest.TestCase):
+    """issue 063: cluster on a bare-TSV-only layout must match the store/.dbrp paths.
+
+    The bare-TSV branch populated self.original_nodes from EVERY pair row BEFORE
+    the cutoff filter, so it emitted singleton clusters for isolated nodes that the
+    store and .dbrp paths (which register only nodes incident to a surviving edge)
+    omit. The meaningful (size>=2) clusters were already identical across all three
+    paths; only isolated-node singletons differed. After the fix the bare-TSV path
+    gates node population behind the same cutoff, so all three agree exactly.
+
+    A bare-TSV-only layout is reproduced by copying ONLY the pairwise.tsv into an
+    isolated directory (no .dbrp / parquet sibling), forcing the bare-TSV branch.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.parquet_dir = f"{cls.prefix}_DBRetina_pairwise"
+        cls.dbrp = f"{cls.prefix}_DBRetina_pairwise.dbrp"
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_clbare_")
+        # Isolated copy of ONLY the .tsv -> no .dbrp / parquet sibling, so the
+        # cluster command takes the bare-TSV fallback branch.
+        self.bare_dir = os.path.join(self.tmpdir, "bare")
+        os.makedirs(self.bare_dir)
+        self.bare_tsv = os.path.join(self.bare_dir, os.path.basename(self.pw_file))
+        shutil.copy(self.pw_file, self.bare_tsv)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    @staticmethod
+    def _clusters(path):
+        """Parse a *_clusters.tsv -> set of frozensets of (lowercased) members.
+
+        Set-of-frozensets so member ordering within a line (which differs across
+        readers) doesn't matter; SINGLETONS are included so the asymmetry under
+        test is actually compared.
+        """
+        clusters = set()
+        with open(path) as f:
+            for line in f:
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if not parts or "cluster_id" in parts[0].lower():
+                    continue
+                members = parts[-1].split("|")
+                clusters.add(frozenset(m.strip().lower() for m in members if m.strip()))
+        return clusters
+
+    def test_063_bare_tsv_clusters_match_dbrp(self):
+        """cluster on the bare-TSV layout yields the SAME clusters (incl singleton
+        handling) as the .dbrp (store) path for the same cutoff."""
+        out_bare = os.path.join(self.tmpdir, "clu_bare")
+        out_dbrp = os.path.join(self.tmpdir, "clu_dbrp")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.bare_tsv} -m ochiai -c 50 -o {out_bare}"
+        )
+        assert_no_traceback(self, stderr, "cluster bare-tsv")
+        self.assertEqual(rc, 0, stderr)
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.dbrp} -m ochiai -c 50 -o {out_dbrp}"
+        )
+        self.assertEqual(rc, 0, stderr)
+
+        bare = self._clusters(f"{out_bare}_clusters.tsv")
+        dbrp = self._clusters(f"{out_dbrp}_clusters.tsv")
+        self.assertEqual(
+            bare, dbrp,
+            "bare-TSV cluster set differs from .dbrp path (issue 063: "
+            f"bare emits extra singletons).\nbare={sorted(map(sorted, bare))}\n"
+            f"dbrp={sorted(map(sorted, dbrp))}",
+        )
+        # And there must be no isolated-node singletons the store path omits.
+        self.assertFalse(
+            any(len(c) == 1 for c in bare - dbrp),
+            "bare-TSV path still emits singleton clusters the .dbrp path omits",
+        )
+
+    def test_063_bare_tsv_clusters_match_parquet_dir(self):
+        """Same parity check against the parquet-dir (store) path."""
+        out_bare = os.path.join(self.tmpdir, "clu_bare2")
+        out_store = os.path.join(self.tmpdir, "clu_store")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.bare_tsv} -m ochiai -c 50 -o {out_bare}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.parquet_dir} -m ochiai -c 50 -o {out_store}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(
+            self._clusters(f"{out_bare}_clusters.tsv"),
+            self._clusters(f"{out_store}_clusters.tsv"),
+            "bare-TSV cluster set differs from parquet-dir path (issue 063)",
+        )
+
+    def test_063_meaningful_clusters_present(self):
+        """Guard: the fix must not drop the real (size>=2) cluster -- the bare-TSV
+        path must still contain the {groupa,groupb,groupf} community."""
+        out_bare = os.path.join(self.tmpdir, "clu_bare3")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.bare_tsv} -m ochiai -c 50 -o {out_bare}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        bare = self._clusters(f"{out_bare}_clusters.tsv")
+        self.assertIn(frozenset({"groupa", "groupb", "groupf"}), bare,
+                      f"bare-TSV path lost the meaningful cluster:\n{bare}")
+
+
+# ============================================================
 # Main
 # ============================================================
 

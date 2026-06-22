@@ -6,7 +6,7 @@ import _dbretina_internal as dbretina_internal
 import click
 import contextlib
 from dbretina.click_context import cli
-from dbretina.validators import validate_metric
+from dbretina.validators import validate_bipartite_metric
 import subprocess
 import os
 import pandas as pd
@@ -222,7 +222,7 @@ def plot_pivot_table(df_bipartite, metric, output_prefix):
 @click.option('--group2', "group_2_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="group2 single-column supergroups file")
 @click.option('--gmt1', "gmt_1_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="GMT file 1")
 @click.option('--gmt2', "gmt_2_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="GMT file 2")
-@click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="Bipartite coloring based on ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_bipartite_metric, help="Bipartite coloring based on ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('-c', '--cutoff', 'cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default = True, help="Include comparisons (similarity > cutoff)")
 @click.option('--no-plot', "no_plot", is_flag=True, default=False, help="do not plot the bipartite graph")
 @click.option('--no-1-1', "no_1_1", is_flag=True, default=False, help="do not include 1-1 mapping")

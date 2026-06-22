@@ -283,12 +283,18 @@ class Clusters:
                 for row in pairwise_tsv:
                     row = row.strip().split('\t')
                     similarity = float(row[self.metric_col])
-                    self.original_nodes[int(row[0])] = row[2]
-                    self.original_nodes[int(row[1])] = row[3]
 
                     # don't make graph edge
                     if similarity < self.cut_off_threshold:
                         continue
+
+                    # Register nodes only for edges that PASS the cutoff, matching
+                    # the store/.dbrp paths above (which iterate cutoff-filtered
+                    # pairs). Populating original_nodes from every pre-cutoff row
+                    # made the bare-TSV path emit singleton clusters for isolated
+                    # nodes that the store/.dbrp paths omit (issue 063).
+                    self.original_nodes[int(row[0])] = row[2]
+                    self.original_nodes[int(row[1])] = row[3]
 
                     if batch_counter < self.edges_batch_number:
                         batch_counter += 1
@@ -385,12 +391,18 @@ class Clusters:
                 for row in pairwise_tsv:
                     row = row.strip().split('\t')
                     similarity = float(row[self.metric_col])
-                    self.original_nodes[int(row[0])] = row[2]
-                    self.original_nodes[int(row[1])] = row[3]
 
                     # don't make graph edge
                     if similarity < self.cut_off_threshold:
                         continue
+
+                    # Register nodes only for edges that PASS the cutoff, matching
+                    # the store/.dbrp paths above (which iterate cutoff-filtered
+                    # pairs). Populating original_nodes from every pre-cutoff row
+                    # made the bare-TSV path emit singleton clusters for isolated
+                    # nodes that the store/.dbrp paths omit (issue 063).
+                    self.original_nodes[int(row[0])] = row[2]
+                    self.original_nodes[int(row[1])] = row[3]
 
                     if batch_counter < self.edges_batch_number:
                         batch_counter += 1
@@ -405,7 +417,7 @@ class Clusters:
 
                 if len(edges_tuples):
                     self.add_edges(edges_tuples)
-    
+
     def plot_histogram(self, cluster_sizes, filename):
         # np.min/np.max have no identity on an empty array; skip the plot when
         # there are no clusters rather than crashing.
