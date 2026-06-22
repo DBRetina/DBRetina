@@ -346,18 +346,30 @@ def create_app(
     def get_group_pairs(
         group_name: str,
         metric: Optional[str] = Query(None),
-        cutoff: float = Query(0.0, ge=0),
+        cutoff: Optional[float] = Query(None, ge=0),
         limit: int = Query(1000, ge=1, le=100000),
     ):
         """Get all pairs involving a specific group."""
+        # query_group only applies ``cutoff`` when a metric is given (it's the
+        # AND <metric> >= cutoff clause); without a metric the cutoff is silently
+        # ignored and ALL pairs come back. Reject that combination as a clear 400
+        # instead of returning a wrong-but-200 (the default-of-None sentinel lets
+        # us tell "user passed cutoff" from "omitted").
+        if cutoff is not None and not metric:
+            raise ValidationError(
+                detail="cutoff requires a metric (specify ?metric= to filter by cutoff)",
+                field="cutoff",
+                value=cutoff,
+            )
         if metric:
             validate_metric(metric)
         # cutoff is interpolated into SQL by query_group; reject non-finite /
         # out-of-range values here (this endpoint never validated it before, so a
         # cutoff of inf reached DuckDB as a bare token -> 500).
-        validate_cutoff(cutoff, metric or app.state.default_metric)
+        effective_cutoff = cutoff if cutoff is not None else 0.0
+        validate_cutoff(effective_cutoff, metric or app.state.default_metric)
         try:
-            reader = store.query_group(group_name, metric=metric, cutoff=cutoff)
+            reader = store.query_group(group_name, metric=metric, cutoff=effective_cutoff)
         except KeyError:
             raise DataNotFoundError(
                 detail=f"Group not found: {group_name}",
@@ -681,8 +693,11 @@ def create_app(
         try:
             features = store.shared_features(group_a, group_b)
         except KeyError as e:
+            # e.args[0] already reads "Group not found in gene sets: <name>";
+            # use it directly so the detail isn't the doubled
+            # "Group not found: 'Group not found in gene sets: x'".
             raise DataNotFoundError(
-                detail=f"Group not found: {e}",
+                detail=str(e.args[0]) if e.args else "Group not found",
                 resource_type="group",
             )
         except Exception as e:
@@ -747,13 +762,13 @@ def create_app(
         - **projection**: PageRank on gene co-occurrence graph
         """
         gi = _get_gene_importance()
-        # The edge_weighted method is the only one that consumes ``metric`` and
-        # ``cutoff``; reject an unknown metric or a non-finite / out-of-range
-        # cutoff up front as a 400. (cutoff is interpolated into SQL by
-        # edge_weighted_scores, so inf/NaN would otherwise 500 and a negative
-        # value would be a wrong-but-200.)
+        # Validate ``metric`` for EVERY method (not just edge_weighted): a typo'd
+        # metric should be a clean 400 regardless of method, even though only
+        # edge_weighted consumes it. The cutoff (interpolated into SQL by
+        # edge_weighted_scores, so inf/NaN would 500 and a negative value would be
+        # a wrong-but-200) only matters for that branch, so validate it there.
+        _validate_metric(body.metric, store.available_metrics)
         if body.method == "edge_weighted":
-            _validate_metric(body.metric, store.available_metrics)
             validate_cutoff(body.cutoff, body.metric)
         try:
             df = gi.hub_genes(
@@ -771,9 +786,12 @@ def create_app(
                 "hops": body.hops,
                 "genes": genes,
             }
-        except KeyError as e:
+        except KeyError:
+            # Don't echo the KeyError: its message enumerates the dataset's group
+            # catalog ("...Available groups include: ..."). A short message plus
+            # resource_id is enough; the full list is at GET /api/v1/groups.
             raise DataNotFoundError(
-                detail=f"Group not found: {e}",
+                detail=f"Group not found: {body.group_name}",
                 resource_type="group",
                 resource_id=body.group_name,
             )
@@ -1152,9 +1170,14 @@ def create_app(
             return result
 
         except KeyError as e:
+            # e.args[0] already reads "Group not found: <name>"; use it directly
+            # (and set resource_id) so the detail isn't the doubled
+            # "Group not found: 'Group not found: x'".
+            missing = e.args[0] if e.args else None
             raise DataNotFoundError(
-                detail=f"Group not found: {e}",
+                detail=str(missing) if missing else "Group not found",
                 resource_type="group",
+                resource_id=str(missing).split(": ", 1)[-1] if missing else None,
             )
         except Exception as e:
             raise DBRetinaAPIError(detail=f"Path finding failed: {e}")
@@ -1583,6 +1606,21 @@ def create_app(
     # ── Static file serving for dashboard ───────────────────────
 
     dashboard_dir = pathlib.Path(__file__).parent / "dashboard_dist"
+
+    # Browsers auto-request /favicon.ico on every dashboard load; without a route
+    # the catch-all StaticFiles mount 404s it (noisy console error). Serve the
+    # bundled icon if present, else answer 204 No Content. Registered BEFORE the
+    # "/" mount so this explicit route wins.
+    from fastapi.responses import Response, FileResponse
+
+    _favicon = dashboard_dir / "favicon.ico"
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon():
+        if _favicon.is_file():
+            return FileResponse(str(_favicon), media_type="image/x-icon")
+        return Response(status_code=204)
+
     if dashboard_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(dashboard_dir), html=True), name="dashboard")
 

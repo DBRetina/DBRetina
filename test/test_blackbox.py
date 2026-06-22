@@ -3252,6 +3252,268 @@ class TestRestSql(unittest.TestCase):
             store.close()
 
 
+@unittest.skipUnless(_HAS_REST_TEST, "REST serve-low tests need [server] extra + httpx")
+class TestRestServeLows(unittest.TestCase):
+    """ISSUE-060: bundle of LOW-severity serve (REST) polish/hardening items.
+
+    1. hub-genes (method=hypergraph, the default) only validated ``metric`` in the
+       edge_weighted branch, so a typo'd metric silently 200'd. Validate it for ALL
+       methods -> clean 400.
+    2. hub-genes 404 for a missing group echoed the dataset group catalog
+       ("...Available groups include: kegg_..., ...") into the detail. Trim it.
+    3. shared-features + graph/shortest-path embedded a KeyError that already
+       contains the full "Group not found: x" sentence -> doubled message
+       "Group not found: 'Group not found: x'". Use the clean name.
+    4. POST /sql allowed PRAGMA / version() / duckdb_settings() etc. (metadata
+       disclosure). Extend the denylist; legit SELECT-over-pairs still works and
+       the S1 sandbox (file read + DDL/DML) stays blocked.
+    5. groups/{g}/pairs?cutoff=... with no metric silently ignored the cutoff and
+       returned ALL pairs -> now a clean 400 ("cutoff requires a metric").
+    6. /favicon.ico 404'd on every dashboard load -> tiny 204 route.
+
+    Prefers the (larger) kegg substrate and falls back to the synthetic fixture so
+    the suite stays portable.
+    """
+
+    KEGG_PARQUET = "/home/mabuelanin/dbretina_scratch/out/kegg_DBRetina_pairwise"
+    KEGG_DBRI = "/home/mabuelanin/dbretina_scratch/out/kegg.dbri"
+
+    def setUp(self):
+        if (os.path.isdir(self.KEGG_PARQUET)
+                and os.path.exists(os.path.join(self.KEGG_PARQUET, "manifest.json"))
+                and os.path.exists(self.KEGG_DBRI)):
+            self.tmpdir = None
+            self.parquet = self.KEGG_PARQUET
+            self.dbri = self.KEGG_DBRI
+        else:
+            self.tmpdir = tempfile.mkdtemp(prefix="dbretina_low_")
+            self.prefix, _ = setup_index_and_pairwise(self.tmpdir)
+            self.parquet = f"{self.prefix}_DBRetina_pairwise"
+            self.dbri = f"{self.prefix}.dbri"
+
+    def tearDown(self):
+        if self.tmpdir:
+            shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _client(self):
+        from dbretina.compat import open_pairwise
+        from dbretina.pairwise_store import PairwiseStore
+        from dbretina.rest_api import create_app
+        store = open_pairwise(self.parquet)
+        if store is None:
+            store = PairwiseStore(self.parquet, dbri_path=self.dbri)
+        else:
+            store._dbri_path = self.dbri
+        # raise_server_exceptions=False so a 500 surfaces as a status code we can
+        # assert on instead of re-raising into the worker.
+        return _TestClient(create_app(store, dbri_path=self.dbri),
+                           raise_server_exceptions=False), store
+
+    def _a_group(self, store):
+        """A real group name present in this store's gene sets."""
+        names = list(store.get_names_map().values())
+        self.assertTrue(names, "store has no groups")
+        return names[0]
+
+    # ── 1: hub-genes metric validated for ALL methods ─────────────────
+    def test_hub_genes_hypergraph_bad_metric_is_400(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.post("/api/v1/genes/hub-genes",
+                            json={"group_name": group, "method": "hypergraph",
+                                  "metric": "not_a_metric"})
+            self.assertEqual(r.status_code, 400,
+                             f"hypergraph + bad metric should be 400, got "
+                             f"{r.status_code}: {r.text[:200]}")
+            self.assertEqual(r.json()["error_code"], "VALIDATION_ERROR",
+                             f"wrong error_code: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_hub_genes_hypergraph_valid_metric_is_200(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.post("/api/v1/genes/hub-genes",
+                            json={"group_name": group, "method": "hypergraph",
+                                  "metric": "ochiai"})
+            self.assertEqual(r.status_code, 200,
+                             f"hypergraph + valid metric should be 200, got "
+                             f"{r.status_code}: {r.text[:300]}")
+            self.assertEqual(r.json()["method"], "hypergraph")
+        finally:
+            store.close()
+
+    # ── 2: hub-genes missing group 404 must not enumerate the catalog ──
+    def test_hub_genes_missing_group_404_no_catalog(self):
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/genes/hub-genes",
+                            json={"group_name": "definitely_no_such_group_xyz",
+                                  "method": "hypergraph", "metric": "ochiai"})
+            self.assertEqual(r.status_code, 404,
+                             f"missing group should be 404, got "
+                             f"{r.status_code}: {r.text[:200]}")
+            self.assertNotIn("Available groups include", r.text,
+                             f"404 detail leaks the group catalog: {r.text[:300]}")
+        finally:
+            store.close()
+
+    # ── 3: clean (non-doubled) not-found messages ─────────────────────
+    def test_shared_features_missing_group_clean_message(self):
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/shared-features",
+                           params={"group_a": "no_such_group_a", "group_b": "no_such_group_b"})
+            self.assertEqual(r.status_code, 404,
+                             f"missing group should be 404, got "
+                             f"{r.status_code}: {r.text[:200]}")
+            detail = r.json()["detail"]
+            # Must not be the doubled "Group not found: 'Group not found: x'".
+            self.assertNotIn("Group not found: 'Group not found",
+                             detail, f"doubled not-found message: {detail!r}")
+            self.assertNotIn("Group not found: \"Group not found",
+                             detail, f"doubled not-found message: {detail!r}")
+        finally:
+            store.close()
+
+    def test_shortest_path_missing_group_clean_message(self):
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/graph/shortest-path",
+                           params={"source": "no_such_source", "target": "no_such_target"})
+            self.assertEqual(r.status_code, 404,
+                             f"missing group should be 404, got "
+                             f"{r.status_code}: {r.text[:200]}")
+            detail = r.json()["detail"]
+            self.assertNotIn("Group not found: 'Group not found",
+                             detail, f"doubled not-found message: {detail!r}")
+            self.assertNotIn("Group not found: \"Group not found",
+                             detail, f"doubled not-found message: {detail!r}")
+        finally:
+            store.close()
+
+    # ── 4: /sql metadata-disclosure denylist (S1 sandbox unchanged) ───
+    def test_sql_blocks_metadata_introspection(self):
+        client, store = self._client()
+        try:
+            for q in ("PRAGMA version",
+                      "SELECT version()",
+                      "SELECT * FROM duckdb_settings()",
+                      "PRAGMA database_list",
+                      "SELECT * FROM pragma_table_info('pairs')",
+                      "SELECT * FROM pg_tables",
+                      "SELECT * FROM sqlite_master",
+                      "SET memory_limit='1GB'"):
+                r = client.post("/api/v1/sql", json={"query": q})
+                self.assertEqual(r.status_code, 400,
+                                 f"metadata query {q!r} should be blocked (400), got "
+                                 f"{r.status_code}: {r.text[:200]}")
+                self.assertEqual(r.json()["error_code"], "UNSAFE_QUERY",
+                                 f"metadata query {q!r} wrong error_code: {r.text[:200]}")
+                self.assertNotIn("v1.", r.text,
+                                 f"metadata query {q!r} leaked a version string: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_sql_metadata_prefix_aliases_allowed(self):
+        """The metadata denylist must NOT false-positive on legit SELECTs that merely
+        alias/name something with a pg_/duckdb_/sqlite_/pragma_ prefix (issue 060.4
+        over-block). /sql runs arbitrary SELECTs, so these must still return 200."""
+        client, store = self._client()
+        try:
+            for q in ("SELECT ochiai AS pg_score FROM pairs LIMIT 1",
+                      "SELECT group_1_id AS pg_rank FROM pairs LIMIT 1",
+                      "WITH pg_top AS (SELECT * FROM pairs LIMIT 1) SELECT * FROM pg_top",
+                      "SELECT ochiai AS duckdb_note FROM pairs LIMIT 1",
+                      "SELECT ochiai AS sqlite_x FROM pairs LIMIT 1",
+                      "SELECT ochiai AS pragma_y FROM pairs LIMIT 1"):
+                r = client.post("/api/v1/sql", json={"query": q})
+                self.assertEqual(r.status_code, 200,
+                                 f"legit alias query {q!r} wrongly blocked: "
+                                 f"{r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_sql_legit_select_over_pairs_still_works(self):
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/sql",
+                            json={"query": "SELECT count(*) AS n FROM pairs"})
+            self.assertEqual(r.status_code, 200,
+                             f"legit SELECT over pairs should be 200, got "
+                             f"{r.status_code}: {r.text[:300]}")
+            self.assertEqual(r.json()["row_count"], 1)
+        finally:
+            store.close()
+
+    def test_sql_s1_sandbox_intact(self):
+        # The denylist extension must NOT weaken the S1 protections.
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/sql",
+                            json={"query": "SELECT * FROM read_text('/etc/passwd')"})
+            self.assertNotIn("root:", r.text, "sandbox leaked /etc/passwd")
+            self.assertNotEqual(r.status_code, 200,
+                                f"file-read query unexpectedly succeeded: {r.text[:200]}")
+            r = client.post("/api/v1/sql", json={"query": "DROP TABLE pairs"})
+            self.assertEqual(r.status_code, 400, f"DROP not blocked: {r.text[:200]}")
+            self.assertEqual(r.json()["error_code"], "UNSAFE_QUERY", r.text[:200])
+        finally:
+            store.close()
+
+    # ── 5: groups/{g}/pairs cutoff requires a metric ──────────────────
+    def test_group_pairs_cutoff_without_metric_is_400(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.get(f"/api/v1/groups/{group}/pairs", params={"cutoff": 50})
+            self.assertEqual(r.status_code, 400,
+                             f"cutoff without metric should be 400, got "
+                             f"{r.status_code}: {r.text[:200]}")
+            self.assertEqual(r.json()["error_code"], "VALIDATION_ERROR",
+                             f"wrong error_code: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_group_pairs_no_metric_no_cutoff_still_ok(self):
+        # The cutoff guard must not break the plain "all pairs for a group" call.
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.get(f"/api/v1/groups/{group}/pairs")
+            self.assertEqual(r.status_code, 200,
+                             f"plain group pairs should be 200, got "
+                             f"{r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_group_pairs_metric_and_cutoff_ok(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.get(f"/api/v1/groups/{group}/pairs",
+                           params={"metric": "ochiai", "cutoff": 0})
+            self.assertEqual(r.status_code, 200,
+                             f"metric+cutoff group pairs should be 200, got "
+                             f"{r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    # ── 6: /favicon.ico must not 404 ──────────────────────────────────
+    def test_favicon_not_404(self):
+        client, store = self._client()
+        try:
+            r = client.get("/favicon.ico")
+            self.assertNotEqual(r.status_code, 404,
+                                f"/favicon.ico should not 404, got {r.status_code}")
+            self.assertIn(r.status_code, (200, 204),
+                          f"/favicon.ico should be 200 or 204, got {r.status_code}")
+        finally:
+            store.close()
+
+
 @unittest.skipUnless(_HAS_REST_TEST, "REST concurrency tests need [server] extra + httpx")
 class TestRestConcurrency(unittest.TestCase):
     """ISSUE-055: PairwiseStore shares ONE DuckDB connection across all endpoints.

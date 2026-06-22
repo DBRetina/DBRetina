@@ -212,9 +212,41 @@ class AlgorithmError(DBRetinaAPIError):
 
 # ── Utility functions ─────────────────────────────────────────────
 
+# DDL/DML + privilege keywords (mutate or escalate). These never appear as a
+# bare word in a legitimate read-only SELECT over `pairs`.
 DANGEROUS_SQL_PATTERNS = [
     "DROP", "DELETE", "TRUNCATE", "ALTER", "CREATE", "INSERT",
     "UPDATE", "EXEC", "EXECUTE", "GRANT", "REVOKE",
+    # Statement-leading keywords that change session state or run procedural /
+    # introspection statements (metadata disclosure: PRAGMA/SET surface settings,
+    # CALL invokes table functions like pragma_version). enable_external_access is
+    # already off, so these leak metadata only — but a read-only /sql endpoint has
+    # no reason to allow them.
+    "PRAGMA", "CALL", "SET", "ATTACH", "DETACH", "USE", "INSTALL", "LOAD", "COPY",
+]
+
+# Metadata-introspection identifiers (table functions + catalog tables/schemas)
+# that disclose engine/version/settings/schema details. Matched as regexes (the
+# duckdb_*/pragma_*/pg_* families and version() can't be expressed as bare
+# word-boundary keywords). `pairs` has no column/alias matching any of these.
+_METADATA_SQL_PATTERNS = [
+    # duckdb_*/pragma_* are TABLE FUNCTIONS — always invoked with parens (a bare
+    # `FROM duckdb_settings` is a Catalog Error) — so anchor on the call-paren.
+    # This blocks duckdb_settings()/functions()/pragma_table_info() etc. while
+    # leaving a user alias/CTE like `duckdb_note` or `pragma_x` alone.
+    r"\bduckdb_\w+\s*\(",
+    r"\bpragma_\w+\s*\(",
+    r"\bversion\s*\(",        # version() scalar
+    r"\bcurrent_setting\s*\(",  # current_setting('...') reads a session setting
+    r"\binformation_schema\b",
+    r"\bpg_catalog\b",        # postgres-compat catalog schema
+    # postgres-compat catalog tables (enumerated, not a bare pg_ prefix, so a legit
+    # alias/CTE such as pg_score / pg_rank / pg_top on this arbitrary-SELECT endpoint
+    # is not wrongly rejected).
+    r"\bpg_(?:am|attrdef|attribute|class|collation|constraint|database|depend|"
+    r"description|enum|index|indexes|namespace|proc|sequence|sequences|settings|"
+    r"tables|tablespace|type|types|views|roles|user|prepared_statements|stat_\w+)\b",
+    r"\bsqlite_(?:master|schema|temp_master|temp_schema)\b",  # sqlite-compat metadata
 ]
 
 
@@ -227,7 +259,10 @@ def validate_sql_safety(query: str) -> None:
     """Check if SQL query is safe for read-only execution.
 
     Strips string literals and uses word-boundary matching so values
-    like 'updated_pathway' don't trigger the UPDATE check.
+    like 'updated_pathway' don't trigger the UPDATE check. Blocks DDL/DML and
+    session/metadata-introspection statements (PRAGMA/SET/CALL, duckdb_*/pragma_*
+    table functions, version(), the pg_*/sqlite_*/information_schema catalogs);
+    legitimate SELECTs over ``pairs`` are unaffected.
 
     Raises:
         UnsafeQueryError: If query contains dangerous patterns.
@@ -238,6 +273,13 @@ def validate_sql_safety(query: str) -> None:
             raise UnsafeQueryError(
                 detail=f"SQL query contains blocked operation: {pattern}",
                 operation=pattern,
+            )
+    for pattern in _METADATA_SQL_PATTERNS:
+        m = re.search(pattern, stripped, re.IGNORECASE)
+        if m:
+            raise UnsafeQueryError(
+                detail="SQL query contains blocked metadata introspection",
+                operation=m.group(0),
             )
 
 
