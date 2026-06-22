@@ -107,12 +107,22 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
                 gene_sets_nodes_data[gene_set2]['fragmentation'] -= 1
         store.close()
     else:
-        # Fallback: existing .dbrp / TSV code
-        dbrp_path = os.path.splitext(pairwise_file)[0] + ".dbrp"
-        if not os.path.exists(dbrp_path):
-            dbrp_path = pairwise_file.replace("_pairwise.tsv", "_pairwise.dbrp")
+        # Fallback: existing .dbrp / TSV code. Resolve the canonical .dbrp
+        # sibling from any -p form (tsv / parquet dir / .dbrp); the old
+        # str.replace no-op'd for the dir/.dbrp forms and fed the directory path
+        # into the binary reader (issue 046).
+        from dbretina.compat import resolve_dbrp_path
+        dbrp_path = resolve_dbrp_path(pairwise_file)
 
-        if os.path.exists(dbrp_path):
+        # No store and no .dbrp: a directory input is unreadable here (the TSV
+        # open() below would IsADirectoryError). Emit a clean error instead.
+        if dbrp_path is None and os.path.isdir(pairwise_file):
+            LOGGER.ERROR(
+                f"'{pairwise_file}' is a pairwise directory without a usable "
+                f"parquet store (no manifest.json) and no sibling .dbrp; pass the "
+                f"pairwise TSV, its parquet directory, or the .dbrp to -p.")
+
+        if dbrp_path is not None:
             LOGGER.INFO(f"found .dbrp file: {dbrp_path}, using binary pairwise reader")
             records = dbretina_internal.dbrp_filter_pairs(dbrp_path, 0, cutoff)
             for rec in records:

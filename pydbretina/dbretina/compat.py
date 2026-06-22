@@ -52,3 +52,28 @@ def open_pairwise(pairwise_path: str) -> Optional[PairwiseStore]:
             return PairwiseStore(str(parquet_dir))
 
     return None
+
+
+def resolve_dbrp_path(pairwise_path: str) -> Optional[str]:
+    """Resolve the canonical sibling ``*_DBRetina_pairwise.dbrp`` for a -p input.
+
+    -p may be the pairwise TSV, the parquet directory, or the .dbrp binary, all
+    sharing the base ``<prefix>_DBRetina_pairwise``. The fallback (non-store)
+    readers in modularity/dedup derived the .dbrp via
+    ``pairwise_file.replace('_pairwise.tsv', '_pairwise.dbrp')``, a no-op for the
+    directory/.dbrp forms; the directory path then leaked into the .dbrp binary
+    reader and crashed with "Invalid .dbrp file (bad magic bytes)" (issue 046).
+
+    Strip a trailing ``.tsv``/``.dbrp`` and append ``.dbrp``. Returns the path
+    only if it is an existing *file* (never a directory), else None so the caller
+    can fall through to TSV reading or emit a clean error.
+    """
+    base = pairwise_path
+    for ext in (".tsv", ".dbrp"):
+        if base.endswith(ext):
+            base = base[: -len(ext)]
+            break
+    dbrp = base + ".dbrp"
+    if os.path.isfile(dbrp):
+        return dbrp
+    return None

@@ -3883,6 +3883,282 @@ class TestQueryClusterInputHandling(unittest.TestCase):
         self.assertNotEqual(rc, 0, "out-of-range cutoff should be rejected")
 
 
+class TestModularityDedupInputHandling(unittest.TestCase):
+    """Input-handling regressions for modularity/dedup (issue 046).
+
+    Same root cause as cluster 016 / query 020: the fallback path derived the
+    sibling .dbrp via ``pairwise_file.replace('_pairwise.tsv','_pairwise.dbrp')``,
+    a no-op for the parquet-directory / .dbrp forms. When no parquet store was
+    resolvable the directory path then leaked into the .dbrp binary reader,
+    crashing with ``RuntimeError: Invalid .dbrp file (bad magic bytes)``.
+
+    -p must accept the canonical parquet directory and the .dbrp binary and give
+    the same result as the .tsv form, and an unreadable directory input must give
+    a clean [ERROR] rather than a raw traceback.
+
+    Uses the shared overlapping fixture, which emits all sibling forms (.tsv,
+    parquet dir, .dbrp, .dbri) next to each other.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.parquet_dir = f"{cls.prefix}_DBRetina_pairwise"
+        cls.dbrp = f"{cls.prefix}_DBRetina_pairwise.dbrp"
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_moddedup_input_")
+        self.assertTrue(os.path.isdir(self.parquet_dir),
+                        f"fixture missing parquet dir: {self.parquet_dir}")
+        self.assertTrue(os.path.isfile(self.dbrp),
+                        f"fixture missing .dbrp: {self.dbrp}")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    # ---- helpers ----
+    @staticmethod
+    def _modularity_map(path):
+        """Parse a *_modularity.tsv -> {gene_set: (frag, het, modularity)}."""
+        out = {}
+        with open(path) as f:
+            next(f)  # header
+            for line in f:
+                if not line.strip():
+                    continue
+                gs, frag, het, mod = line.strip().split("\t")
+                out[gs.lower()] = (int(float(frag)), int(float(het)), int(float(mod)))
+        return out
+
+    @staticmethod
+    def _dedup_set(path):
+        with open(path) as f:
+            return {l.strip().lower() for l in f if l.strip()}
+
+    def _hide_parquet_store(self, src_dir):
+        """Copy the fixture parquet dir into tmpdir but strip manifest.json so
+        open_pairwise() returns None, forcing the .dbrp/TSV fallback path (the
+        path that carried the issue-046 .replace bug)."""
+        dst = os.path.join(self.tmpdir, os.path.basename(src_dir))
+        shutil.copytree(src_dir, dst)
+        os.remove(os.path.join(dst, "manifest.json"))
+        return dst
+
+    # ---- 046: modularity on the parquet directory (canonical input) ----
+    def test_046_modularity_parquet_dir_matches_tsv(self):
+        out_dir = os.path.join(self.tmpdir, "mod_dir")
+        rc, _, stderr = run_command(
+            f"DBRetina modularity -i {self.prefix} -p {self.parquet_dir} "
+            f"-c 40 -o {out_dir}"
+        )
+        assert_no_traceback(self, stderr, "modularity parquet dir")
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out_dir}_modularity.tsv")
+
+        out_tsv = os.path.join(self.tmpdir, "mod_tsv")
+        rc, _, stderr = run_command(
+            f"DBRetina modularity -i {self.prefix} -p {self.pw_file} -c 40 -o {out_tsv}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(
+            self._modularity_map(f"{out_dir}_modularity.tsv"),
+            self._modularity_map(f"{out_tsv}_modularity.tsv"),
+            "parquet-dir modularity differs from .tsv form",
+        )
+
+    # ---- 046: modularity on the .dbrp binary ----
+    def test_046_modularity_dbrp_matches_tsv(self):
+        out = os.path.join(self.tmpdir, "mod_dbrp")
+        rc, _, stderr = run_command(
+            f"DBRetina modularity -i {self.prefix} -p {self.dbrp} -c 40 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "modularity .dbrp")
+        self.assertEqual(rc, 0, stderr)
+        out_tsv = os.path.join(self.tmpdir, "mod_tsv2")
+        rc, _, stderr = run_command(
+            f"DBRetina modularity -i {self.prefix} -p {self.pw_file} -c 40 -o {out_tsv}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(
+            self._modularity_map(f"{out}_modularity.tsv"),
+            self._modularity_map(f"{out_tsv}_modularity.tsv"),
+            ".dbrp modularity differs from .tsv form",
+        )
+
+    # ---- 046: forced-fallback directory input -> the actual .replace bug ----
+    def test_046_modularity_dir_without_store_falls_back_cleanly(self):
+        """A directory input that open_pairwise() can't use (no manifest) must
+        resolve the sibling .dbrp instead of feeding the directory path into the
+        binary reader (RuntimeError: bad magic bytes). With the sibling .dbrp
+        present the result must still match the .tsv form."""
+        hidden = self._hide_parquet_store(self.parquet_dir)
+        # Provide the sibling .dbrp next to the (manifest-less) directory.
+        shutil.copy(self.dbrp, hidden + ".dbrp")
+        out = os.path.join(self.tmpdir, "mod_fb")
+        rc, _, stderr = run_command(
+            f"DBRetina modularity -i {self.prefix} -p {hidden} -c 40 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "modularity fallback dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        out_tsv = os.path.join(self.tmpdir, "mod_fb_tsv")
+        run_command(
+            f"DBRetina modularity -i {self.prefix} -p {self.pw_file} -c 40 -o {out_tsv}"
+        )
+        self.assertEqual(
+            self._modularity_map(f"{out}_modularity.tsv"),
+            self._modularity_map(f"{out_tsv}_modularity.tsv"),
+            "fallback-dir modularity differs from .tsv form",
+        )
+
+    def test_046_modularity_unreadable_dir_clean_error(self):
+        """A directory input with neither a usable store nor a sibling .dbrp must
+        give a clean [ERROR], never a raw traceback (bad magic bytes)."""
+        hidden = self._hide_parquet_store(self.parquet_dir)  # no sibling .dbrp
+        out = os.path.join(self.tmpdir, "mod_bad")
+        rc, stdout, stderr = run_command(
+            f"DBRetina modularity -i {self.prefix} -p {hidden} -c 40 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "modularity unreadable dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertNotEqual(rc, 0, "unreadable directory input should fail")
+        self.assertIn("[ERROR]", (stdout + stderr), stderr)
+
+    # ---- 046: dedup on the parquet directory (canonical input) ----
+    def test_046_dedup_parquet_dir_matches_tsv(self):
+        out_dir = os.path.join(self.tmpdir, "dd_dir")
+        rc, _, stderr = run_command(
+            f"DBRetina dedup -i {self.prefix} -p {self.parquet_dir} -c 100 -o {out_dir}"
+        )
+        assert_no_traceback(self, stderr, "dedup parquet dir")
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out_dir}_deduplicated_groups.txt")
+
+        out_tsv = os.path.join(self.tmpdir, "dd_tsv")
+        rc, _, stderr = run_command(
+            f"DBRetina dedup -i {self.prefix} -p {self.pw_file} -c 100 -o {out_tsv}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(
+            self._dedup_set(f"{out_dir}_deduplicated_groups.txt"),
+            self._dedup_set(f"{out_tsv}_deduplicated_groups.txt"),
+            "parquet-dir dedup differs from .tsv form",
+        )
+
+    # ---- 046: dedup on the .dbrp binary ----
+    def test_046_dedup_dbrp_matches_tsv(self):
+        out = os.path.join(self.tmpdir, "dd_dbrp")
+        rc, _, stderr = run_command(
+            f"DBRetina dedup -i {self.prefix} -p {self.dbrp} -c 100 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "dedup .dbrp")
+        self.assertEqual(rc, 0, stderr)
+        out_tsv = os.path.join(self.tmpdir, "dd_tsv2")
+        rc, _, stderr = run_command(
+            f"DBRetina dedup -i {self.prefix} -p {self.pw_file} -c 100 -o {out_tsv}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(
+            self._dedup_set(f"{out}_deduplicated_groups.txt"),
+            self._dedup_set(f"{out_tsv}_deduplicated_groups.txt"),
+            ".dbrp dedup differs from .tsv form",
+        )
+
+    # ---- 046: forced-fallback directory input -> the actual .replace bug ----
+    def test_046_dedup_dir_without_store_falls_back_cleanly(self):
+        hidden = self._hide_parquet_store(self.parquet_dir)
+        shutil.copy(self.dbrp, hidden + ".dbrp")
+        out = os.path.join(self.tmpdir, "dd_fb")
+        rc, _, stderr = run_command(
+            f"DBRetina dedup -i {self.prefix} -p {hidden} -c 100 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "dedup fallback dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        out_tsv = os.path.join(self.tmpdir, "dd_fb_tsv")
+        run_command(
+            f"DBRetina dedup -i {self.prefix} -p {self.pw_file} -c 100 -o {out_tsv}"
+        )
+        self.assertEqual(
+            self._dedup_set(f"{out}_deduplicated_groups.txt"),
+            self._dedup_set(f"{out_tsv}_deduplicated_groups.txt"),
+            "fallback-dir dedup differs from .tsv form",
+        )
+
+    def test_046_dedup_unreadable_dir_clean_error(self):
+        hidden = self._hide_parquet_store(self.parquet_dir)  # no sibling .dbrp
+        out = os.path.join(self.tmpdir, "dd_bad")
+        rc, stdout, stderr = run_command(
+            f"DBRetina dedup -i {self.prefix} -p {hidden} -c 100 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "dedup unreadable dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertNotEqual(rc, 0, "unreadable directory input should fail")
+        self.assertIn("[ERROR]", (stdout + stderr), stderr)
+
+
+class TestSetcovCommunityOption(unittest.TestCase):
+    """issue 033: setcov --community was a dead option with a misleading log.
+
+    Community detection actually runs at the --modularity (containment) cutoff;
+    the --community value was only ever echoed in a 'Detecting communities with
+    ochiai cutoff <value>' line that implied it drove detection. The option is
+    kept (it is documented) but the misleading line is gone and setcov warns the
+    value currently has no effect.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_setcov_comm_")
+        asc_path = os.path.join(self.tmpdir, "test_input.asc")
+        with open(asc_path, "w") as f:
+            f.write(TEST_ASC_CONTENT)
+        rc, _, stderr = run_command(
+            "DBRetina index -a test_input.asc -o test_idx", cwd=self.tmpdir
+        )
+        assert rc == 0, f"index failed: {stderr}"
+        rc, _, stderr = run_command("DBRetina pairwise -i test_idx", cwd=self.tmpdir)
+        assert rc == 0, f"pairwise failed: {stderr}"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_033_no_misleading_community_cutoff_log(self):
+        """The 'Detecting communities with ochiai cutoff <--community>' line that
+        implied --community drives detection must be gone."""
+        rc, stdout, stderr = run_command(
+            "DBRetina setcov -i test_idx --community 90 -o sc_c90",
+            timeout=300, cwd=self.tmpdir,
+        )
+        out = stdout + stderr
+        assert_no_traceback(self, stderr, "setcov --community log")
+        self.assertEqual(rc, 0, stderr)
+        # The old misleading phrasing keyed on the --community value must not appear.
+        self.assertNotIn("Detecting communities with ochiai cutoff 90", out, out)
+
+    def test_033_setcov_accepts_community_option(self):
+        """--community is documented, so it must remain a valid option (no Click
+        'no such option') even though it currently has no effect."""
+        rc, stdout, stderr = run_command(
+            "DBRetina setcov -i test_idx --community 30 -o sc_acc",
+            timeout=300, cwd=self.tmpdir,
+        )
+        out = stdout + stderr
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("no such option", out.lower(), out)
+
+    def test_033_setcov_without_community_still_works(self):
+        """setcov must run with --community omitted (default), unchanged."""
+        rc, _, stderr = run_command(
+            "DBRetina setcov -i test_idx --modularity 80 --dedup 100 -o sc_def",
+            timeout=300, cwd=self.tmpdir,
+        )
+        assert_no_traceback(self, stderr, "setcov no --community")
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, os.path.join(self.tmpdir, "sc_def_groups_metadata.tsv"))
+
+
 # ============================================================
 # SECTION: Input-robustness regressions
 #   index/dedup/genenet must handle bad or unusual inputs

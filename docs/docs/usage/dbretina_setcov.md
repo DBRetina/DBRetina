@@ -6,7 +6,7 @@ DBRetina presents a robust set-cover algorithm that functions within a complex s
 
 The set cover algorithm executes several complex computations to achieve its end goals. Here's an ordered breakdown of the process:
 
-1. **Community Detection:** Using the value specified by `--community` (default: 30), the algorithm calculates Ochiai similarity and applies a community detection method on the primary pairwise similarities file, producing clusters of groups. This step serves to calculate the Cluster Specificity Index (CSI) for each group.
+1. **Community Detection:** The algorithm calculates Ochiai similarity and applies a community detection method on the primary pairwise similarities file at the `--modularity` containment cutoff (default: 80), producing clusters of groups. This step serves to calculate the Cluster Specificity Index (CSI) for each group. (Note: `--community` currently has no effect on this step; detection uses the `--modularity` cutoff.)
 
 2. **Group Pleitropy Index (GPI) Calculation:** Next, the algorithm computes the GPI for each group.
 
@@ -36,8 +36,8 @@ Options:
                             [default: 80; 0<=x<=100]
   --dedup FLOAT RANGE       deduplication similarity cutoff  [default: 100;
                             0<=x<=100]
-  --community FLOAT RANGE   community detection similarity cutoff  [default:
-                            30; 0<=x<=100]
+  --community FLOAT RANGE   [currently no effect] community detection runs at
+                            the --modularity cutoff  [default: 30; 0<=x<=100]
   --stop-cov FLOAT RANGE    stop when items covered by %  [0<=x<=100]
   -o, --output TEXT         output file prefix  [required]
   --help                    Show this message and exit.
@@ -58,9 +58,9 @@ This parameter specifies the containment cutoff for modularity calculation. The 
 
 This parameter specifies the Ochiai similarity threshold for deduplication. The default value is 100% which means no items loss and deduplicate only identical groups.
 
-<span class="cmd"> --community FLOAT RANGE   community detection similarity cutoff  [default: 30; 0<=x<=100] </span>
+<span class="cmd"> --community FLOAT RANGE   [currently no effect] community detection runs at the --modularity cutoff  [default: 30; 0<=x<=100] </span>
 
-This parameter specifies the Ochiai similarity threshold for community detection. The default value is 30%.
+This option currently has **no effect**: the internal community detection (used to compute the Cluster Specificity Index) runs on the Ochiai metric at the `--modularity` containment cutoff, not at this value. It is retained for backward compatibility.
 
 <span class="cmd"> --stop-cov FLOAT RANGE    stop when items covered by %  [0<=x<=100] </span>
 

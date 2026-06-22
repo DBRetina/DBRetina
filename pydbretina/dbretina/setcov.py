@@ -561,8 +561,15 @@ class DeduplicateGroups():
         return f"{output_prefix}_clusters.tsv"
 
     def build_all(self, output_prefix):
-        
-        self.LOGGER.INFO(f"Detecting communities with ochiai cutoff {self.ochiai_community_cutoff}")
+
+        # Community detection (used only to compute CSI) runs on the ochiai
+        # metric at the containment/--modularity cutoff -- NOT at
+        # self.ochiai_community_cutoff (the --community value), which is never
+        # consumed (issue 033). The old log echoed --community here and implied
+        # it drove detection; report the cutoff actually used instead.
+        self.LOGGER.INFO(
+            f"Detecting communities (ochiai) at the modularity cutoff "
+            f"{self.containment_cutoff} for CSI calculation")
         _communities_file_prefix = f"{output_prefix}_communities"
         self.communities_clusters_file = self.perform_cli_community_detection(
             self.main_pairwise_file,
@@ -925,7 +932,7 @@ def path_to_absolute_path(ctx, param, value):
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="index file prefix")
 @click.option('--modularity', "containment_cutoff", required=False, default=80, show_default = True, type=click.FloatRange(0, 100, clamp=False), help="containment cutoff for modularity calculation")
 @click.option('--dedup', "ochiai_cutoff", required=False, default=100, show_default = True, type=click.FloatRange(0, 100, clamp=False), help="deduplication similarity cutoff")
-@click.option('--community', "ochiai_community_cutoff", required=False, default=30, show_default = True, type=click.FloatRange(0, 100, clamp=False), help="community detection similarity cutoff")
+@click.option('--community', "ochiai_community_cutoff", required=False, default=30, show_default = True, type=click.FloatRange(0, 100, clamp=False), help="[currently no effect] community detection runs at the --modularity cutoff")
 @click.option('--stop-cov', "GC", required=False, default=100, type=click.FloatRange(0, 100, clamp=False), help="stop when items covered by %")
 @click.option('-o', '--output', "output_prefix", required=True, default=None, help="output file prefix")
 @click.pass_context
