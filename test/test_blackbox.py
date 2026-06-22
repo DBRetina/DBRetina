@@ -4392,6 +4392,250 @@ class TestInputRobustness(unittest.TestCase):
         self.assertIn("[ERROR]", stderr, stderr)
 
 
+class TestExportClusterGraphDbrpFallback(unittest.TestCase):
+    """Input-handling regression for export/cluster/graph (issue 051).
+
+    Same root cause as modularity/dedup 046: the non-store FALLBACK path derived
+    the sibling .dbrp via ``pairwise_file.replace('.tsv', '.dbrp')``, a no-op for
+    the parquet-directory / .dbrp forms. When ``open_pairwise()`` can't resolve a
+    store (a directory without manifest.json), the directory path then leaked
+    into the C++ .dbrp reader, crashing with
+    ``RuntimeError: Invalid .dbrp file (bad magic bytes)`` (or IsADirectoryError
+    on the TSV open).
+
+    The canonical store path is unaffected; only the fallback is fixed by routing
+    the .dbrp resolution through ``compat.resolve_dbrp_path`` (isfile-guarded).
+
+    Uses the shared overlapping fixture (emits .tsv + parquet dir + .dbrp +
+    .dbri side by side). The forced-fallback dir is reproduced by copying the
+    parquet dir and stripping manifest.json so open_pairwise() returns None.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.parquet_dir = f"{cls.prefix}_DBRetina_pairwise"
+        cls.dbrp = f"{cls.prefix}_DBRetina_pairwise.dbrp"
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_expcluster_input_")
+        self.assertTrue(os.path.isdir(self.parquet_dir),
+                        f"fixture missing parquet dir: {self.parquet_dir}")
+        self.assertTrue(os.path.isfile(self.dbrp),
+                        f"fixture missing .dbrp: {self.dbrp}")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    # ---- helpers ----
+    def _hide_parquet_store(self, src_dir):
+        """Copy the fixture parquet dir into tmpdir but strip manifest.json so
+        open_pairwise() returns None, forcing the .dbrp/TSV fallback path (the
+        path that carried the issue-051 .replace bug)."""
+        dst = os.path.join(self.tmpdir, os.path.basename(src_dir))
+        shutil.copytree(src_dir, dst)
+        os.remove(os.path.join(dst, "manifest.json"))
+        return dst
+
+    @staticmethod
+    def _distmat_text(path):
+        with open(path) as f:
+            return f.read()
+
+    @staticmethod
+    def _cluster_membership(path):
+        """Parse a *_clusters.tsv -> set of frozensets of member groups.
+
+        Compares cluster *membership* (set semantics): the store and TSV readers
+        iterate pairs in a different order, so member ordering within a cluster
+        line is not stable, but the partition itself is.
+        """
+        clusters = set()
+        with open(path) as f:
+            for line in f:
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if not parts or "cluster_id" in parts[0].lower():
+                    continue
+                members = parts[-1].split("|")
+                clusters.add(frozenset(m.strip().lower() for m in members if m.strip()))
+        return clusters
+
+    # ================= export =================
+    def test_051_export_parquet_dir_matches_tsv(self):
+        """Canonical parquet-dir input still works via the store path and gives a
+        distance matrix byte-identical to the .tsv form (parity)."""
+        out_dir = os.path.join(self.tmpdir, "exp_dir")
+        rc, _, stderr = run_command(
+            f"DBRetina export -p {self.parquet_dir} -m ochiai -o {out_dir}"
+        )
+        assert_no_traceback(self, stderr, "export parquet dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out_dir}_distmat.tsv")
+
+        out_tsv = os.path.join(self.tmpdir, "exp_tsv")
+        rc, _, stderr = run_command(
+            f"DBRetina export -p {self.pw_file} -m ochiai -o {out_tsv}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(
+            self._distmat_text(f"{out_dir}_distmat.tsv"),
+            self._distmat_text(f"{out_tsv}_distmat.tsv"),
+            "parquet-dir export distmat differs from .tsv form",
+        )
+
+    def test_051_export_dir_without_store_falls_back_cleanly(self):
+        """A directory input that open_pairwise() can't use (no manifest) must
+        resolve the sibling .dbrp instead of feeding the directory path to the
+        C++ reader (bad magic bytes). With the sibling .dbrp present the result
+        must still match the .tsv form."""
+        hidden = self._hide_parquet_store(self.parquet_dir)
+        shutil.copy(self.dbrp, hidden + ".dbrp")
+        out = os.path.join(self.tmpdir, "exp_fb")
+        rc, _, stderr = run_command(
+            f"DBRetina export -p {hidden} -m ochiai -o {out}"
+        )
+        assert_no_traceback(self, stderr, "export fallback dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        out_tsv = os.path.join(self.tmpdir, "exp_fb_tsv")
+        run_command(f"DBRetina export -p {self.pw_file} -m ochiai -o {out_tsv}")
+        self.assertEqual(
+            self._distmat_text(f"{out}_distmat.tsv"),
+            self._distmat_text(f"{out_tsv}_distmat.tsv"),
+            "fallback-dir export distmat differs from .tsv form",
+        )
+
+    def test_051_export_unreadable_dir_clean_error(self):
+        """A directory input with neither a usable store nor a sibling .dbrp must
+        give a clean [ERROR], never a raw traceback (bad magic bytes /
+        IsADirectoryError)."""
+        hidden = self._hide_parquet_store(self.parquet_dir)  # no sibling .dbrp
+        out = os.path.join(self.tmpdir, "exp_bad")
+        rc, stdout, stderr = run_command(
+            f"DBRetina export -p {hidden} -m ochiai -o {out}"
+        )
+        assert_no_traceback(self, stderr, "export unreadable dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertNotEqual(rc, 0, "unreadable directory input should fail")
+        self.assertIn("[ERROR]", (stdout + stderr), stderr)
+
+    # ================= cluster =================
+    def test_051_cluster_parquet_dir_matches_tsv(self):
+        """Canonical parquet-dir input still works via the store path and yields
+        the same cluster partition as the .tsv form (set semantics)."""
+        out_dir = os.path.join(self.tmpdir, "clu_dir")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.parquet_dir} -m ochiai -c 50 -o {out_dir}"
+        )
+        assert_no_traceback(self, stderr, "cluster parquet dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out_dir}_clusters.tsv")
+
+        out_tsv = os.path.join(self.tmpdir, "clu_tsv")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.pw_file} -m ochiai -c 50 -o {out_tsv}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(
+            self._cluster_membership(f"{out_dir}_clusters.tsv"),
+            self._cluster_membership(f"{out_tsv}_clusters.tsv"),
+            "parquet-dir cluster partition differs from .tsv form",
+        )
+
+    def test_051_cluster_dir_without_store_falls_back_cleanly(self):
+        """Forced-fallback directory (no manifest) with a sibling .dbrp must read
+        the .dbrp, never feed the directory to the C++ reader, and match the
+        .tsv-form partition."""
+        hidden = self._hide_parquet_store(self.parquet_dir)
+        shutil.copy(self.dbrp, hidden + ".dbrp")
+        out = os.path.join(self.tmpdir, "clu_fb")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {hidden} -m ochiai -c 50 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "cluster fallback dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        out_tsv = os.path.join(self.tmpdir, "clu_fb_tsv")
+        run_command(f"DBRetina cluster -p {self.pw_file} -m ochiai -c 50 -o {out_tsv}")
+        self.assertEqual(
+            self._cluster_membership(f"{out}_clusters.tsv"),
+            self._cluster_membership(f"{out_tsv}_clusters.tsv"),
+            "fallback-dir cluster partition differs from .tsv form",
+        )
+
+    def test_051_cluster_unreadable_dir_clean_error(self):
+        """Directory input with no usable store and no sibling .dbrp -> clean
+        [ERROR] (the node-count read in __init__ used to crash on bad magic
+        bytes)."""
+        hidden = self._hide_parquet_store(self.parquet_dir)  # no sibling .dbrp
+        out = os.path.join(self.tmpdir, "clu_bad")
+        rc, stdout, stderr = run_command(
+            f"DBRetina cluster -p {hidden} -m ochiai -c 50 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "cluster unreadable dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertNotEqual(rc, 0, "unreadable directory input should fail")
+        self.assertIn("[ERROR]", (stdout + stderr), stderr)
+
+    # ================= graph =================
+    # bipartite_graph.py:143 (load_all_pairwise) is DEAD code with no callers;
+    # the live `graph` command reads pairwise via pairwise_file_iterator. Its
+    # .dbrp fast-path was isfile-guarded (so a dir never hit the C++ reader) but
+    # then fell to the TSV open() -> raw IsADirectoryError on a dir. The 051 fix
+    # routes that resolution through resolve_dbrp_path (uses the sibling .dbrp
+    # even for the dir form) and emits a clean error when there is none.
+    def test_051_graph_dir_without_store_falls_back_cleanly(self):
+        """`graph` on a forced-fallback directory (no manifest) with a sibling
+        .dbrp must read the .dbrp (not IsADirectoryError on the TSV open) and
+        produce the same edge count as the .tsv form."""
+        hidden = self._hide_parquet_store(self.parquet_dir)
+        shutil.copy(self.dbrp, hidden + ".dbrp")
+        out = os.path.join(self.tmpdir, "grph_fb")
+        rc, _, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {hidden} -m ochiai -c 50 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "graph fallback dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_edges.tsv")
+        out_tsv = os.path.join(self.tmpdir, "grph_tsv")
+        rc2, _, stderr2 = run_command(
+            f"DBRetina graph -i {self.prefix} -p {self.pw_file} -m ochiai -c 50 -o {out_tsv}"
+        )
+        self.assertEqual(rc2, 0, stderr2)
+        self.assertEqual(
+            count_tsv_data_rows(f"{out}_edges.tsv"),
+            count_tsv_data_rows(f"{out_tsv}_edges.tsv"),
+            "fallback-dir graph edge count differs from .tsv form",
+        )
+
+    def test_051_graph_unreadable_dir_clean_error(self):
+        """`graph` on a directory with no usable store and no sibling .dbrp must
+        give a clean [ERROR], never a raw IsADirectoryError traceback from the
+        TSV open()."""
+        hidden = self._hide_parquet_store(self.parquet_dir)  # no sibling .dbrp
+        out = os.path.join(self.tmpdir, "grph_bad")
+        rc, stdout, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {hidden} -m ochiai -c 50 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "graph unreadable dir")
+        self.assertNotIn("bad magic bytes", stderr, stderr)
+        self.assertNotIn("IsADirectoryError", stderr, stderr)
+        self.assertNotEqual(rc, 0, "unreadable directory input should fail")
+        self.assertIn("[ERROR]", (stdout + stderr), stderr)
+
+
 # ============================================================
 # Main
 # ============================================================

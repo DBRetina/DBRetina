@@ -283,19 +283,24 @@ class DBRetinaGraph:
                 store.close()
             return
 
-        # 2. .dbrp fast-path: only for a real .tsv file with a sibling .dbrp
-        #    (guard against directory args ever reaching the C++ .dbrp reader).
-        dbrp_path = self.pairwise_file.replace(".tsv", ".dbrp")
-        if (
-            os.path.isfile(self.pairwise_file)
-            and os.path.isfile(dbrp_path)
-            and dbrp_path != self.pairwise_file
-            and self.metric in metric_name_to_id
-        ):
+        # 2. .dbrp fast-path. Resolve the canonical .dbrp sibling from any -p
+        #    form (tsv / parquet dir / .dbrp); resolve_dbrp_path is isfile-guarded
+        #    so a directory never reaches the C++ .dbrp reader, and it finds the
+        #    sibling even when -p is the parquet-directory form (issue 051).
+        from dbretina.compat import resolve_dbrp_path
+        dbrp_path = resolve_dbrp_path(self.pairwise_file)
+        if dbrp_path is not None and self.metric in metric_name_to_id:
             mid = metric_name_to_id[self.metric]
             records = dbretina_internal.dbrp_filter_pairs(dbrp_path, mid, self.cutoff)
             for rec in records:
                 yield rec['group_1_name'], rec['group_2_name'], float(rec[self.metric])
+        elif os.path.isdir(self.pairwise_file):
+            # No usable parquet store (no manifest.json) and no sibling .dbrp:
+            # the TSV open() below would IsADirectoryError. Clean error instead.
+            self.LOGGER.ERROR(
+                f"'{self.pairwise_file}' is a pairwise directory without a usable "
+                f"parquet store (no manifest.json) and no sibling .dbrp; pass the "
+                f"pairwise TSV, its parquet directory, or the .dbrp to -p.")
         else:
             # 3. TSV fallback.
             with open(self.pairwise_file) as pairwise_tsv:

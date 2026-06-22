@@ -159,7 +159,13 @@ class Clusters:
         self.add_edges = self._add_igraph_edges if community else self._add_rx_edges
         self.add_nodes = self._add_igraph_nodes if community else self._add_rx_nodes
 
-        self.dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
+        # Resolve the canonical .dbrp sibling from any -p form (tsv / parquet
+        # dir / .dbrp); the old str.replace no-op'd for the dir/.dbrp forms and
+        # fed the directory path into the binary reader -> "Invalid .dbrp file
+        # (bad magic bytes)" (issue 051, same root cause as 046). Used here for
+        # the node count and again in construct_graph for the edges.
+        from dbretina.compat import resolve_dbrp_path
+        self.dbrp_path = resolve_dbrp_path(pairwise_file)
         # Try PairwiseStore for node count
         try:
             from dbretina.compat import open_pairwise
@@ -170,8 +176,15 @@ class Clusters:
             else:
                 raise ValueError("no store")
         except Exception:
-            if os.path.exists(self.dbrp_path):
+            if self.dbrp_path is not None:
                 total_nodes_no = dbretina_internal.dbrp_get_num_groups(self.dbrp_path)
+            elif os.path.isdir(pairwise_file):
+                # No usable parquet store (no manifest.json) and no sibling
+                # .dbrp: the TSV header read below would IsADirectoryError.
+                logger_obj.ERROR(
+                    f"'{pairwise_file}' is a pairwise directory without a usable "
+                    f"parquet store (no manifest.json) and no sibling .dbrp; pass "
+                    f"the pairwise TSV, its parquet directory, or the .dbrp to -p.")
             else:
                 total_nodes_no = int(
                     next(open(pairwise_file, 'r')).strip().split(':')[-1])
@@ -217,8 +230,10 @@ class Clusters:
                 self.add_edges(edges_tuples)
             store.close()
             return
-        # Fallback: existing .dbrp / TSV code
-        elif os.path.exists(self.dbrp_path):
+        # Fallback: existing .dbrp / TSV code. self.dbrp_path is resolve_dbrp_path's
+        # result (an existing file or None), so a directory never reaches the
+        # binary reader here (issue 051).
+        elif self.dbrp_path is not None:
             self.metadata.append(f"#command: {get_command()}\n")
             metric_id = self.metric_name_to_id[self.metric]
             records = dbretina_internal.dbrp_filter_pairs(self.dbrp_path, metric_id, self.cut_off_threshold)
@@ -318,8 +333,10 @@ class Clusters:
                 self.add_edges(edges_tuples)
             store.close()
             return
-        # Fallback: existing .dbrp / TSV code
-        elif os.path.exists(self.dbrp_path):
+        # Fallback: existing .dbrp / TSV code. self.dbrp_path is resolve_dbrp_path's
+        # result (an existing file or None), so a directory never reaches the
+        # binary reader here (issue 051).
+        elif self.dbrp_path is not None:
             self.metadata.append(f"#command: {get_command()}\n")
             metric_id = self.metric_name_to_id[self.metric]
             records = dbretina_internal.dbrp_filter_pairs(self.dbrp_path, metric_id, self.cut_off_threshold)

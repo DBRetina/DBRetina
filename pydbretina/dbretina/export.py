@@ -248,9 +248,23 @@ def main(ctx, pairwise_file, newick, metric, output_prefix, labels_selection, li
         df = pdf[[col1, col2, metric]]
         store.close()
     else:
-        # Fallback: existing .dbrp / TSV code
-        dbrp_path = pairwise_file.replace(".tsv", ".dbrp")
-        if os.path.exists(dbrp_path):
+        # Fallback: existing .dbrp / TSV code. Resolve the canonical .dbrp
+        # sibling from any -p form (tsv / parquet dir / .dbrp); the old
+        # str.replace no-op'd for the dir/.dbrp forms and fed the directory path
+        # into the binary reader -> "Invalid .dbrp file (bad magic bytes)"
+        # (issue 051, same root cause as 046).
+        from dbretina.compat import resolve_dbrp_path
+        dbrp_path = resolve_dbrp_path(pairwise_file)
+
+        # No store and no .dbrp: a directory input is unreadable here (the TSV
+        # read_csv below would IsADirectoryError). Emit a clean error instead.
+        if dbrp_path is None and os.path.isdir(pairwise_file):
+            LOGGER.ERROR(
+                f"'{pairwise_file}' is a pairwise directory without a usable "
+                f"parquet store (no manifest.json) and no sibling .dbrp; pass the "
+                f"pairwise TSV, its parquet directory, or the .dbrp to -p.")
+
+        if dbrp_path is not None:
             import _dbretina_internal as dbretina_internal
             records = dbretina_internal.dbrp_iterate_all(dbrp_path)
             rows = []
