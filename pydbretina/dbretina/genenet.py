@@ -203,6 +203,12 @@ def main(ctx, index_prefix, pairwise_file, output_prefix, graphml, gexf):
     ctx.obj.INFO(f"Mapping gene sets to features")
 
     dbri_path = f"{index_prefix}.dbri"
+    # -i is a plain STRING (not click.Path); guard so a missing prefix gives a
+    # clean [ERROR] instead of a raw FileNotFoundError from open(_raw.json)
+    # (issue 029). Covers both 'genenet' and 'interactome' (shared callback).
+    if not os.path.exists(dbri_path) and \
+            not os.path.exists(f"{index_prefix}_raw.json"):
+        ctx.obj.ERROR(f"index prefix '{index_prefix}' (.dbri / _raw.json) not found")
     if os.path.exists(dbri_path):
         import _dbretina_internal as dbretina_internal
         raw_json_str = dbretina_internal.dbri_load_raw_gene_sets(dbri_path)

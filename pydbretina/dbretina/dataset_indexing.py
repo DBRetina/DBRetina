@@ -7,6 +7,7 @@ import click
 from dbretina.click_context import cli
 import os
 import sys
+import gzip
 import pandas as pd
 from collections import defaultdict
 import json
@@ -43,30 +44,70 @@ def get_command():
             _sys_argv[i+1] = os.path.abspath(_sys_argv[i+1])
     return "DBRetina " + " ".join(_sys_argv[1:])
 
+def _is_gzipped(path):
+    """Detect gzip by the 0x1f 0x8b magic bytes (authoritative), falling back to the
+    .gz extension only when the file can't be sniffed. Magic-first so a file mislabeled
+    .gz (plain text) is read as text, and gzip content without a .gz extension still works."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(2) == b"\x1f\x8b"
+    except OSError:
+        return path.endswith(".gz")
+
+
+def _open_gmt(path):
+    """Open a (possibly gzipped) GMT file for reading text. Supports .gmt.gz."""
+    if _is_gzipped(path):
+        return gzip.open(path, "rt", encoding="utf-8")
+    return open(path, "r", encoding="utf-8")
+
+
 def gmts_to_association(ctx, gmt_paths, tsv_path):
+    # Track group names already seen so we can WARN (not fail) when a duplicate
+    # group name is encountered: its genes are unioned into the same supergroup,
+    # which is easy to miss without a notice (issue 036).
+    seen_set_names = set()
+    duplicate_set_names = []
     with open(tsv_path, 'w', encoding="utf-8") as writer:
         writer.write(f"gene_set\tgene\n")
         for gmt_path in gmt_paths:
             ctx.obj.INFO(f"Processing {gmt_path}")
-            with open(gmt_path, 'r') as f:
+            with _open_gmt(gmt_path) as f:
                 for line in f:
+                    if not line.strip():
+                        continue  # tolerate blank lines (common in real GMTs)
                     split_line = line.strip().split('\t')
                     if len(split_line) < 3:
-                        raise ValueError(f"Line '{line.strip()}' in file '{gmt_path}' doesn't adhere to GMT format")
-                    
+                        ctx.obj.ERROR(
+                            f"Line '{line.strip()}' in file '{gmt_path}' doesn't adhere to GMT format"
+                        )
+
                     set_name = split_line[0].replace('"', '')
                     if '|' in set_name:
-                        raise ValueError(
+                        ctx.obj.ERROR(
                             f"Pipe character '|' is not allowed in group names: '{split_line[0]}'"
                         )
+                    # Names are lowercased downstream before the union, so detect
+                    # duplicates case-insensitively to match the real merge.
+                    set_name_key = set_name.lower()
+                    if set_name_key in seen_set_names:
+                        duplicate_set_names.append(set_name_key)
+                    else:
+                        seen_set_names.add(set_name_key)
                     genes = split_line[2:]
                     for gene in genes:
                         gene = gene.replace('"', '')
                         if '|' in gene:
-                            raise ValueError(
+                            ctx.obj.ERROR(
                                 f"Pipe character '|' is not allowed in gene names: '{gene}'"
                             )
                         writer.write(f"{set_name}\t{gene}\n")
+    if duplicate_set_names:
+        unique_dupes = sorted(set(duplicate_set_names))
+        ctx.obj.WARNING(
+            f"Duplicate group name(s) encountered; their features were unioned "
+            f"into a single supergroup: {', '.join(unique_dupes)}"
+        )
                         
 def fnv1a_64(s: str) -> str:
     FNV_prime = 1099511628211
@@ -79,7 +120,7 @@ def fnv1a_64(s: str) -> str:
     return str(h)
 
 
-def build_gene_set_json(association_files, output_prefix):
+def build_gene_set_json(ctx, association_files, output_prefix):
     # default dictionary string to list of 
     gene_set_to_genes = defaultdict(list)
     for asc in association_files:
@@ -90,7 +131,7 @@ def build_gene_set_json(association_files, output_prefix):
                 group = line[0].replace('"', '')
                 gene = line[1].replace('"', '')
                 if '|' in group or '|' in gene:
-                    raise ValueError(
+                    ctx.obj.ERROR(
                         f"Pipe character '|' is not allowed in group or gene names: '{line[0]}\t{line[1]}'"
                     )
                 gene_set_to_genes[group].append(gene)
@@ -176,7 +217,7 @@ def main(ctx, asc_file, output_prefix, gmt_file):
     ctx.obj.INFO("Indexing in progress, please wait...")
     # dbretina_internal.sketch_dbretina(asc_file, names_file, output_prefix)
     # sketch(asc_file, output_prefix)
-    build_gene_set_json(asc_file, output_prefix)
+    build_gene_set_json(ctx, asc_file, output_prefix)
     
     if asc_from_gmt:
         os.remove(asc_file[0])

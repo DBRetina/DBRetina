@@ -98,6 +98,14 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
     """
 
     LOGGER = ctx.obj
+
+    # -i is a plain STRING (not click.Path), so existence isn't validated by
+    # Click. Guard here so a missing prefix gives a clean [ERROR] instead of a
+    # raw FileNotFoundError from open('<prefix>_raw.json') (issue 026).
+    if not os.path.exists(f"{index_prefix}.dbri") and \
+            not os.path.exists(f"{index_prefix}_raw.json"):
+        LOGGER.ERROR(f"index prefix '{index_prefix}' (.dbri / _raw.json) not found")
+
     ochiai_graph = Graph(index_prefix)
 
 
@@ -178,7 +186,13 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
     connected_components = ochiai_graph.get_connected_components()
 
     if len(connected_components) == 0:
-        LOGGER.ERROR(f"There is no at least one pair of groups with similarity >= {cutoff}")
+        # No pair meets the cutoff == no duplicates. Keep every group rather
+        # than hard-exiting with no output (issue 025). all_groups already holds
+        # all groups, so the write block below emits them unchanged.
+        LOGGER.WARNING(
+            f"No pair of groups has similarity >= {cutoff}; no duplicates found, "
+            f"keeping all groups."
+        )
 
     LOGGER.INFO(f"number of connected components: {len(connected_components)}")
 

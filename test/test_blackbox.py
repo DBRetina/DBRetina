@@ -3802,6 +3802,239 @@ class TestQueryClusterInputHandling(unittest.TestCase):
 
 
 # ============================================================
+# SECTION: Input-robustness regressions
+#   index/dedup/genenet must handle bad or unusual inputs
+#   gracefully instead of crashing with a raw traceback (or
+#   silently merging). Issues 018, 035, 036, 025, 026, 029.
+# ============================================================
+
+
+class TestInputRobustness(unittest.TestCase):
+    """Bad/unusual-input handling for index, dedup, genenet.
+
+    Each test asserts the *fixed* behaviour: a clean [ERROR]/[WARNING]
+    and a sensible outcome, never a raw Python traceback.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_inputrobust_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    # ---- 018: index a gzipped GMT (.gmt.gz) ----
+    def test_018_index_gzipped_gmt(self):
+        """index -g <file.gmt.gz> must transparently gunzip and build an index
+        identical to indexing the plain GMT (same groups/features)."""
+        import gzip
+
+        # Plain GMT reference index.
+        plain_gmt = write_file(os.path.join(self.tmpdir, "ref.gmt"), TEST_GMT_CONTENT)
+        rc, _, stderr = run_command(
+            "DBRetina index -g ref.gmt -o ref_idx", cwd=self.tmpdir
+        )
+        self.assertEqual(rc, 0, stderr)
+        ref_groups = get_groups_from_raw_json(
+            os.path.join(self.tmpdir, "ref_idx_raw.json")
+        )
+
+        # Gzipped GMT.
+        gz_path = os.path.join(self.tmpdir, "test.gmt.gz")
+        with gzip.open(gz_path, "wt", encoding="utf-8") as gz:
+            gz.write(TEST_GMT_CONTENT)
+        rc, _, stderr = run_command(
+            "DBRetina index -g test.gmt.gz -o gz_idx", cwd=self.tmpdir
+        )
+        assert_no_traceback(self, stderr, "index gzipped gmt")
+        self.assertNotIn("UnicodeDecodeError", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, os.path.join(self.tmpdir, "gz_idx.dbri"))
+
+        # The gzipped index must equal the plain-GMT index.
+        gz_groups = get_groups_from_raw_json(
+            os.path.join(self.tmpdir, "gz_idx_raw.json")
+        )
+        self.assertEqual(gz_groups, ref_groups,
+                         "gzipped-GMT index differs from plain-GMT index")
+
+    # ---- 035: pipe char / malformed line -> clean error, not a traceback ----
+    def test_035_pipe_in_group_name_clean_error(self):
+        """A '|' in a group name must be rejected with a clean [ERROR], not a
+        raw ValueError traceback."""
+        gmt = write_file(os.path.join(self.tmpdir, "pipe.gmt"),
+                         "bad|name\tdesc\tA\tB\n")
+        rc, stdout, stderr = run_command(
+            "DBRetina index -g pipe.gmt -o e_pipe", cwd=self.tmpdir
+        )
+        assert_no_traceback(self, stderr, "index pipe in group name")
+        self.assertNotIn("ValueError", stderr, stderr)
+        self.assertNotEqual(rc, 0, "pipe in group name should fail")
+        self.assertIn("[ERROR]", stderr, stderr)
+        self.assertIn("|", (stdout + stderr), "error should name the pipe char")
+
+    def test_035_pipe_in_gene_name_clean_error(self):
+        """A '|' in a gene name must be rejected with a clean [ERROR]."""
+        gmt = write_file(os.path.join(self.tmpdir, "pipegene.gmt"),
+                         "goodname\tdesc\tA\tbad|gene\n")
+        rc, stdout, stderr = run_command(
+            "DBRetina index -g pipegene.gmt -o e_pipegene", cwd=self.tmpdir
+        )
+        assert_no_traceback(self, stderr, "index pipe in gene name")
+        self.assertNotIn("ValueError", stderr, stderr)
+        self.assertNotEqual(rc, 0, "pipe in gene name should fail")
+        self.assertIn("[ERROR]", stderr, stderr)
+
+    def test_018_mislabeled_gz_is_read_as_text(self):
+        """ISSUE-018 follow-up: a plain-text GMT mislabeled .gz must be read as text
+        (magic-byte detection), not crash with a gzip BadGzipFile traceback."""
+        write_file(os.path.join(self.tmpdir, "fake.gmt.gz"), TEST_GMT_CONTENT)
+        rc, _, stderr = run_command(
+            "DBRetina index -g fake.gmt.gz -o fake_idx", cwd=self.tmpdir
+        )
+        assert_no_traceback(self, stderr, "mislabeled gz")
+        self.assertNotIn("BadGzipFile", stderr, stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, os.path.join(self.tmpdir, "fake_idx.dbri"))
+
+    def test_035_pipe_in_association_file_clean_error(self):
+        """ISSUE-035 (-a path): a pipe char in an association (-a) file must give a
+        clean [ERROR], not a raw ValueError traceback (build_gene_set_json)."""
+        write_file(os.path.join(self.tmpdir, "bad.asc"),
+                   "gene_set\tgene\nbad|grp\tAlpha\n")
+        rc, stdout, stderr = run_command(
+            "DBRetina index -a bad.asc -o bad_asc_idx", cwd=self.tmpdir
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0)
+        assert_no_traceback(self, stderr, "index -a pipe")
+        self.assertNotIn("ValueError", combined, combined)
+        self.assertIn("[ERROR]", combined)
+
+    def test_035_malformed_line_clean_error(self):
+        """A line with <3 fields must be rejected with a clean [ERROR], not a
+        raw ValueError traceback."""
+        gmt = write_file(os.path.join(self.tmpdir, "bad.gmt"),
+                         "onlyname\tjustdesc\n")
+        rc, stdout, stderr = run_command(
+            "DBRetina index -g bad.gmt -o e_bad", cwd=self.tmpdir
+        )
+        assert_no_traceback(self, stderr, "index malformed line")
+        self.assertNotIn("ValueError", stderr, stderr)
+        self.assertNotEqual(rc, 0, "malformed line should fail")
+        self.assertIn("[ERROR]", stderr, stderr)
+
+    # ---- 036: duplicate group name -> WARNING, still succeeds ----
+    def test_036_duplicate_group_name_warns(self):
+        """Two GMT lines with the same group name must emit a [WARNING] naming
+        the duplicate, and the index must still build (genes unioned)."""
+        gmt = write_file(os.path.join(self.tmpdir, "dup.gmt"),
+                         "dupset\tdesc\tA\tB\ndupset\tdesc\tC\tD\n")
+        rc, stdout, stderr = run_command(
+            "DBRetina index -g dup.gmt -o e_dup", cwd=self.tmpdir
+        )
+        assert_no_traceback(self, stderr, "index duplicate group name")
+        self.assertEqual(rc, 0, stderr)
+        self.assertIn("[WARNING]", stderr, stderr)
+        self.assertIn("dupset", (stdout + stderr).lower(),
+                      "warning should name the duplicate group")
+        # Merge behaviour is preserved: the two lines union into one group.
+        groups = get_groups_from_raw_json(
+            os.path.join(self.tmpdir, "e_dup_raw.json")
+        )
+        self.assertEqual(set(groups.keys()), {"dupset"})
+        self.assertEqual(groups["dupset"], ["a", "b", "c", "d"])
+
+    # ---- 025: dedup with no qualifying pairs -> graceful (keep all groups) ----
+    def test_025_dedup_cutoff_above_all_pairs(self):
+        """dedup with a cutoff above the max similarity (no pair qualifies) must
+        keep every group, write *_deduplicated_groups.txt, and exit 0 -- not a
+        confusing hard-exit with no output."""
+        # Build a disjoint fixture: zero pairs at any cutoff > 0.
+        asc = write_file(os.path.join(self.tmpdir, "dj.asc"), DISJOINT_ASC_CONTENT)
+        rc, _, stderr = run_command("DBRetina index -a dj.asc -o dj_idx",
+                                    cwd=self.tmpdir)
+        self.assertEqual(rc, 0, stderr)
+        rc, _, stderr = run_command("DBRetina pairwise -i dj_idx", cwd=self.tmpdir)
+        self.assertEqual(rc, 0, stderr)
+        pw = os.path.join(self.tmpdir, "dj_idx_DBRetina_pairwise.tsv")
+        self.assertEqual(count_tsv_data_rows(pw), 0,
+                         "disjoint fixture unexpectedly produced pairs")
+
+        out = os.path.join(self.tmpdir, "dd_empty")
+        rc, stdout, stderr = run_command(
+            f"DBRetina dedup -i dj_idx -p {pw} -c 50 -o dd_empty", cwd=self.tmpdir
+        )
+        assert_no_traceback(self, stderr, "dedup no qualifying pairs")
+        self.assertEqual(rc, 0, stderr)
+        out_file = os.path.join(self.tmpdir, "dd_empty_deduplicated_groups.txt")
+        assert_file_exists(self, out_file)
+        with open(out_file) as f:
+            groups = {line.strip().lower() for line in f if line.strip()}
+        # No duplicates -> every group kept.
+        self.assertEqual(groups, DISJOINT_GROUP_NAMES)
+
+    def test_025_dedup_with_pairs_still_dedups(self):
+        """Guard: a cutoff that *does* produce pairs must still deduplicate
+        (the no-pairs fix must not change normal behaviour)."""
+        out = os.path.join(self.tmpdir, "dd_ok")
+        rc, _, stderr = run_command(
+            f"DBRetina dedup -i {self.prefix} -p {self.pw_file} -c 100 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        with open(f"{out}_deduplicated_groups.txt") as f:
+            groups = {line.strip().lower() for line in f if line.strip()}
+        # A and F are identical -> one removed -> 5 groups.
+        self.assertEqual(len(groups), 5)
+
+    # ---- 026: dedup -i <missing prefix> -> clean error ----
+    def test_026_dedup_missing_index_clean_error(self):
+        """dedup -i <nonexistent prefix> must emit a clean [ERROR], not a raw
+        FileNotFoundError traceback."""
+        out = os.path.join(self.tmpdir, "dd_noidx")
+        missing = os.path.join(self.tmpdir, "nope_xyz")
+        rc, stdout, stderr = run_command(
+            f"DBRetina dedup -i {missing} -p {self.pw_file} -c 50 -o {out}"
+        )
+        assert_no_traceback(self, stderr, "dedup missing index")
+        self.assertNotIn("FileNotFoundError", stderr, stderr)
+        self.assertNotEqual(rc, 0, "missing index prefix should fail")
+        self.assertIn("[ERROR]", stderr, stderr)
+        self.assertIn("index", (stdout + stderr).lower(), stderr)
+
+    # ---- 029: genenet/interactome -i <missing prefix> -> clean error ----
+    def test_029_genenet_missing_index_clean_error(self):
+        """genenet -i <nonexistent prefix> must emit a clean [ERROR], not a raw
+        FileNotFoundError traceback."""
+        out = os.path.join(self.tmpdir, "gn_bad")
+        missing = os.path.join(self.tmpdir, "nonexistent_prefix")
+        rc, stdout, stderr = run_command(
+            f"DBRetina genenet -i {missing} -p {self.pw_file} -o {out}"
+        )
+        assert_no_traceback(self, stderr, "genenet missing index")
+        self.assertNotIn("FileNotFoundError", stderr, stderr)
+        self.assertNotEqual(rc, 0, "missing index prefix should fail")
+        self.assertIn("[ERROR]", stderr, stderr)
+        self.assertIn("index", (stdout + stderr).lower(), stderr)
+
+    def test_029_interactome_missing_index_clean_error(self):
+        """interactome shares genenet's main; a missing -i prefix must also emit
+        a clean [ERROR], not a raw FileNotFoundError traceback."""
+        out = os.path.join(self.tmpdir, "it_bad")
+        missing = os.path.join(self.tmpdir, "nonexistent_prefix")
+        rc, stdout, stderr = run_command(
+            f"DBRetina interactome -i {missing} -p {self.pw_file} -o {out}"
+        )
+        assert_no_traceback(self, stderr, "interactome missing index")
+        self.assertNotIn("FileNotFoundError", stderr, stderr)
+        self.assertNotEqual(rc, 0, "missing index prefix should fail")
+        self.assertIn("[ERROR]", stderr, stderr)
+
+
+# ============================================================
 # Main
 # ============================================================
 

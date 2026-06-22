@@ -48,7 +48,7 @@ def main(ctx, existing_index, asc_file, gmt_file, output_path):
         asc_from_gmt = True
 
     ctx.obj.INFO("Indexing new gene sets...")
-    build_gene_set_json(asc_file, output_prefix)
+    build_gene_set_json(ctx, asc_file, output_prefix)
 
     if asc_from_gmt:
         os.remove(asc_file[0])
