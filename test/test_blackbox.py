@@ -33,6 +33,7 @@ import shutil
 import json
 import time
 import unittest
+import warnings
 from types import SimpleNamespace
 
 # ============================================================
@@ -6482,6 +6483,265 @@ class TestClusterBareTsvParity(unittest.TestCase):
         bare = self._clusters(f"{out_bare}_clusters.tsv")
         self.assertIn(frozenset({"groupa", "groupb", "groupf"}), bare,
                       f"bare-TSV path lost the meaningful cluster:\n{bare}")
+
+
+# ============================================================
+# SECTION: ISSUE-045 (DBRetinaGraph class-level mutable state leak)
+# ============================================================
+
+class TestGraphStateIsolation(unittest.TestCase):
+    """ISSUE-045: DBRetinaGraph declared its per-run dicts/sets as CLASS attributes,
+    so a second instantiation in the SAME Python process inherited the first run's
+    entries (target maps, geneSetToTargetsArgumentID, ...). Invisible to the CLI
+    (fresh process per run) but a real latent bug. The mutable per-run state must be
+    INSTANCE-scoped: two instances must not share storage or leak entries."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_gstate_")
+        # Two DISJOINT target partitions (no overlap -> no ERROR/sys.exit), each a
+        # full cover of the 6 fixture groups so build_graph stays on the grouped path.
+        self.targets_a = write_file(
+            os.path.join(self.tmpdir, "ta.tsv"),
+            "GroupA\nGroupB\nGroupC\nGroupD\nGroupE\nGroupF\n",
+        )
+        self.targets_b = write_file(
+            os.path.join(self.tmpdir, "tb_one.tsv"),
+            "GroupA\nGroupB\nGroupC\n",
+        )
+        self.targets_b2 = write_file(
+            os.path.join(self.tmpdir, "tb_two.tsv"),
+            "GroupD\nGroupE\nGroupF\n",
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _make_graph(self, intra_targets):
+        """Build a DBRetinaGraph in-process (silent logger). intra_targets is the
+        processed --intra-targets value: a list of file-lists (file groups)."""
+        from dbretina.customLogger import Logger
+        from dbretina.bipartite_graph import DBRetinaGraph
+        out_prefix = os.path.join(self.tmpdir, f"st_{id(intra_targets)}")
+        return DBRetinaGraph(
+            pairwise_file=self.pw_file,
+            index_prefix=self.prefix,
+            metric="ochiai",
+            cutoff=0.0,
+            LOGGER=Logger(active=False),
+            inter_targets=[],
+            intra_targets=intra_targets,
+            output_prefix=out_prefix,
+        )
+
+    def test_two_instances_have_independent_mutable_state(self):
+        """Two fresh DBRetinaGraph instances must NOT share the same mutable
+        dict/set objects (pre-fix they were the same class-level object: same id())."""
+        g1 = self._make_graph([[self.targets_a]])
+        g2 = self._make_graph([[self.targets_b]])
+        mutable_attrs = [
+            "target_to_gene_sets",
+            "node_to_fragmentation",
+            "node_to_heterogeneity",
+            "node_to_modularity",
+            "node_to_target_name",
+            "target_groups",
+            "target_to_targetGroupID",
+            "geneSetToTargetsArgumentID",
+            "gene_set_to_targetID",
+        ]
+        for attr in mutable_attrs:
+            self.assertIsNot(
+                getattr(g1, attr), getattr(g2, attr),
+                f"DBRetinaGraph.{attr} is shared across instances (same object) "
+                f"-> class-level mutable state leak (issue 045)",
+            )
+
+    def test_no_cross_instance_entry_leak(self):
+        """The second instance's target maps must reflect ONLY its own targets, not
+        the first instance's entries. Pre-fix the shared class dict accumulated both."""
+        # First instance: single intra group covering all 6 groups -> 'intra_1'.
+        g1 = self._make_graph([[self.targets_a]])
+        # Sanity: g1 saw all six fixture groups.
+        self.assertEqual(len(g1.gene_set_to_targetID), 6)
+        self.assertTrue(
+            all(v == "intra_1" for v in g1.geneSetToTargetsArgumentID.values()),
+            "setup expectation: g1's groups all map to its single intra target",
+        )
+
+        # Second instance: two SEPARATE intra groups (3 groups each) -> some groups
+        # map to 'intra_2'. If state leaked from g1, every group would still be
+        # 'intra_1' and/or the file->target map would carry g1's file basename.
+        g2 = self._make_graph([[self.targets_b], [self.targets_b2]])
+        self.assertEqual(
+            len(g2.gene_set_to_targetID), 6,
+            "g2 should map exactly its own 6 groups (no leaked/extra entries)",
+        )
+        # g2 must contain an 'intra_2' assignment (its second target group); a leaked
+        # shared dict pre-populated by g1 (all 'intra_1') would lack it.
+        self.assertIn(
+            "intra_2", set(g2.geneSetToTargetsArgumentID.values()),
+            "g2 lost its own second target group -> cross-instance state leak (issue 045)",
+        )
+        # And g2's file->target map must NOT carry g1's target file basename.
+        g1_basename = os.path.splitext(os.path.basename(self.targets_a))[0]
+        self.assertNotIn(
+            g1_basename, g2.target_to_targetGroupID,
+            f"g2.target_to_targetGroupID leaked g1's target file '{g1_basename}' "
+            f"(issue 045: shared class dict)",
+        )
+
+    def test_first_instance_unmutated_by_second(self):
+        """Constructing a second instance must not retroactively mutate the first
+        instance's state (it would, if both aliased one class-level dict)."""
+        g1 = self._make_graph([[self.targets_a]])
+        before = dict(g1.target_to_targetGroupID)
+        _g2 = self._make_graph([[self.targets_b], [self.targets_b2]])
+        self.assertEqual(
+            g1.target_to_targetGroupID, before,
+            "first instance's target map changed after building a second instance "
+            "(issue 045: shared class-level dict)",
+        )
+
+
+# ============================================================
+# SECTION: ISSUE-062 (PairwiseStore deprecated fetch_record_batch)
+# ============================================================
+
+try:
+    import duckdb as _duckdb_062  # noqa: F401
+    _HAS_DUCKDB_062 = True
+except Exception:
+    _HAS_DUCKDB_062 = False
+
+
+@unittest.skipUnless(_HAS_DUCKDB_062, "PairwiseStore Arrow paths need duckdb")
+class TestPairwiseStoreArrowReader(unittest.TestCase):
+    """ISSUE-062: PairwiseStore used the DEPRECATED DuckDB .fetch_record_batch()
+    (DuckDB 1.5.4 emits 'fetch_record_batch() is deprecated, use to_arrow_reader()
+    instead'; breaks on a future DuckDB major). The streaming Arrow paths
+    (filter_pairs / query_group / iterate_all) must use to_arrow_reader(): no
+    DeprecationWarning, identical RecordBatchReader results."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.parquet = f"{cls.prefix}_DBRetina_pairwise"
+        cls.dbri = f"{cls.prefix}.dbri"
+
+    def _store(self):
+        from dbretina.pairwise_store import PairwiseStore
+        return PairwiseStore(self.parquet, dbri_path=self.dbri)
+
+    @staticmethod
+    def _consume(reader):
+        """Drain a RecordBatchReader into a flat list of row-dicts."""
+        rows = []
+        for batch in reader:
+            d = batch.to_pydict()
+            cols = list(d.keys())
+            n = len(d[cols[0]]) if cols else 0
+            for i in range(n):
+                rows.append({c: d[c][i] for c in cols})
+        return rows
+
+    def _assert_no_deprecation(self, recorded, label):
+        offenders = [
+            str(w.message) for w in recorded
+            if "fetch_record_batch" in str(w.message)
+        ]
+        self.assertFalse(
+            offenders,
+            f"{label} emitted a fetch_record_batch DeprecationWarning "
+            f"(issue 062, not migrated to to_arrow_reader): {offenders}",
+        )
+
+    def test_filter_pairs_no_deprecation_and_correct(self):
+        import pyarrow as pa
+        store = self._store()
+        try:
+            with warnings.catch_warnings(record=True) as rec:
+                warnings.simplefilter("always")
+                reader = store.filter_pairs(
+                    "ochiai", 0.0,
+                    columns=["group_1_id", "group_2_id", "ochiai"],
+                )
+                self.assertIsInstance(reader, pa.RecordBatchReader)
+                rows = self._consume(reader)
+            self._assert_no_deprecation(rec, "filter_pairs")
+            self.assertTrue(rows, "filter_pairs returned no rows")
+            self.assertTrue(all(r["ochiai"] >= 0.0 for r in rows))
+            # cutoff actually filters: a high cutoff yields strictly fewer rows.
+            hi = self._consume(
+                store.filter_pairs("ochiai", 99.0, columns=["ochiai"])
+            )
+            self.assertLess(len(hi), len(rows), "cutoff did not reduce the result")
+        finally:
+            store.close()
+
+    def test_query_group_no_deprecation_and_correct(self):
+        import pyarrow as pa
+        store = self._store()
+        try:
+            with warnings.catch_warnings(record=True) as rec:
+                warnings.simplefilter("always")
+                reader = store.query_group(
+                    "groupa", metric="ochiai", cutoff=0.0,
+                    columns=["group_1_id", "group_2_id", "ochiai"],
+                )
+                self.assertIsInstance(reader, pa.RecordBatchReader)
+                rows = self._consume(reader)
+            self._assert_no_deprecation(rec, "query_group")
+            self.assertTrue(rows, "query_group(groupa) returned no rows")
+            gid = store.group_id("groupa")
+            self.assertIsNotNone(gid)
+            # every returned pair must involve groupa
+            self.assertTrue(
+                all(gid in (r["group_1_id"], r["group_2_id"]) for r in rows),
+                "query_group returned a pair not involving the queried group",
+            )
+        finally:
+            store.close()
+
+    def test_iterate_all_no_deprecation_and_correct(self):
+        import pyarrow as pa
+        store = self._store()
+        try:
+            with warnings.catch_warnings(record=True) as rec:
+                warnings.simplefilter("always")
+                reader = store.iterate_all(
+                    columns=["group_1_id", "group_2_id", "ochiai"]
+                )
+                self.assertIsInstance(reader, pa.RecordBatchReader)
+                rows = self._consume(reader)
+            self._assert_no_deprecation(rec, "iterate_all")
+            self.assertTrue(rows, "iterate_all returned no rows")
+            # iterate_all (no filter) must cover at least the filtered subset.
+            filtered = self._consume(
+                store.filter_pairs("ochiai", 0.0, columns=["ochiai"])
+            )
+            self.assertGreaterEqual(len(rows), len(filtered))
+        finally:
+            store.close()
+
+    def test_no_deprecation_across_all_arrow_paths(self):
+        """One guard covering all three readers together: zero fetch_record_batch
+        DeprecationWarnings anywhere on the streaming Arrow paths."""
+        store = self._store()
+        try:
+            with warnings.catch_warnings(record=True) as rec:
+                warnings.simplefilter("always")
+                self._consume(store.filter_pairs("ochiai", 0.0, columns=["ochiai"]))
+                self._consume(
+                    store.query_group("groupa", metric="ochiai", columns=["ochiai"])
+                )
+                self._consume(store.iterate_all(columns=["ochiai"]))
+            self._assert_no_deprecation(rec, "all Arrow paths")
+        finally:
+            store.close()
 
 
 # ============================================================

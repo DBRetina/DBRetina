@@ -108,7 +108,7 @@ class PairwiseStore:
         # creation (cursor() itself is not documented thread-safe) and release it
         # immediately; the returned cursor — including any streaming reader built
         # from it — is then safe to fetch from without holding the lock, which is
-        # exactly what the ``sql()`` / ``fetch_record_batch()`` callers do. The
+        # exactly what the ``sql()`` / ``to_arrow_reader()`` callers do. The
         # connection-level state set in harden_readonly() (the materialized
         # ``pairs`` table and ``enable_external_access=false``) is inherited by
         # every cursor, so the /sql sandbox is preserved.
@@ -144,7 +144,7 @@ class PairwiseStore:
         Every concurrent query path goes through here so interleaved requests no
         longer clobber a shared connection's result (issue 055). The lock guards
         only the brief ``cursor()`` creation; callers fetch from the returned
-        cursor without holding it, so streaming readers (``fetch_record_batch``)
+        cursor without holding it, so streaming readers (``to_arrow_reader``)
         and the ``sql()`` escape hatch stay correct under concurrency.
         """
         with self._con_lock:
@@ -252,7 +252,7 @@ class PairwiseStore:
             f"SELECT {col_clause} FROM pairs "
             f"WHERE {metric} >= {cutoff}"
         )
-        return self._cursor().execute(query).fetch_record_batch()
+        return self._cursor().execute(query).to_arrow_reader()
 
     def query_group(
         self,
@@ -283,7 +283,7 @@ class PairwiseStore:
             where += f" AND {metric} >= {cutoff}"
 
         query = f"SELECT {col_clause} FROM pairs {where}"
-        return self._cursor().execute(query).fetch_record_batch()
+        return self._cursor().execute(query).to_arrow_reader()
 
     def shared_features(self, group_a: str, group_b: str) -> set[str]:
         """Return the set of features (genes) shared between two groups.
@@ -366,7 +366,7 @@ class PairwiseStore:
     ) -> pa.RecordBatchReader:
         """Full streaming iteration with optional column projection."""
         col_clause = ", ".join(columns) if columns else "*"
-        return self._cursor().execute(f"SELECT {col_clause} FROM pairs").fetch_record_batch()
+        return self._cursor().execute(f"SELECT {col_clause} FROM pairs").to_arrow_reader()
 
     def sql(self, query: str) -> duckdb.DuckDBPyRelation:
         """Execute arbitrary SQL against the 'pairs' view.

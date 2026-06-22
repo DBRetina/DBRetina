@@ -57,32 +57,13 @@ def validate_all_files_exist(ctx, param, value):
 
 
 class DBRetinaGraph:
-    
-    # graph with type of nx.Graph()
-    graph : nx.Graph = None
-    node_attributes = None    
-    pairwise_file = None
-    index_prefix = None
-    metric = None
-    cutoff : float = None
-    metadata = []
+
+    # NOTE: every per-run *mutable* attribute (dicts/sets/lists) is initialized as an
+    # INSTANCE attribute in __init__, NOT here. Declaring them at class scope made them
+    # shared across instances, so a second DBRetinaGraph() in the same process inherited
+    # the first run's entries (issue 045). Only read-only constants live at class scope.
     dbretina_str_escape = lambda x: x.lower().replace('"', '')
-    target_to_gene_sets = defaultdict(set)
 
-    node_to_fragmentation = defaultdict(int)
-    node_to_heterogeneity = defaultdict(int)
-    node_to_modularity = defaultdict(int)
-    node_to_target_name = {}
-    target_groups = set()
-    
-    target_to_targetGroupID = {}
-    geneSetToTargetsArgumentID = {}
-    
-    gene_set_to_targetID = {}
-    
-    pairwise_df = None
-
-    
     metric_to_col = {
         "containment": 5,
         "ochiai": 6,
@@ -92,11 +73,25 @@ class DBRetinaGraph:
         "odds_ratio": 10,
         "pvalue": 11,
     }
-    
-    metric_col : int = None
-    
-    
+
+
     def __init__(self, pairwise_file, index_prefix, metric, cutoff, LOGGER, inter_targets, intra_targets, output_prefix):
+        # Per-run mutable state, instance-scoped so concurrent/repeated in-process
+        # instantiations don't share or leak entries (issue 045).
+        self.graph = None
+        self.node_attributes = None
+        self.metadata = []
+        self.pairwise_df = None
+        self.metric_col = None
+        self.target_to_gene_sets = defaultdict(set)
+        self.node_to_fragmentation = defaultdict(int)
+        self.node_to_heterogeneity = defaultdict(int)
+        self.node_to_modularity = defaultdict(int)
+        self.node_to_target_name = {}
+        self.target_groups = set()
+        self.target_to_targetGroupID = {}
+        self.geneSetToTargetsArgumentID = {}
+        self.gene_set_to_targetID = {}
         # Guard the lookup: the -m callback validates real metrics but lets the "NA"
         # sentinel through, and a bare metric_to_col[...] would raise a raw KeyError.
         if metric not in self.metric_to_col:
@@ -118,9 +113,13 @@ class DBRetinaGraph:
         self.cutoff = cutoff
         self.metric = metric
         self.LOGGER = LOGGER
+        # Set before load_all_targets(): its common-groups error path writes to
+        # f"{self.output_prefix}_ERROR_common_groups.txt", so output_prefix must
+        # already exist (it previously was assigned only after, raising a masked
+        # AttributeError whenever that branch fired).
+        self.output_prefix = output_prefix
         self.load_all_targets()
         self.parse_node_size(index_prefix)
-        self.output_prefix = output_prefix
 
         
     def load_all_targets(self):
