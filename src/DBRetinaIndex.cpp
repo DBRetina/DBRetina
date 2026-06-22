@@ -331,11 +331,36 @@ DBRetinaIndex DBRetinaIndex::open(const std::string& filepath) {
     // Read TOC offset
     uint64_t toc_offset;
     in.read(reinterpret_cast<char*>(&toc_offset), sizeof(uint64_t));
+    if (!in) {
+        throw std::runtime_error("Incomplete/corrupt .dbri file (truncated header): " + filepath);
+    }
+
+    // Validate the TOC offset before trusting it. The header is exactly
+    // 16 bytes (magic[4] + version[4] + toc_offset[8]). An unfinalized index
+    // (written by begin_write but never finalize_write, e.g. a crash mid-write)
+    // still carries the placeholder toc_offset == 0; a truncated file points the
+    // offset past EOF. Either way, seeking there and reading num_sections would
+    // interpret garbage (the magic bytes read as ~1.2B sections) and silently
+    // yield a bogus empty index. Reject both cleanly instead.
+    constexpr uint64_t HEADER_SIZE = 4 + sizeof(uint32_t) + sizeof(uint64_t);  // 16
+    in.seekg(0, std::ios::end);
+    uint64_t file_size = static_cast<uint64_t>(in.tellg());
+    // The TOC must start after the header and leave room for at least the
+    // 4-byte num_sections field.
+    if (toc_offset < HEADER_SIZE || toc_offset + sizeof(uint32_t) > file_size) {
+        throw std::runtime_error(
+            "Incomplete/corrupt .dbri file (invalid TOC offset " + std::to_string(toc_offset)
+            + ", file size " + std::to_string(file_size)
+            + "); the index was likely not finalized: " + filepath);
+    }
 
     // Seek to TOC and read it
     in.seekg(toc_offset);
     uint32_t num_sections;
     in.read(reinterpret_cast<char*>(&num_sections), sizeof(uint32_t));
+    if (!in) {
+        throw std::runtime_error("Incomplete/corrupt .dbri file (cannot read TOC): " + filepath);
+    }
 
     idx.toc_.resize(num_sections);
     for (uint32_t i = 0; i < num_sections; i++) {
@@ -343,6 +368,9 @@ DBRetinaIndex DBRetinaIndex::open(const std::string& filepath) {
         in.read(reinterpret_cast<char*>(&idx.toc_[i].offset), sizeof(uint64_t));
         in.read(reinterpret_cast<char*>(&idx.toc_[i].length), sizeof(uint64_t));
         in.read(reinterpret_cast<char*>(&idx.toc_[i].crc32), sizeof(uint32_t));
+    }
+    if (!in) {
+        throw std::runtime_error("Incomplete/corrupt .dbri file (truncated TOC entries): " + filepath);
     }
 
     in.close();

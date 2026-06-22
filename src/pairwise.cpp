@@ -260,6 +260,42 @@ namespace dbretina {
         return (double)k * N / (double)(s * M);
     }
 
+    /*
+        Guarded hypergeometric CDF evaluation.
+
+        boost::math::hypergeometric_distribution<>(r, n, N) requires the
+        distribution parameters to satisfy 0 <= r <= N and 0 <= n <= N, and the
+        CDF argument x to lie within the support [max(0, n+r-N), min(n, r)].
+        Outside that support boost throws std::domain_error which, under the
+        default error policy, calls std::terminate -> SIGABRT (a core dump).
+        This happens for small/degenerate gene populations where, e.g., the two
+        groups together cover more than the whole population (n + r - N > 0) so
+        the observed-overlap minus one falls below the lower support bound.
+
+        We guard both the parameters and the argument here:
+          - degenerate distribution parameters (out of the 0..N range, or N<1)
+            -> return a non-significant result (cdf treated as 0.0 so the
+               over-enrichment pvalue 1 - cdf becomes 1.0);
+          - the CDF argument is clamped to the support: below the support the
+            cumulative probability is exactly 0.0 and at/above the top it is
+            exactly 1.0, which is the mathematically correct continuation of the
+            CDF. Inside the support the value is computed by boost unchanged, so
+            valid-domain pvalues are bit-for-bit identical to before.
+    */
+    double safeHyperCDF(int x, int r, int n, int N) {
+        // Degenerate / out-of-domain distribution parameters: treat as the
+        // empty lower tail (cdf = 0) so callers fall back to a pvalue of 1.0.
+        if (N < 1 || r < 0 || r > N || n < 0 || n > N) {
+            return 0.0;
+        }
+        int lower = std::max(0, n + r - N);   // smallest possible overlap
+        int upper = std::min(n, r);           // largest possible overlap
+        if (x < lower) return 0.0;            // entire mass is above x
+        if (x >= upper) return 1.0;           // entire mass is at or below x
+        boost::math::hypergeometric_distribution<> hg(r, n, N);
+        return boost::math::cdf(hg, x);
+    }
+
     double calcPValue(int k, int s, int M, int N, bool isOverEnrichment) {
         /*
             Here we set the isOverEnriched null hypothesis as boolean set by user.
@@ -271,20 +307,13 @@ namespace dbretina {
             The alternative hypothesis is that the gene is over-enriched in the source.
             That means with low p-value we can reject the null hypothesis and say that the gene is over-enriched in the source.
         */
-        boost::math::hypergeometric_distribution<> hg(M, s, N);
-        double pvalue;
-
         if (isOverEnrichment) {
-            pvalue = 1 - boost::math::cdf(hg, k - 1);
+            return 1 - safeHyperCDF(k - 1, M, s, N);
         }
-        else {
-            pvalue = boost::math::cdf(hg, k);
-        }
-
-        return pvalue;
+        return safeHyperCDF(k, M, s, N);
     }
 
-    // Consireding the isOverEnrichment = True 
+    // Consireding the isOverEnrichment = True
     // (Null hypothesis is that the gene is over-enriched in the source)
     double fastHyperPValue(int k, int s, int M, int N) {
         /*
@@ -298,9 +327,11 @@ namespace dbretina {
             So, if the pvalue is less than the significance level (alpha), we reject the null hypothesis and accept the alternative hypothesis.
             If the pvalue is greater than the significance level (alpha), we accept the null hypothesis and reject the alternative hypothesis.
             smaller pvalues here means that the gene is more over-enriched in the source which means that the gene is more important in the source.
+
+            safeHyperCDF guards boost's domain constraints so small/degenerate
+            populations return a non-significant pvalue (1.0) instead of aborting.
         */
-        boost::math::hypergeometric_distribution<> hg(M, s, N);
-        return 1 - boost::math::cdf(hg, k - 1);
+        return 1 - safeHyperCDF(k - 1, M, s, N);
     }
 
     // Disabled for now

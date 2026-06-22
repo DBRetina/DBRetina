@@ -4889,6 +4889,198 @@ class TestExportClusterGraphDbrpFallback(unittest.TestCase):
 
 
 # ============================================================
+# SECTION: C++ crash regressions (issues 041, 042)
+# ============================================================
+
+# Signals that indicate a C++ core-dump (subprocess returncode is negative for a
+# signal; the shell maps SIGABRT->134 and SIGSEGV->139).
+_CRASH_RETURNCODES = (-6, -11, 134, 139)
+
+
+def assert_no_coredump(test_case, rc, stderr, ctx=""):
+    """The process must not have died from SIGABRT/SIGSEGV (boost abort etc.)."""
+    test_case.assertNotIn(rc, _CRASH_RETURNCODES,
+                          f"{ctx}: process core-dumped (rc={rc}):\n{stderr}")
+    for marker in ("Segmentation", "Aborted", "core dumped",
+                   "terminate called", "domain_error"):
+        test_case.assertNotIn(marker, stderr, f"{ctx}: crash marker '{marker}':\n{stderr}")
+
+
+class TestPvalueSmallPopulationCrash(unittest.TestCase):
+    """ISSUE-041: `pairwise --pvalue` core-dumped (boost hypergeometric
+    domain_error -> abort) on small/degenerate gene populations.
+
+    Repro (from the issue): 30 groups drawing 12 genes each from a 40-gene pool.
+    For such tiny populations the hypergeometric random variable k-1 falls below
+    boost's lower domain bound max(0, n+r-N), so boost throws std::domain_error
+    which (under the default policy) calls std::terminate -> SIGABRT (rc 134).
+    The fix guards/clamps the parameters and returns a non-significant pvalue
+    (1.0) for degenerate cases instead of crashing.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_pv041_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _build_small_pop_index(self):
+        """30 groups, 12 genes each, drawn from a 40-gene pool (sliding window)."""
+        genes = [f"g{i}" for i in range(40)]
+        rows = ["grp_%02d\tdesc\t%s" % (k, "\t".join(genes[(k % 10):(k % 10) + 12]))
+                for k in range(30)]
+        gmt = os.path.join(self.tmpdir, "many.gmt")
+        with open(gmt, "w") as f:
+            f.write("\n".join(rows) + "\n")
+        rc, _, err = run_command("DBRetina index -g many.gmt -o idx", cwd=self.tmpdir)
+        self.assertEqual(rc, 0, err)
+        return "idx"
+
+    def test_041_pairwise_pvalue_small_population_no_coredump(self):
+        """The exact repro from issue 041 must NOT core-dump and must emit pvalues."""
+        idx = self._build_small_pop_index()
+        rc, stdout, stderr = run_command(
+            f"DBRetina pairwise -i {idx} -m containment -c 0 --pvalue", cwd=self.tmpdir
+        )
+        assert_no_coredump(self, rc, stderr, "pairwise --pvalue small pop")
+        self.assertEqual(rc, 0, f"pairwise --pvalue should succeed:\n{stderr}")
+        pw_file = os.path.join(self.tmpdir, "idx_DBRetina_pairwise.tsv")
+        assert_file_exists(self, pw_file)
+        rows = parse_pairwise_tsv(pw_file)
+        self.assertGreater(len(rows), 0, "expected pairwise rows")
+        # Every row carries a pvalue and it is a valid probability in [0, 1].
+        for row in rows:
+            self.assertIn("pvalue", row, "pvalue column missing")
+            self.assertGreaterEqual(row["pvalue"], 0.0, f"pvalue<0: {row['pvalue']}")
+            self.assertLessEqual(row["pvalue"], 1.0, f"pvalue>1: {row['pvalue']}")
+
+    def test_041_pvalue_unchanged_on_normal_population(self):
+        """Regression guard: the fix must NOT change pvalues for a valid-domain
+        (normal) population. The standard 6-group fixture has a comfortable gene
+        population, so its hypergeometric inputs are all in-domain. We pin the
+        exact pvalue for a known pair (GroupA vs GroupB) computed independently
+        with the same hypergeometric definition boost uses.
+        """
+        prefix, pw_file = setup_index_and_pairwise(self.tmpdir, extra_pw_args="--pvalue")
+        rows = parse_pairwise_tsv(pw_file)
+        by_pair = {frozenset({r["group_1_name"], r["group_2_name"]}): r for r in rows}
+
+        # Independent reference: over-enrichment pvalue = P(X >= k) = 1 - cdf(k-1)
+        # for Hypergeometric(M=population, n=sample=|set1|, r=successes=|set2|).
+        # GroupA={Alpha,Beta,Gamma,Delta,Epsilon}=5, GroupB={Alpha,Beta,Gamma}=3,
+        # shared k=3. Population = 12 distinct genes across the fixture.
+        try:
+            from scipy.stats import hypergeom
+            ref = float(hypergeom.sf(3 - 1, 12, 3, 5))  # sf(k-1) = P(X>=k)
+        except ImportError:
+            ref = None
+
+        ab = by_pair[frozenset({"groupa", "groupb"})]
+        self.assertIn("pvalue", ab)
+        # Valid probability regardless of scipy availability.
+        self.assertGreaterEqual(ab["pvalue"], 0.0)
+        self.assertLessEqual(ab["pvalue"], 1.0)
+        if ref is not None:
+            self.assertAlmostEqual(ab["pvalue"], ref, places=4,
+                                   msg="normal-population pvalue changed by the fix")
+
+
+class TestPartialDbriOpen(unittest.TestCase):
+    """ISSUE-042: DBRetinaIndex::open silently accepted an unfinalized/partial
+    .dbri whose placeholder toc_offset==0 (a crash between header-write and
+    finalize_write), reading garbage with no validation.
+
+    Header layout: magic(4) + version(4) + toc_offset(8) = 16 bytes. A finalized
+    index always has toc_offset >= 16 and < file_size. toc_offset==0 (or a value
+    pointing past EOF) means the file was never finalized. open() must reject it
+    with a clean error instead of seeking to 0, reading the magic bytes as a
+    ~1.2-billion section count, and returning a silently-empty index.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_dbri042_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _build_valid_dbri(self):
+        asc = write_file(os.path.join(self.tmpdir, "t.asc"),
+                         "gene_set\tgene\nGroupA\tAlpha\nGroupA\tBeta\n"
+                         "GroupB\tBeta\nGroupB\tGamma\n")
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, _, err = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, err)
+        return prefix, prefix + ".dbri"
+
+    def test_042_partial_header_only_clean_error(self):
+        """A 16-byte header with the placeholder toc_offset==0 (exactly what
+        begin_write leaves on disk before finalize) must raise a clean error,
+        NOT silently return an empty index, NOT a huge alloc, NOT a segfault."""
+        import struct
+        partial = os.path.join(self.tmpdir, "partial.dbri")
+        with open(partial, "wb") as f:
+            f.write(b"DBRI" + struct.pack("<I", 1) + struct.pack("<Q", 0))
+
+        import _dbretina_internal as dbi
+        with self.assertRaises(Exception) as cm:
+            dbi.dbri_load_raw_gene_sets(partial)
+        msg = str(cm.exception).lower()
+        self.assertTrue(
+            any(w in msg for w in ("incomplete", "corrupt", "unfinalized", "truncated")),
+            f"expected a clear corrupt/incomplete message, got: {cm.exception}",
+        )
+
+    def test_042_partial_via_pairwise_clean_error(self):
+        """Opening a partial (toc_offset==0) .dbri through the pairwise CLI gives
+        a clean [ERROR]/exception, never a segfault/abort/garbage."""
+        import struct
+        partial_prefix = os.path.join(self.tmpdir, "partial")
+        with open(partial_prefix + ".dbri", "wb") as f:
+            f.write(b"DBRI" + struct.pack("<I", 1) + struct.pack("<Q", 0))
+        rc, stdout, stderr = run_command(
+            f"DBRetina pairwise -i {partial_prefix} -m containment -c 0"
+        )
+        assert_no_coredump(self, rc, stderr, "pairwise on partial .dbri")
+        self.assertNotEqual(rc, 0, "partial .dbri must not succeed")
+
+    def test_042_truncated_before_toc_clean_error(self):
+        """A valid header whose toc_offset points past a truncated EOF must also
+        be rejected cleanly (offset >= file_size)."""
+        import struct
+        _, valid = self._build_valid_dbri()
+        data = open(valid, "rb").read()
+        toc_offset = struct.unpack("<Q", data[8:16])[0]
+        self.assertGreater(toc_offset, 16, "valid index must have toc_offset > header")
+        trunc = os.path.join(self.tmpdir, "trunc.dbri")
+        # Keep header (with the real, now-out-of-range toc_offset) but cut the TOC off.
+        with open(trunc, "wb") as f:
+            f.write(data[:toc_offset - 5])
+
+        import _dbretina_internal as dbi
+        with self.assertRaises(Exception) as cm:
+            dbi.dbri_load_raw_gene_sets(trunc)
+        msg = str(cm.exception).lower()
+        self.assertTrue(
+            any(w in msg for w in ("incomplete", "corrupt", "unfinalized", "truncated")),
+            f"expected a clear corrupt/incomplete message, got: {cm.exception}",
+        )
+
+    def test_042_valid_dbri_still_opens(self):
+        """A finalized .dbri must still open and read correctly (no regression)."""
+        prefix, valid = self._build_valid_dbri()
+        import _dbretina_internal as dbi
+        # Reads through open() must succeed and return real data.
+        names = dbi.dbri_load_names_list(valid)
+        self.assertEqual(set(n.lower() for n in names), {"groupa", "groupb"})
+        raw = dbi.dbri_load_raw_gene_sets(valid)
+        self.assertIsInstance(raw, str)
+        self.assertGreater(len(raw), 0, "valid index returned empty raw gene sets")
+        # And the full pairwise pipeline still works end-to-end on it.
+        rc, _, err = run_command(f"DBRetina pairwise -i {prefix} -m containment -c 0")
+        self.assertEqual(rc, 0, err)
+
+
+# ============================================================
 # Main
 # ============================================================
 
