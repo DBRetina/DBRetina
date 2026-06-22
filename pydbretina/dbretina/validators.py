@@ -2,7 +2,14 @@
 import click
 
 VALID_METRICS = ["containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio", "pvalue"]
-SIMILARITY_METRICS = ["containment", "ochiai", "jaccard", "csi", "dice"]
+# Metrics accepted as the pairwise cutoff-FILTER metric (`pairwise -m`). This must
+# match the C++ allowlist in src/pairwise.cpp (allowed_distances = {containment,
+# ochiai, jaccard}); csi/dice ARE computed and emitted as columns, but the C++
+# pairwise() rejects them as the cutoff metric with a raw std::invalid_argument.
+# Keep this list == the C++ set so `pairwise -m csi/dice` fails with a clean Click
+# error (exit 2) instead of an opaque C++ ValueError traceback. Other commands
+# (query/cluster/export/graph) use VALID_METRICS, which still allows csi/dice.
+SIMILARITY_METRICS = ["containment", "ochiai", "jaccard"]
 # scipy.cluster.hierarchy.linkage() accepted methods.
 VALID_LINKAGE_METHODS = ["single", "complete", "average", "weighted", "centroid", "median", "ward"]
 

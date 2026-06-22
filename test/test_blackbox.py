@@ -679,6 +679,65 @@ class TestPairwise(unittest.TestCase):
         mt_pairs = {frozenset({r["group_1_name"], r["group_2_name"]}): r for r in rows_mt}
         self.assertEqual(st_pairs.keys(), mt_pairs.keys())
 
+    def test_pairwise_nonpositive_threads_clean_error(self):
+        """ISSUE-031: pairwise -t with a non-positive thread count must be rejected
+        cleanly, not crash in C++ (vector::_M_default_append for negatives, SIGSEGV
+        for 0). A positive -t still works."""
+        asc = write_file(os.path.join(self.tmpdir, "t.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "tidx")
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+
+        for bad in ("-2", "0"):
+            rc, _, stderr = run_command(
+                f"DBRetina pairwise -i {prefix} -m containment -c 0 -t {bad}"
+            )
+            self.assertNotEqual(rc, 0, f"-t {bad} should exit nonzero")
+            # no opaque STL error, no raw traceback, no segfault (-11/139)
+            self.assertNotIn("Traceback", stderr)
+            self.assertNotIn("_M_default_append", stderr)
+            self.assertNotIn("Segmentation", stderr)
+            self.assertNotEqual(rc, -11, "must not SIGSEGV")
+            self.assertNotEqual(rc, 139, "must not SIGSEGV")
+
+        # a valid thread count still works
+        rc, _, stderr = run_command(
+            f"DBRetina pairwise -i {prefix} -m containment -c 0 -t 2"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("Traceback", stderr)
+        assert_file_exists(self, f"{prefix}_DBRetina_pairwise.tsv")
+
+    def test_pairwise_unsupported_filter_metric_clean_error(self):
+        """ISSUE-032: pairwise -m csi/dice pass the old validator but the C++ cutoff
+        filter only accepts containment/ochiai/jaccard -> they crashed with a raw
+        C++ ValueError. They must now be rejected cleanly; supported metrics work."""
+        asc = write_file(os.path.join(self.tmpdir, "m.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "midx")
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+
+        for bad in ("csi", "dice"):
+            rc, _, stderr = run_command(
+                f"DBRetina pairwise -i {prefix} -m {bad} -c 0"
+            )
+            self.assertNotEqual(rc, 0, f"-m {bad} should exit nonzero")
+            self.assertNotIn("Traceback", stderr)
+            # not the raw C++ message
+            self.assertNotIn("cutoff_distance_type", stderr)
+            # clean Click error naming the bad value + the supported metrics
+            self.assertIn(bad, stderr)
+            self.assertIn("containment", stderr.lower())
+
+        # supported cutoff-filter metrics still work
+        for good in ("containment", "ochiai", "jaccard"):
+            rc, _, stderr = run_command(
+                f"DBRetina pairwise -i {prefix} -m {good} -c 0"
+            )
+            self.assertEqual(rc, 0, f"-m {good} should succeed: {stderr}")
+            self.assertNotIn("Traceback", stderr)
+            assert_file_exists(self, f"{prefix}_DBRetina_pairwise.tsv")
+
 
 # ============================================================
 # SECTION 5: Query Tests
@@ -1348,6 +1407,29 @@ class TestBipartite(unittest.TestCase):
         )
         # May succeed with empty results or error (no perfect cross-group matches)
         # A-B have ochiai=77.5, A-C have 36.5, so no 100% matches across groups
+
+    def test_bipartite_invalid_metric_clean_error(self):
+        """ISSUE-023: bipartite -m BOGUS exits nonzero with a clean error, not a raw
+        traceback (KeyError on metric_to_col / ValueError from PairwiseStore)."""
+        out = os.path.join(self.tmpdir, "bipbadm")
+        rc, _, stderr = run_command(
+            f"DBRetina bipartite -p {self.pw_file} --group1 {self.g1} "
+            f"--group2 {self.g2} -m BOGUS -c 5 --no-plot -o {out}"
+        )
+        self.assertNotEqual(rc, 0, "invalid metric should exit nonzero")
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("KeyError", stderr)
+        # mentions the bad value and lists the valid choices
+        self.assertIn("BOGUS", stderr)
+        self.assertIn("metric", stderr.lower())
+        # a valid metric still works
+        rc2, _, stderr2 = run_command(
+            f"DBRetina bipartite -p {self.pw_file} --group1 {self.g1} "
+            f"--group2 {self.g2} -m ochiai -c 0 --no-plot -o {out}_ok"
+        )
+        self.assertEqual(rc2, 0, stderr2)
+        self.assertNotIn("Traceback", stderr2)
+        assert_file_exists(self, f"{out}_ok_bipartite_pairwise.tsv")
 
 
 # ============================================================

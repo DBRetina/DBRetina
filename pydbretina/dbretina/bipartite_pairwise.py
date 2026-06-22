@@ -6,6 +6,7 @@ import _dbretina_internal as dbretina_internal
 import click
 import contextlib
 from dbretina.click_context import cli
+from dbretina.validators import validate_metric
 import subprocess
 import os
 import pandas as pd
@@ -230,7 +231,7 @@ def plot_pivot_table(df_bipartite, metric, output_prefix):
 @click.option('--group2', "group_2_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="group2 single-column supergroups file")
 @click.option('--gmt1', "gmt_1_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="GMT file 1")
 @click.option('--gmt2', "gmt_2_file", callback=path_to_absolute_path, required=False, type=click.Path(exists=True), help="GMT file 2")
-@click.option('-m', '--metric', "metric", required=True, type=click.STRING, help="Bipartite coloring based on ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="Bipartite coloring based on ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('-c', '--cutoff', 'cutoff', required=False, type=click.FloatRange(0, 100, clamp=False), default=0.0, show_default = True, help="Include comparisons (similarity > cutoff)")
 @click.option('--no-plot', "no_plot", is_flag=True, default=False, help="do not plot the bipartite graph")
 @click.option('--no-1-1', "no_1_1", is_flag=True, default=False, help="do not include 1-1 mapping")
@@ -310,6 +311,13 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
         "odds_ratio": 10,
         "pvalue": 11,
     }
+
+    # Guard the lookup: the -m callback validates real metrics but lets the "NA"
+    # sentinel through, and a bare metric_to_col[...]/store.to_pandas(metric=...)
+    # would surface a raw KeyError/ValueError traceback. Mirror the graph command.
+    if metric not in metric_to_col:
+        LOGGER.ERROR(f"Invalid metric '{metric}'. Choose from: {', '.join(metric_to_col)}")
+        sys.exit(1)
 
     df_bipartite = pd.DataFrame(columns=["group_1", "group_2", "containment", "ochiai", "jaccard"])
 
