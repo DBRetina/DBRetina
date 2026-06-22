@@ -1,6 +1,7 @@
 """FastAPI REST server for DBRetina pairwise data + graph dashboard."""
 
 import asyncio
+import math
 import pathlib
 import threading
 import time
@@ -179,6 +180,16 @@ def create_app(
 
     def validate_cutoff(cutoff: float, metric: str = "ochiai"):
         """Validate cutoff value based on metric type."""
+        # Reject non-finite cutoffs (inf / -inf / NaN) for EVERY metric: even
+        # metrics with an infinite range max would otherwise pass the bounds
+        # check below and be interpolated into SQL as the bare token `inf`/`nan`,
+        # which DuckDB parses as a (missing) column -> uncaught 500.
+        if not math.isfinite(cutoff):
+            raise ValidationError(
+                detail=f"Cutoff must be a finite number, got {cutoff}",
+                field="cutoff",
+                value=cutoff,
+            )
         min_val, max_val = METRIC_CUTOFF_RANGES.get(metric, (0.0, 100.0))
         # For infinity max, just check minimum
         if max_val == float("inf"):
@@ -297,6 +308,10 @@ def create_app(
         """Get all pairs involving a specific group."""
         if metric:
             validate_metric(metric)
+        # cutoff is interpolated into SQL by query_group; reject non-finite /
+        # out-of-range values here (this endpoint never validated it before, so a
+        # cutoff of inf reached DuckDB as a bare token -> 500).
+        validate_cutoff(cutoff, metric or app.state.default_metric)
         try:
             reader = store.query_group(group_name, metric=metric, cutoff=cutoff)
         except KeyError:
@@ -436,6 +451,17 @@ def create_app(
                     raise ValidationError(
                         detail="'between' operator requires [min, max] value",
                         field="value",
+                    )
+            # Reject non-finite numeric values: they are interpolated into the SQL
+            # WHERE clause below and would reach DuckDB as the bare token inf/nan
+            # (parsed as a missing column -> uncaught 500).
+            _vals = filt.value if isinstance(filt.value, list) else [filt.value]
+            for _v in _vals:
+                if isinstance(_v, float) and not math.isfinite(_v):
+                    raise ValidationError(
+                        detail=f"Filter value must be finite, got {_v}",
+                        field="value",
+                        value=_v,
                     )
 
         # Build SQL WHERE clause
@@ -653,11 +679,14 @@ def create_app(
         - **projection**: PageRank on gene co-occurrence graph
         """
         gi = _get_gene_importance()
-        # The edge_weighted method is the only one that consumes ``metric``;
-        # reject an unknown metric up front as a 400 (otherwise the ValueError
-        # from edge_weighted_scores would surface as a 500).
+        # The edge_weighted method is the only one that consumes ``metric`` and
+        # ``cutoff``; reject an unknown metric or a non-finite / out-of-range
+        # cutoff up front as a 400. (cutoff is interpolated into SQL by
+        # edge_weighted_scores, so inf/NaN would otherwise 500 and a negative
+        # value would be a wrong-but-200.)
         if body.method == "edge_weighted":
             _validate_metric(body.metric, store.available_metrics)
+            validate_cutoff(body.cutoff, body.metric)
         try:
             df = gi.hub_genes(
                 group_name=body.group_name,
@@ -1073,7 +1102,18 @@ def create_app(
         For more control over clustering parameters, use POST /api/v1/graph/cluster.
         """
         graph, m, c = get_graph(metric, cutoff)
-        communities = graph.community_detection(method=method)
+        try:
+            communities = graph.community_detection(method=method)
+        except ValueError:
+            # community_detection raises a clean ValueError for an unknown method;
+            # surface it as a 400 (mirrors /graph/cluster's algorithm validation)
+            # instead of letting it fall through to the catch-all 500.
+            raise ValidationError(
+                detail=f"Unknown community detection method '{method}'",
+                field="method",
+                value=method,
+                allowed_values=["leiden", "louvain"],
+            )
         from collections import Counter
         sizes = dict(Counter(communities.values()).most_common())
         return {

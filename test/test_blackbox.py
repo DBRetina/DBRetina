@@ -31,6 +31,7 @@ import subprocess
 import tempfile
 import shutil
 import json
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -3502,6 +3503,292 @@ class TestRestValidation(unittest.TestCase):
             self.assertEqual(r.status_code, 200,
                              f"valid graph/cluster broke: {r.status_code} {r.text[:200]}")
             self.assertIn("membership", r.json())
+        finally:
+            store.close()
+
+
+# Standalone script run in a SEPARATE PROCESS to exercise the negative-resolution
+# clustering path (ISSUE-054). Pre-fix, some igraph builds call abort() in their C
+# layer for a negative resolution -> SIGABRT, which would kill the whole test
+# runner if run in-process. Isolating it in a subprocess means a crash shows up as
+# a non-zero exit code we can assert on, instead of taking the suite down with it.
+_ISSUE_054_SUBPROCESS = r'''
+import json, sys
+from starlette.testclient import TestClient
+from dbretina.compat import open_pairwise
+from dbretina.pairwise_store import PairwiseStore
+from dbretina.rest_api import create_app
+
+parquet, dbri, algorithm, resolution = sys.argv[1:5]
+store = open_pairwise(parquet)
+if store is None:
+    store = PairwiseStore(parquet, dbri_path=dbri)
+else:
+    store._dbri_path = dbri
+client = TestClient(create_app(store, dbri_path=dbri), raise_server_exceptions=False)
+r = client.post("/api/v1/graph/cluster",
+                json={"algorithm": algorithm,
+                      "parameters": {"resolution": float(resolution)},
+                      "metric": "ochiai", "cutoff": 0.0})
+store.close()
+# Emit a one-line, easily-parsed verdict for the parent process.
+print("DBRETINA_054_STATUS=%d" % r.status_code)
+'''
+
+
+@unittest.skipUnless(_HAS_REST_TEST, "serve validation-audit tests need [server] extra + httpx")
+class TestRestServeValidationAudit(unittest.TestCase):
+    """serve coverage-audit input-validation guards.
+
+    ISSUE-054: POST /graph/cluster with a negative ``resolution`` reaches igraph's
+               community detection, whose C layer may abort() (SIGABRT, killing the
+               worker) or raise a non-ValueError -> 500. Must be a clean 400.
+    ISSUE-056: a non-finite (inf/NaN) or out-of-range ``cutoff`` reaches SQL as a
+               bare token -> 500 (or a wrong-but-200 negative cutoff on hub-genes).
+               Must be a clean 400 on /pairs, /groups/{g}/pairs and hub-genes.
+    ISSUE-058: GET /graph/communities?method=bogus -> 500 (community_detection
+               raises a clean ValueError the endpoint never catches). Must be 400.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_serve_audit_")
+        self.prefix, self.pw = setup_index_and_pairwise(self.tmpdir)
+        self.parquet = f"{self.prefix}_DBRetina_pairwise"
+        self.dbri = f"{self.prefix}.dbri"
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _client(self):
+        from dbretina.compat import open_pairwise
+        from dbretina.pairwise_store import PairwiseStore
+        from dbretina.rest_api import create_app
+        store = open_pairwise(self.parquet)
+        if store is None:
+            store = PairwiseStore(self.parquet, dbri_path=self.dbri)
+        else:
+            store._dbri_path = self.dbri
+        # raise_server_exceptions=False so a 500 surfaces as a status code instead
+        # of re-raising into the test (we WANT to distinguish 4xx from 500).
+        return _TestClient(create_app(store, dbri_path=self.dbri),
+                           raise_server_exceptions=False), store
+
+    def _a_group(self, store):
+        names = list(store.get_names_map().values())
+        self.assertTrue(names, "store has no groups")
+        return names[0]
+
+    # ── ISSUE-054: negative resolution must NOT crash the server ───
+    def _cluster_status_in_subprocess(self, algorithm, resolution):
+        """Run one /graph/cluster call in a child process; return its HTTP status.
+
+        Returns an int status code, or raises AssertionError if the child crashed
+        (e.g. igraph SIGABRT) or produced no verdict line.
+        """
+        proc = subprocess.run(
+            [sys.executable, "-c", _ISSUE_054_SUBPROCESS,
+             self.parquet, self.dbri, algorithm, str(resolution)],
+            capture_output=True, text=True, timeout=300,
+        )
+        marker = "DBRETINA_054_STATUS="
+        status = None
+        for line in proc.stdout.splitlines():
+            if line.startswith(marker):
+                status = int(line[len(marker):])
+        # A crash (negative rc = killed by signal, e.g. -6 SIGABRT) means the bug
+        # is live: the server process died on user input.
+        self.assertGreaterEqual(
+            proc.returncode, 0,
+            f"{algorithm} resolution={resolution} CRASHED the server "
+            f"(rc={proc.returncode}; SIGABRT/DoS). stderr:\n{proc.stderr[-800:]}",
+        )
+        self.assertIsNotNone(
+            status,
+            f"{algorithm} resolution={resolution}: no status emitted. "
+            f"stdout:\n{proc.stdout[-400:]}\nstderr:\n{proc.stderr[-800:]}",
+        )
+        return status
+
+    def test_graph_cluster_negative_resolution_is_400_not_crash(self):
+        # Pre-fix: leiden silently mis-clusters (200) and/or igraph aborts/500s;
+        # louvain raises a non-ValueError -> 500; some builds SIGABRT (rc<0).
+        # Post-fix: a clean 400 for every algorithm/value, no crash.
+        for algorithm in ("leiden", "louvain"):
+            for resolution in (-5, -0.5):
+                status = self._cluster_status_in_subprocess(algorithm, resolution)
+                self.assertEqual(
+                    status, 400,
+                    f"{algorithm} resolution={resolution} should be 400, got {status}",
+                )
+
+    def test_graph_cluster_valid_resolution_still_succeeds(self):
+        client, store = self._client()
+        try:
+            for algorithm in ("leiden", "louvain"):
+                r = client.post("/api/v1/graph/cluster",
+                                json={"algorithm": algorithm,
+                                      "parameters": {"resolution": 1.0},
+                                      "metric": "ochiai", "cutoff": 0.0})
+                self.assertEqual(r.status_code, 200,
+                                 f"valid {algorithm} resolution=1.0 broke: "
+                                 f"{r.status_code} {r.text[:200]}")
+                self.assertIn("membership", r.json())
+        finally:
+            store.close()
+
+    # ── ISSUE-056: non-finite / out-of-range cutoff -> 400 ─────────
+    def test_pairs_non_finite_cutoff_is_400(self):
+        client, store = self._client()
+        try:
+            self.assertIn("odds_ratio", store.available_metrics,
+                          "substrate lacks odds_ratio (inf-max metric) needed for this test")
+            # odds_ratio's range max is inf, so the old `cutoff < min` guard let
+            # inf through to SQL as the bare token `inf` -> BinderException -> 500.
+            r = client.get("/api/v1/pairs?metric=odds_ratio&cutoff=inf")
+            self.assertEqual(r.status_code, 400,
+                             f"pairs cutoff=inf should be 400, got {r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_group_pairs_non_finite_cutoff_is_400(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            r = client.get(f"/api/v1/groups/{group}/pairs?metric=ochiai&cutoff=inf")
+            self.assertEqual(r.status_code, 400,
+                             f"group pairs cutoff=inf should be 400, got {r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_hub_genes_non_finite_and_out_of_range_cutoff_is_400(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            headers = {"content-type": "application/json"}
+
+            def hub_status(cutoff_token):
+                # Send a raw JSON body so we can use the non-finite literals
+                # (Infinity/NaN) a real client would emit; Python's json.loads
+                # accepts them by default, so they reach the endpoint as floats.
+                body = ('{"group_name": %s, "method": "edge_weighted", '
+                        '"metric": "ochiai", "cutoff": %s}'
+                        % (json.dumps(group), cutoff_token))
+                return client.post("/api/v1/genes/hub-genes",
+                                   content=body, headers=headers).status_code
+
+            for tok in ("Infinity", "NaN"):
+                self.assertEqual(hub_status(tok), 400,
+                                 f"hub-genes edge_weighted cutoff={tok} should be 400")
+            # Out-of-range (negative) cutoff was a wrong-but-200; now a clean 400.
+            self.assertEqual(hub_status("-50"), 400,
+                             "hub-genes edge_weighted cutoff=-50 should be 400")
+        finally:
+            store.close()
+
+    def test_valid_cutoffs_still_succeed(self):
+        client, store = self._client()
+        try:
+            group = self._a_group(store)
+            headers = {"content-type": "application/json"}
+
+            r = client.get("/api/v1/pairs?metric=odds_ratio&cutoff=0.0")
+            self.assertEqual(r.status_code, 200,
+                             f"valid pairs cutoff broke: {r.status_code} {r.text[:200]}")
+            r = client.get(f"/api/v1/groups/{group}/pairs?metric=ochiai&cutoff=0.0")
+            self.assertEqual(r.status_code, 200,
+                             f"valid group-pairs cutoff broke: {r.status_code} {r.text[:200]}")
+            body = ('{"group_name": %s, "method": "edge_weighted", '
+                    '"metric": "ochiai", "cutoff": 0.0}' % json.dumps(group))
+            r = client.post("/api/v1/genes/hub-genes", content=body, headers=headers)
+            self.assertEqual(r.status_code, 200,
+                             f"valid hub-genes cutoff broke: {r.status_code} {r.text[:200]}")
+            self.assertIn("genes", r.json())
+        finally:
+            store.close()
+
+    # ── ISSUE-058: unknown community method -> 400 ─────────────────
+    def test_communities_unknown_method_is_400(self):
+        client, store = self._client()
+        try:
+            r = client.get("/api/v1/graph/communities?metric=ochiai&cutoff=0.0&method=bogus")
+            self.assertEqual(r.status_code, 400,
+                             f"communities method=bogus should be 400, got {r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_communities_known_methods_still_succeed(self):
+        client, store = self._client()
+        try:
+            for method in ("leiden", "louvain"):
+                r = client.get(f"/api/v1/graph/communities?metric=ochiai&cutoff=0.0&method={method}")
+                self.assertEqual(r.status_code, 200,
+                                 f"communities method={method} broke: {r.status_code} {r.text[:200]}")
+                self.assertIn("communities", r.json())
+        finally:
+            store.close()
+
+    # ── ISSUE-054 (extended): other igraph param DoS vectors -> 400 ─────────
+    def test_graph_cluster_huge_n_iterations_is_400_and_fast(self):
+        """n_iterations is forwarded into igraph with no clamp; a huge value would
+        tie up a worker for days. It must be rejected up front (fast 400)."""
+        client, store = self._client()
+        try:
+            t0 = time.time()
+            r = client.post("/api/v1/graph/cluster",
+                            json={"algorithm": "leiden",
+                                  "parameters": {"n_iterations": 1_000_000_000},
+                                  "metric": "ochiai", "cutoff": 0.0})
+            elapsed = time.time() - t0
+            self.assertEqual(r.status_code, 400,
+                             f"huge n_iterations should be 400, got {r.status_code}: {r.text[:200]}")
+            self.assertLess(elapsed, 10, f"rejection took {elapsed:.1f}s (should be near-instant)")
+            # non-finite n_iterations (Infinity) must also be a clean 400 (not a 500
+            # from int(float('inf')) OverflowError). json.dumps can't emit Infinity,
+            # so send a raw JSON body with the literal token.
+            raw = ('{"algorithm":"leiden","parameters":{"n_iterations":Infinity},'
+                   '"metric":"ochiai","cutoff":0.0}')
+            r_inf = client.post("/api/v1/graph/cluster", content=raw,
+                                headers={"content-type": "application/json"})
+            self.assertEqual(r_inf.status_code, 400,
+                             f"n_iterations=Infinity should be 400, got {r_inf.status_code}: {r_inf.text[:200]}")
+            # a small, valid n_iterations still works
+            r2 = client.post("/api/v1/graph/cluster",
+                             json={"algorithm": "leiden",
+                                   "parameters": {"n_iterations": 2},
+                                   "metric": "ochiai", "cutoff": 0.0})
+            self.assertEqual(r2.status_code, 200, f"valid n_iterations=2 broke: {r2.text[:200]}")
+        finally:
+            store.close()
+
+    def test_graph_cluster_unknown_parameter_is_400(self):
+        """An unexpected parameter key must be rejected (no smuggling arbitrary
+        igraph C kwargs), not silently forwarded."""
+        client, store = self._client()
+        try:
+            r = client.post("/api/v1/graph/cluster",
+                            json={"algorithm": "leiden",
+                                  "parameters": {"totally_bogus_kwarg": 5},
+                                  "metric": "ochiai", "cutoff": 0.0})
+            self.assertEqual(r.status_code, 400,
+                             f"unknown parameter should be 400, got {r.status_code}: {r.text[:200]}")
+        finally:
+            store.close()
+
+    def test_pairs_filter_non_finite_value_is_400(self):
+        """POST /pairs/filter interpolates the value into SQL; a non-finite value
+        must be a clean 400, not reach DuckDB as a bare inf/nan token."""
+        client, store = self._client()
+        try:
+            headers = {"content-type": "application/json"}
+            body = '{"filters":[{"metric":"ochiai","operator":">=","value":Infinity}],"logic":"AND"}'
+            r = client.post("/api/v1/pairs/filter", content=body, headers=headers)
+            self.assertEqual(r.status_code, 400,
+                             f"filter value=Infinity should be 400, got {r.status_code}: {r.text[:200]}")
+            # a finite value still works
+            r2 = client.post("/api/v1/pairs/filter",
+                             json={"filters": [{"metric": "ochiai", "operator": ">=", "value": 0.0}],
+                                   "logic": "AND"})
+            self.assertEqual(r2.status_code, 200, f"valid filter broke: {r2.text[:200]}")
         finally:
             store.close()
 
