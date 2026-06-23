@@ -2271,6 +2271,203 @@ class TestGenenet(unittest.TestCase):
         assert_file_exists(self, f"{out}_genenet.gexf")
 
 
+class TestGenenetPairwiseInputForms(unittest.TestCase):
+    """ISSUE-066 / ISSUE-067: genenet AND interactome must accept the same -p
+    input forms that graph/bipartite do (the pairwise .tsv, its parquet
+    directory, and the binary .dbrp), and must reject a parquet directory with
+    no usable store (no manifest.json) with a clean [ERROR] -- never a raw
+    UnicodeDecodeError / IsADirectoryError traceback.
+
+    genenet and interactome share one Click callback (net_kind from
+    ctx.info_name), so each scenario is exercised against BOTH command names.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_gn_forms_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    # ---- helpers ----
+
+    def _sibling(self, ext):
+        """Return the sibling of the shared pairwise .tsv with the given suffix.
+
+        ext="" -> the parquet directory; ext=".dbrp" -> the binary file.
+        """
+        base = self.pw_file[:-len(".tsv")] if self.pw_file.endswith(".tsv") else self.pw_file
+        return base + ext
+
+    def _network_lines(self, out_prefix, net_kind):
+        """Sorted lines of the produced <prefix>_<net_kind>.tsv network file."""
+        path = f"{out_prefix}_{net_kind}.tsv"
+        assert_file_exists(self, path)
+        with open(path) as f:
+            return sorted(line.rstrip("\n") for line in f)
+
+    def _isolated_dbrp(self):
+        """Copy ONLY the .dbrp into a fresh dir (no sibling parquet store / .tsv).
+
+        Without this isolation open_pairwise() would resolve the shared parquet
+        directory sibling and the .dbrp text-read fallback (the ISSUE-066 bug)
+        would never be exercised -- exactly the masking seen on the kegg
+        substrate. The basename keeps the canonical *_DBRetina_pairwise stem so
+        resolve_dbrp_path finds it.
+        """
+        dst_dir = tempfile.mkdtemp(prefix="dbretina_gn_dbrp_", dir=self.tmpdir)
+        dst = os.path.join(dst_dir, "iso_DBRetina_pairwise.dbrp")
+        shutil.copy(self._sibling(".dbrp"), dst)
+        return dst
+
+    def _storeless_parquet_dir(self):
+        """Copy the parquet dir but strip manifest.json and any sibling .dbrp/.tsv.
+
+        open_pairwise() returns None (no manifest) and resolve_dbrp_path() finds
+        no sibling .dbrp, so the command must hit the storeless-directory guard
+        rather than open()'ing the directory as text (the ISSUE-067 bug).
+        """
+        dst_dir = tempfile.mkdtemp(prefix="dbretina_gn_nostore_", dir=self.tmpdir)
+        dst = os.path.join(dst_dir, "iso_DBRetina_pairwise")
+        shutil.copytree(self._sibling(""), dst)
+        manifest = os.path.join(dst, "manifest.json")
+        if os.path.exists(manifest):
+            os.remove(manifest)
+        # ensure no sibling .dbrp/.tsv accidentally rescues it
+        for sib in ("iso_DBRetina_pairwise.dbrp", "iso_DBRetina_pairwise.tsv"):
+            p = os.path.join(dst_dir, sib)
+            if os.path.exists(p):
+                os.remove(p)
+        return dst
+
+    def _assert_no_raw_traceback(self, stderr):
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("UnicodeDecodeError", stderr)
+        self.assertNotIn("IsADirectoryError", stderr)
+
+    # ---- ISSUE-066: .dbrp input (both commands) ----
+
+    def test_genenet_dbrp_no_raw_crash(self):
+        """ISSUE-066: genenet -p <.dbrp> (isolated, no sibling store) builds the
+        network from the binary reader -- no UnicodeDecodeError traceback."""
+        dbrp = self._isolated_dbrp()
+        out = os.path.join(self.tmpdir, "gn_dbrp")
+        rc, _, stderr = run_command(
+            f"DBRetina genenet -i {self.prefix} -p {dbrp} -o {out}"
+        )
+        self._assert_no_raw_traceback(stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_genenet.tsv")
+
+    def test_interactome_dbrp_no_raw_crash(self):
+        """ISSUE-066: interactome -p <.dbrp> (isolated, no sibling store) builds
+        the network from the binary reader -- no UnicodeDecodeError traceback."""
+        dbrp = self._isolated_dbrp()
+        out = os.path.join(self.tmpdir, "in_dbrp")
+        rc, _, stderr = run_command(
+            f"DBRetina interactome -i {self.prefix} -p {dbrp} -o {out}"
+        )
+        self._assert_no_raw_traceback(stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_interactome.tsv")
+
+    def test_genenet_dbrp_matches_tsv(self):
+        """ISSUE-066: genenet on an isolated .dbrp yields the SAME network as the
+        .tsv form (same nodes/edges/weights)."""
+        out_tsv = os.path.join(self.tmpdir, "gn_from_tsv")
+        rc_t, _, err_t = run_command(
+            f"DBRetina genenet -i {self.prefix} -p {self.pw_file} -o {out_tsv}"
+        )
+        self.assertEqual(rc_t, 0, err_t)
+
+        dbrp = self._isolated_dbrp()
+        out_dbrp = os.path.join(self.tmpdir, "gn_from_dbrp")
+        rc_d, _, err_d = run_command(
+            f"DBRetina genenet -i {self.prefix} -p {dbrp} -o {out_dbrp}"
+        )
+        self._assert_no_raw_traceback(err_d)
+        self.assertEqual(rc_d, 0, err_d)
+
+        self.assertEqual(
+            self._network_lines(out_dbrp, "genenet"),
+            self._network_lines(out_tsv, "genenet"),
+            "genenet network from .dbrp differs from the .tsv form",
+        )
+
+    # ---- ISSUE-067: storeless parquet directory (both commands) ----
+
+    def test_genenet_storeless_dir_clean_error(self):
+        """ISSUE-067: genenet -p <parquet dir w/o manifest.json, no sibling
+        .dbrp> exits with a clean [ERROR], not a raw IsADirectoryError."""
+        pw_dir = self._storeless_parquet_dir()
+        out = os.path.join(self.tmpdir, "gn_nostore")
+        rc, _, stderr = run_command(
+            f"DBRetina genenet -i {self.prefix} -p {pw_dir} -o {out}"
+        )
+        self.assertNotEqual(rc, 0, "storeless dir should exit nonzero")
+        self._assert_no_raw_traceback(stderr)
+        self.assertIn("[ERROR]", stderr)
+        self.assertIn("manifest.json", stderr)
+
+    def test_interactome_storeless_dir_clean_error(self):
+        """ISSUE-067: interactome -p <parquet dir w/o manifest.json> exits with a
+        clean [ERROR], not a raw IsADirectoryError."""
+        pw_dir = self._storeless_parquet_dir()
+        out = os.path.join(self.tmpdir, "in_nostore")
+        rc, _, stderr = run_command(
+            f"DBRetina interactome -i {self.prefix} -p {pw_dir} -o {out}"
+        )
+        self.assertNotEqual(rc, 0, "storeless dir should exit nonzero")
+        self._assert_no_raw_traceback(stderr)
+        self.assertIn("[ERROR]", stderr)
+        self.assertIn("manifest.json", stderr)
+
+    # ---- parquet directory WITH a usable store still works (no regression) ----
+
+    def test_genenet_parquet_dir_with_store_works(self):
+        """The canonical parquet-dir-with-store path is unchanged: genenet -p
+        <valid parquet dir> still builds the network."""
+        out = os.path.join(self.tmpdir, "gn_dir")
+        rc, _, stderr = run_command(
+            f"DBRetina genenet -i {self.prefix} -p {self._sibling('')} -o {out}"
+        )
+        self._assert_no_raw_traceback(stderr)
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_genenet.tsv")
+
+    # ---- three-way parity: .tsv vs parquet-dir(store) vs .dbrp ----
+
+    def test_genenet_parity_across_all_forms(self):
+        """genenet produces the SAME network for the .tsv, the parquet directory
+        (with store), and an isolated .dbrp."""
+        out_tsv = os.path.join(self.tmpdir, "p_tsv")
+        out_dir = os.path.join(self.tmpdir, "p_dir")
+        out_dbrp = os.path.join(self.tmpdir, "p_dbrp")
+
+        rc_t, _, err_t = run_command(
+            f"DBRetina genenet -i {self.prefix} -p {self.pw_file} -o {out_tsv}"
+        )
+        rc_d, _, err_d = run_command(
+            f"DBRetina genenet -i {self.prefix} -p {self._sibling('')} -o {out_dir}"
+        )
+        dbrp = self._isolated_dbrp()
+        rc_b, _, err_b = run_command(
+            f"DBRetina genenet -i {self.prefix} -p {dbrp} -o {out_dbrp}"
+        )
+        self.assertEqual(rc_t, 0, err_t)
+        self.assertEqual(rc_d, 0, err_d)
+        self.assertEqual(rc_b, 0, err_b)
+
+        tsv_lines = self._network_lines(out_tsv, "genenet")
+        self.assertEqual(tsv_lines, self._network_lines(out_dir, "genenet"),
+                         "parquet-dir network differs from .tsv")
+        self.assertEqual(tsv_lines, self._network_lines(out_dbrp, "genenet"),
+                         ".dbrp network differs from .tsv")
+
+
 # ============================================================
 # SECTION 13: Geneinfo Tests
 # ============================================================

@@ -169,33 +169,56 @@ def main(ctx, index_prefix, pairwise_file, output_prefix, graphml, gexf):
             geneSet_pairs.add((name1, name2))
         store.close()
     else:
-        # Fallback: existing TSV code
-        with open(pairwise_file, 'r') as pairwise_tsv:
-            while True:
-                pos = pairwise_tsv.tell()
-                line = pairwise_tsv.readline()
-                if not line.startswith('#'):
-                    pairwise_tsv.seek(pos)
-                    break
-                else:
-                    metadata.append(line)
+        # No usable parquet store. Resolve the canonical .dbrp sibling from any
+        # -p form (tsv / parquet dir / .dbrp); resolve_dbrp_path is isfile-guarded
+        # so a directory never reaches the C++ .dbrp reader. genenet needs only the
+        # group name pairs (no metric/cutoff filtering), so iterate every pair.
+        # Mirrors graph (bipartite_graph.py) / bipartite (bipartite_pairwise.py);
+        # without this the binary .dbrp was text-read and crashed with a raw
+        # UnicodeDecodeError, and a storeless parquet directory crashed with a raw
+        # IsADirectoryError (issues 066/067). Covers genenet AND interactome
+        # (shared callback).
+        from dbretina.compat import resolve_dbrp_path
+        dbrp_path = resolve_dbrp_path(pairwise_file)
+        if dbrp_path is not None:
+            import _dbretina_internal as dbretina_internal
+            ctx.obj.INFO(f"found .dbrp file: {dbrp_path}, using binary pairwise reader")
             metadata.append(f"#command: {get_command()}\n")
+            for rec in dbretina_internal.dbrp_iterate_all(dbrp_path):
+                geneSet_pairs.add((rec['group_1_name'], rec['group_2_name']))
+        elif os.path.isdir(pairwise_file):
+            # A directory with no usable parquet store (open_pairwise returned
+            # None: no manifest.json) and no sibling .dbrp; the TSV open() below
+            # would IsADirectoryError. Clean, actionable error instead.
+            ctx.obj.ERROR(
+                f"'{pairwise_file}' is a pairwise directory without a usable "
+                f"parquet store (no manifest.json) and no sibling .dbrp; pass the "
+                f"pairwise TSV, its parquet directory, or the .dbrp to -p.")
+        else:
+            # Fallback: existing TSV code
+            with open(pairwise_file, 'r') as pairwise_tsv:
+                while True:
+                    pos = pairwise_tsv.tell()
+                    line = pairwise_tsv.readline()
+                    if not line.startswith('#'):
+                        pairwise_tsv.seek(pos)
+                        break
+                    else:
+                        metadata.append(line)
+                metadata.append(f"#command: {get_command()}\n")
 
-            header = next(pairwise_tsv)
-            header = header.strip().split('\t')
-            try:
-                group1_index = header.index('group_1_name')
-                group2_index = header.index('group_2_name')
-            except:
-                group1_index = header.index('group_1')
-                group2_index = header.index('group_2')
+                header = next(pairwise_tsv)
+                header = header.strip().split('\t')
+                try:
+                    group1_index = header.index('group_1_name')
+                    group2_index = header.index('group_2_name')
+                except:
+                    group1_index = header.index('group_1')
+                    group2_index = header.index('group_2')
 
-            print(f"Group 1 index: {group1_index}")
-            print(f"Group 2 index: {group2_index}")
-
-            for row in pairwise_tsv:
-                row = row.strip().split('\t')
-                geneSet_pairs.add((row[group1_index], row[group2_index]))
+                for row in pairwise_tsv:
+                    row = row.strip().split('\t')
+                    geneSet_pairs.add((row[group1_index], row[group2_index]))
             
     ##############################################
     # 2. Map gene set to genes (group to features)
