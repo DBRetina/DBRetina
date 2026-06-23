@@ -9,7 +9,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .pairwise_store import PairwiseStore
+from .pairwise_store import PairwiseStore, cutoff_operator
 
 
 class GeneImportance:
@@ -107,11 +107,13 @@ class GeneImportance:
             raise KeyError(f"Group not found: {group_name}")
 
         # Get all pairs involving this group above the cutoff
+        # cutoff direction is metric-aware: pvalue keeps <= cutoff, similarity
+        # metrics keep >= cutoff (issue 068).
         df = store.sql(
             f"SELECT group_1_id, group_2_id, {metric} "
             f"FROM pairs "
             f"WHERE (group_1_id = {gid} OR group_2_id = {gid}) "
-            f"AND {metric} >= {cutoff}"
+            f"AND {metric} {cutoff_operator(metric)} {cutoff}"
         ).fetchdf()
 
         names_map = store.get_names_map()

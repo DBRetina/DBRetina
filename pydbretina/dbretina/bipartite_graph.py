@@ -15,6 +15,7 @@ import plotly.express as px
 import dbretina.dbretina_doc_url as dbretina_doc
 from dbretina.setcov import main as setcov_main
 from dbretina.validators import validate_metric
+from dbretina.pairwise_store import passes_cutoff
 import networkx as nx
 from collections import defaultdict
 
@@ -287,8 +288,9 @@ class DBRetinaGraph:
                     row = row.strip().split('\t')
                     similarity = float(row[self.metric_col])
 
-                    # first skip similarity
-                    if similarity < self.cutoff:
+                    # first skip by cutoff. Metric-aware: pvalue keeps value
+                    # <= cutoff, similarity metrics keep >= cutoff (issue 068).
+                    if not passes_cutoff(similarity, self.cutoff, self.metric):
                         continue
 
                     node_1 = row[2]

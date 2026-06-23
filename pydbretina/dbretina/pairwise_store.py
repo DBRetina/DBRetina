@@ -23,6 +23,33 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 
+# Metrics where a SMALLER value is better. p-value is the only one: a smaller p
+# is more significant, so a p-value cutoff keeps pairs with value <= cutoff. All
+# similarity metrics (containment/ochiai/jaccard/csi/dice/odds_ratio) are
+# "higher is better" and keep value >= cutoff. Applying the similarity rule to
+# p-values inverted the filter -- it returned the LEAST significant pairs and
+# dropped the significant ones (issue 068). Mirrors metric_passes_cutoff() in
+# src/DBRetinaPairwise.cpp; keep the two in sync.
+LOWER_IS_BETTER = frozenset({"pvalue"})
+
+
+def cutoff_operator(metric: str) -> str:
+    """SQL comparison operator for a metric's cutoff: ``<=`` for p-value
+    (lower is better), ``>=`` for similarity metrics (higher is better)."""
+    return "<=" if metric in LOWER_IS_BETTER else ">="
+
+
+def passes_cutoff(value: float, cutoff: float, metric: str) -> bool:
+    """Does ``value`` pass ``cutoff`` for ``metric``? p-value keeps ``value <=
+    cutoff`` (lower is better); similarity metrics keep ``value >= cutoff``.
+    The in-Python twin of ``cutoff_operator()`` for row-by-row TSV re-filters
+    (cluster / graph / bipartite bare-TSV paths) so they don't invert p-value
+    the way the SQL/awk paths did before issue 068."""
+    if metric in LOWER_IS_BETTER:
+        return value <= cutoff
+    return value >= cutoff
+
+
 class PairwiseStore:
     """Query DBRetina pairwise results stored as partitioned Parquet.
 
@@ -250,7 +277,7 @@ class PairwiseStore:
         col_clause = ", ".join(columns) if columns else "*"
         query = (
             f"SELECT {col_clause} FROM pairs "
-            f"WHERE {metric} >= {cutoff}"
+            f"WHERE {metric} {cutoff_operator(metric)} {cutoff}"
         )
         return self._cursor().execute(query).to_arrow_reader()
 
@@ -280,7 +307,7 @@ class PairwiseStore:
         where = f"WHERE (group_1_id = {gid} OR group_2_id = {gid})"
         if metric:
             self._validate_metric(metric)
-            where += f" AND {metric} >= {cutoff}"
+            where += f" AND {metric} {cutoff_operator(metric)} {cutoff}"
 
         query = f"SELECT {col_clause} FROM pairs {where}"
         return self._cursor().execute(query).to_arrow_reader()
@@ -409,7 +436,7 @@ class PairwiseStore:
         where = ""
         if metric:
             self._validate_metric(metric)
-            where = f"WHERE {metric} >= {cutoff}"
+            where = f"WHERE {metric} {cutoff_operator(metric)} {cutoff}"
         limit_clause = f"LIMIT {limit}" if limit else ""
         query = f"SELECT {col_clause} FROM pairs {where} {limit_clause}"
         return self._cursor().execute(query).fetchdf()
@@ -434,7 +461,7 @@ class PairwiseStore:
         where = ""
         if metric:
             self._validate_metric(metric)
-            where = f"WHERE {metric} >= {cutoff}"
+            where = f"WHERE {metric} {cutoff_operator(metric)} {cutoff}"
         query = f"SELECT {col_clause} FROM pairs {where}"
         return self._cursor().execute(query).fetch_arrow_table()
 

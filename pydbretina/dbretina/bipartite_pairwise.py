@@ -7,6 +7,7 @@ import click
 import contextlib
 from dbretina.click_context import cli
 from dbretina.validators import validate_bipartite_metric
+from dbretina.pairwise_store import passes_cutoff
 import subprocess
 import os
 import pandas as pd
@@ -434,7 +435,9 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
                     _source_1 = row[2]
                     _source_2 = row[3]
 
-                    if float(row[metric_to_col[metric]]) < cutoff:
+                    # Metric-aware cutoff: pvalue keeps value <= cutoff,
+                    # similarity metrics keep >= cutoff (issue 068).
+                    if not passes_cutoff(float(row[metric_to_col[metric]]), cutoff, metric):
                         continue
 
                     if _source_1 in group1_dict and _source_2 in group2_dict:

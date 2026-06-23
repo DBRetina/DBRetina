@@ -11,6 +11,24 @@ import os
 import dbretina.dbretina_doc_url as dbretina_doc
 
 
+# Metrics where a SMALLER value is better. p-value is the only one: a smaller p
+# is more significant, so a p-value cutoff keeps pairs with value <= cutoff,
+# whereas every similarity metric (containment/ochiai/jaccard/csi/dice/
+# odds_ratio) is "higher is better" and keeps value >= cutoff. Filtering p-value
+# with >= inverted the result -- it returned the LEAST significant pairs and
+# silently dropped the significant ones (issue 068). This mirrors
+# pairwise_store.LOWER_IS_BETTER and metric_passes_cutoff() in
+# src/DBRetinaPairwise.cpp; the three definitions must stay in sync. It is kept
+# local here so the awk-only query path needs no pyarrow/duckdb import.
+LOWER_IS_BETTER = frozenset({"pvalue"})
+
+
+def cutoff_operator(metric):
+    """Comparison operator for a metric's cutoff: ``<=`` for p-value (lower is
+    better), ``>=`` for the similarity metrics (higher is better)."""
+    return "<=" if metric in LOWER_IS_BETTER else ">="
+
+
 def is_awk_available():
     try:
         subprocess.run(["awk"], stdin=subprocess.DEVNULL,
@@ -129,7 +147,7 @@ def _classify_pairwise_input(pairwise_file):
 @click.option('--clusters-file', "clusters_file", callback=path_to_absolute_path, required=False, default="NA", type=click.Path(exists=False), help="DBRetina clusters file")
 @click.option('--cluster-ids', "cluster_ids", callback=validate_numbers, required=False, default="", help="comma-separated list of cluster IDs")
 @click.option('-m', '--metric', "metric", required=False, default="NA", type=click.STRING, callback=validate_metric, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
-@click.option('-c', '--cutoff', callback=check_cutoff_value, required=False, default=-1, type=click.FLOAT, help="filter out similarities < cutoff")
+@click.option('-c', '--cutoff', callback=check_cutoff_value, required=False, default=-1, type=click.FLOAT, help="filter out similarities < cutoff (for -m pvalue, keeps pairs with pvalue <= cutoff)")
 @click.option('--extend', "extend", is_flag=True, default=False, show_default=True, help="include all supergroups that are linked to the given supergroups.")
 @click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file prefix")
 @click.pass_context
@@ -221,6 +239,9 @@ Detailed description:
     if metric in metric_to_col:
         # +1 because awk is 1-indexed
         awk_column = metric_to_col[metric] + 1
+        # p-value is "lower is better", so its cutoff keeps value <= cutoff;
+        # similarity metrics keep value >= cutoff (issue 068).
+        awk_op = cutoff_operator(metric)
     elif metric != "NA":
         ctx.obj.ERROR(f"DBRetina's query command doesn't support the metric {metric}.")
 
@@ -296,7 +317,7 @@ Detailed description:
         f.write("")
 
     if extend:    
-        awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) || (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} >= {cutoff}) {{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}"}}}}'"""
+        awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) || (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} {awk_op} {cutoff}) {{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}"}}}}'"""
 
         result = execute_bash_command(awk_script)
         extended_supergroups_file = f"{output_file.replace('.tsv','')}_extended_supergroups.txt"
@@ -306,7 +327,7 @@ Detailed description:
 
     # filter by both cutoff and groups
     if cutoff != -1 and groups_file != "NA":
-        awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"""
+        awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} {awk_op} {cutoff}) print $0}}' >> {output_file}"""
         result = execute_bash_command(awk_script)
 
     elif cutoff != -1:
@@ -379,7 +400,7 @@ Detailed description:
                             fields.append(str(rec['pvalue']))
                         out.write('\t'.join(fields) + '\n')
             else:
-                command = f"grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' '{{if (${awk_column} >= {cutoff}) print $0}}' >> {output_file}"
+                command = f"grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' '{{if (${awk_column} {awk_op} {cutoff}) print $0}}' >> {output_file}"
                 result = execute_bash_command(command)
 
     elif groups_file != "NA":

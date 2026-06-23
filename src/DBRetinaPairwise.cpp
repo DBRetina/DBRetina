@@ -69,6 +69,25 @@ static float get_metric_value(const PairRecord& rec, uint8_t metric_id) {
     }
 }
 
+// Does this record pass the cutoff for the given metric?
+//
+// Similarity metrics (containment/ochiai/jaccard/csi/dice/odds_ratio) are
+// "higher is better", so a cutoff keeps value >= cutoff. The p-value is the
+// sole "lower is better" metric: a smaller p is MORE significant, so a p-value
+// cutoff must keep value <= cutoff (keep the significant pairs). Applying the
+// similarity rule to p-values inverted the result -- it returned the LEAST
+// significant pairs and silently dropped the significant ones (issue 068).
+//
+// p-values are compared at full double precision (rec.pvalue), not the float
+// from get_metric_value(), because cutoffs like 1e-3 need more than float can
+// represent.
+static bool metric_passes_cutoff(const PairRecord& rec, uint8_t metric_id, double cutoff) {
+    if (metric_id == static_cast<uint8_t>(DBRPMetric::PVALUE)) {
+        return rec.pvalue <= cutoff;
+    }
+    return get_metric_value(rec, metric_id) >= cutoff;
+}
+
 // ---------------------------------------------------------------------------
 // Writing
 // ---------------------------------------------------------------------------
@@ -576,8 +595,7 @@ std::vector<PairRecord> DBRetinaPairwise::filter_pairs(uint8_t metric_id, double
 
         for (size_t i = 0; i < to_read; i++) {
             PairRecord rec = deserialize_record(buffer.data() + i * record_size_);
-            float val = get_metric_value(rec, metric_id);
-            if (val >= cutoff) {
+            if (metric_passes_cutoff(rec, metric_id, cutoff)) {
                 results.push_back(rec);
             }
         }
@@ -599,8 +617,7 @@ std::vector<PairRecord> DBRetinaPairwise::query_group(uint32_t group_id, uint8_t
     std::vector<PairRecord> results;
     for (uint64_t rec_idx : it->second) {
         PairRecord rec = read_record(rec_idx);
-        float val = get_metric_value(rec, metric_id);
-        if (val >= cutoff) {
+        if (metric_passes_cutoff(rec, metric_id, cutoff)) {
             results.push_back(rec);
         }
     }

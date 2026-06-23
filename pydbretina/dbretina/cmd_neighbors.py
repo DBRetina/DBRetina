@@ -43,7 +43,7 @@ def main(ctx, data_path, group_name, metric, cutoff, top, output):
     LOGGER = ctx.obj
 
     from dbretina.compat import open_pairwise
-    from dbretina.pairwise_store import PairwiseStore
+    from dbretina.pairwise_store import PairwiseStore, LOWER_IS_BETTER, cutoff_operator
 
     data_path = os.path.abspath(data_path)
     store = open_pairwise(data_path)
@@ -62,18 +62,22 @@ def main(ctx, data_path, group_name, metric, cutoff, top, output):
 
         store._validate_metric(metric)
 
+        # p-value is "lower is better": keep pairs with pvalue <= cutoff and
+        # rank the most-significant (smallest p) first; similarity metrics keep
+        # >= cutoff and rank largest first (issue 068).
+        order_dir = "ASC" if metric in LOWER_IS_BETTER else "DESC"
         df = store.sql(
             f"SELECT group_1_id, group_2_id, {metric}, jaccard, shared_features "
             f"FROM pairs "
             f"WHERE (group_1_id = {gid} OR group_2_id = {gid}) "
-            f"AND {metric} >= {cutoff} "
-            f"ORDER BY {metric} DESC LIMIT {top}"
+            f"AND {metric} {cutoff_operator(metric)} {cutoff} "
+            f"ORDER BY {metric} {order_dir} LIMIT {top}"
         ).fetchdf()
 
         if len(df) == 0:
             LOGGER.INFO(
                 f'No neighbors found for "{group_name}" '
-                f"with {metric} >= {cutoff}"
+                f"with {metric} {cutoff_operator(metric)} {cutoff}"
             )
             return
 
@@ -96,13 +100,13 @@ def main(ctx, data_path, group_name, metric, cutoff, top, output):
                 f.write(text + "\n")
             LOGGER.INFO(
                 f'Top {len(df)} neighbors of "{group_name}" '
-                f"({metric} >= {cutoff}) -> {output}"
+                f"({metric} {cutoff_operator(metric)} {cutoff}) -> {output}"
             )
         else:
             print(text)
             LOGGER.INFO(
                 f'Showing top {len(df)} neighbors of "{group_name}" '
-                f"({metric} >= {cutoff})"
+                f"({metric} {cutoff_operator(metric)} {cutoff})"
             )
     except (ValueError, KeyError) as e:
         # Expected user-input errors (e.g. unknown/unavailable metric from

@@ -888,6 +888,295 @@ class TestQuery(unittest.TestCase):
 
 
 # ============================================================
+# SECTION 5b: query -m pvalue cutoff direction (ISSUE 068)
+# ============================================================
+
+class TestQueryPvalueCutoffDirection(unittest.TestCase):
+    """`query -m pvalue -c CUTOFF` must keep the SIGNIFICANT pairs (pvalue <=
+    cutoff), not invert and return the least-significant ones (issue 068).
+
+    p-values are 'lower is better'; the bug applied the similarity rule
+    (value >= cutoff) to pvalue on every route, so it returned the LEAST
+    significant pairs and silently dropped the significant ones. The shared
+    --pvalue fixture yields this clean pvalue distribution::
+
+        groupf|groupa  0.00126   <= 0.05  (significant)
+        groupb|groupa  0.04545   <= 0.05  (significant)
+        groupb|groupf  0.04545   <= 0.05  (significant)
+        (8 more pairs) 0.57..0.97 > 0.05  (not significant)
+
+    so a cutoff of 0.05 cleanly separates 3 significant pairs from 8. Pre-fix,
+    each route returned the 8 with pvalue > 0.05; post-fix, the 3 with <= 0.05.
+    All three confirmed-inverted routes are exercised: the C++ dbrp_filter_pairs
+    path (.dbrp present), the awk TSV fallback (no .dbrp/parquet), and the
+    DuckDB PairwiseStore path (parquet directory as -p).
+    """
+
+    PV_CUTOFF = 0.05
+    EXPECTED_SIGNIFICANT = {  # pairs with pvalue <= 0.05
+        frozenset({"groupa", "groupf"}),
+        frozenset({"groupa", "groupb"}),
+        frozenset({"groupb", "groupf"}),
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pv_prefix, cls.pv_pw_tsv = _ensure_shared_pvalue_fixture()
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_q_pv_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _copy_pairwise_artifacts(self):
+        """Copy the --pvalue pairwise artifacts into this test's tmpdir.
+
+        Route-isolation tests rename/remove the .dbrp and parquet dir; copying
+        first keeps the module-shared fixture pristine for other tests.
+        Returns the copied pairwise .tsv path.
+        """
+        import glob as _glob
+        src_dir = os.path.dirname(self.pv_pw_tsv)
+        base = os.path.basename(self.pv_pw_tsv)[:-len(".tsv")]  # ..._DBRetina_pairwise
+        for path in _glob.glob(os.path.join(src_dir, base + "*")):
+            dst = os.path.join(self.tmpdir, os.path.basename(path))
+            if os.path.isdir(path):
+                shutil.copytree(path, dst)
+            else:
+                shutil.copy2(path, dst)
+        return os.path.join(self.tmpdir, base + ".tsv")
+
+    def _assert_significant(self, tsv_path, route):
+        rows = parse_pairwise_tsv(tsv_path)
+        # Every returned pair is significant (pvalue <= cutoff), NOT inverted.
+        for row in rows:
+            self.assertIn("pvalue", row, f"{route}: missing pvalue column")
+            self.assertLessEqual(
+                row["pvalue"], self.PV_CUTOFF,
+                f"{route}: returned a non-significant pair (pvalue "
+                f"{row['pvalue']} > {self.PV_CUTOFF}) -- filter is inverted")
+        got = {frozenset({r["group_1_name"], r["group_2_name"]}) for r in rows}
+        # Exactly the significant pairs, count and identity (3, not the 8 above).
+        self.assertEqual(
+            got, self.EXPECTED_SIGNIFICANT,
+            f"{route}: expected the 3 significant pairs (pvalue <= "
+            f"{self.PV_CUTOFF}), got {len(rows)} rows: {sorted(map(sorted, got))}")
+
+    def test_068_pvalue_cutoff_dbrp_route(self):
+        """C++ dbrp_filter_pairs route (.dbrp present): keeps pvalue <= cutoff."""
+        pw_tsv = self._copy_pairwise_artifacts()
+        self.assertTrue(os.path.exists(pw_tsv.replace(".tsv", ".dbrp")),
+                        "fixture should ship a .dbrp for the C++ route")
+        out = os.path.join(self.tmpdir, "q_dbrp")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {pw_tsv} -m pvalue -c {self.PV_CUTOFF} -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self._assert_significant(f"{out}.tsv", "dbrp route")
+
+    def test_068_pvalue_cutoff_awk_tsv_route(self):
+        """awk TSV fallback (no .dbrp, no parquet dir): keeps pvalue <= cutoff."""
+        pw_tsv = self._copy_pairwise_artifacts()
+        # Force the plain-text awk path: drop the .dbrp and the parquet dir so
+        # neither the C++ reader nor the DuckDB store can claim the query.
+        dbrp = pw_tsv.replace(".tsv", ".dbrp")
+        if os.path.exists(dbrp):
+            os.remove(dbrp)
+        pq_dir = pw_tsv[:-len(".tsv")]  # the sibling parquet directory
+        if os.path.isdir(pq_dir):
+            shutil.rmtree(pq_dir)
+        out = os.path.join(self.tmpdir, "q_awk")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {pw_tsv} -m pvalue -c {self.PV_CUTOFF} -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self._assert_significant(f"{out}.tsv", "awk TSV route")
+
+    def test_068_pvalue_cutoff_parquet_store_route(self):
+        """DuckDB PairwiseStore route (parquet dir as -p): keeps pvalue <= cutoff."""
+        pw_tsv = self._copy_pairwise_artifacts()
+        pq_dir = pw_tsv[:-len(".tsv")]
+        if not os.path.isdir(pq_dir):
+            self.skipTest("no parquet directory emitted by pairwise")
+        out = os.path.join(self.tmpdir, "q_store")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {pq_dir} -m pvalue -c {self.PV_CUTOFF} -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self._assert_significant(f"{out}.tsv", "parquet store route")
+
+    def test_068_similarity_cutoff_unchanged_dbrp(self):
+        """Regression guard: ochiai cutoff still keeps value >= cutoff (C++/dbrp)."""
+        out = os.path.join(self.tmpdir, "q_ochiai")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.pv_pw_tsv} -m ochiai -c 50 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        rows = parse_pairwise_tsv(f"{out}.tsv")
+        self.assertGreater(len(rows), 0, "ochiai >= 50 should return some pairs")
+        for row in rows:
+            self.assertGreaterEqual(
+                row["ochiai"], 50.0,
+                f"similarity filter must stay >= cutoff, got ochiai {row['ochiai']}")
+
+    def test_068_similarity_cutoff_unchanged_parquet_store(self):
+        """Regression guard: ochiai cutoff still keeps value >= cutoff (store)."""
+        pw_tsv = self._copy_pairwise_artifacts()
+        pq_dir = pw_tsv[:-len(".tsv")]
+        if not os.path.isdir(pq_dir):
+            self.skipTest("no parquet directory emitted by pairwise")
+        out = os.path.join(self.tmpdir, "q_ochiai_store")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {pq_dir} -m ochiai -c 50 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        rows = parse_pairwise_tsv(f"{out}.tsv")
+        self.assertGreater(len(rows), 0)
+        for row in rows:
+            self.assertGreaterEqual(row["ochiai"], 50.0)
+
+
+class TestSiblingPvalueCutoffDirection(unittest.TestCase):
+    """The pvalue inversion (issue 068) also lived in the raw SQL / bare-TSV
+    re-filters of sibling commands (neighbors / cluster / graph / bipartite),
+    not just `query`. Their store and .dbrp paths share the fixed helpers, but
+    the hand-written comparisons applied the similarity rule (>= cutoff) to
+    pvalue too. These guard that pvalue keeps the SIGNIFICANT pairs there as
+    well.
+
+    Same --pvalue fixture distribution as TestQueryPvalueCutoffDirection: at
+    cutoff 0.05, groupa's significant neighbors are groupf (p=0.00126) and
+    groupb (p=0.0455); groupc/groupe (p>0.87) are NOT significant.
+    """
+
+    PV_CUTOFF = 0.05
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pv_prefix, cls.pv_pw_tsv = _ensure_shared_pvalue_fixture()
+        cls.pv_dir = f"{cls.pv_prefix}_DBRetina_pairwise"  # parquet directory
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_sib_pv_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _copy_pairwise_artifacts(self):
+        """Copy the --pvalue pairwise artifacts into this test's tmpdir so
+        bare-TSV isolation never mutates the module-shared fixture."""
+        import glob as _glob
+        src_dir = os.path.dirname(self.pv_pw_tsv)
+        base = os.path.basename(self.pv_pw_tsv)[:-len(".tsv")]
+        for path in _glob.glob(os.path.join(src_dir, base + "*")):
+            dst = os.path.join(self.tmpdir, os.path.basename(path))
+            if os.path.isdir(path):
+                shutil.copytree(path, dst)
+            else:
+                shutil.copy2(path, dst)
+        return os.path.join(self.tmpdir, base + ".tsv")
+
+    def _parse_neighbors(self, path):
+        """neighbors output -> list of (neighbor, metric_value) tuples."""
+        rows = []
+        with open(path) as f:
+            header = True
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if header:  # "neighbor\t{metric}\tjaccard\tshared_features"
+                    header = False
+                    continue
+                parts = line.split("\t")
+                rows.append((parts[0], float(parts[1])))
+        return rows
+
+    def test_068_neighbors_pvalue_significant(self):
+        """neighbors -m pvalue keeps neighbors with pvalue <= cutoff (was
+        inverted: cmd_neighbors raw SQL used >= and ORDER BY ... DESC)."""
+        out = os.path.join(self.tmpdir, "nbr.tsv")
+        rc, _, stderr = run_command(
+            f'DBRetina neighbors -d {self.pv_dir} "groupa" '
+            f"-m pvalue -c {self.PV_CUTOFF} -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        rows = self._parse_neighbors(out)
+        self.assertGreater(len(rows), 0, "expected significant neighbors of groupa")
+        for name, pval in rows:
+            self.assertLessEqual(
+                pval, self.PV_CUTOFF,
+                f"neighbors returned non-significant {name} (p={pval} > "
+                f"{self.PV_CUTOFF}) -- pvalue filter inverted")
+        names = {n for n, _ in rows}
+        self.assertEqual(
+            names, {"groupf", "groupb"},
+            f"expected significant neighbors {{groupf, groupb}}, got {names}")
+        # ASC order: most significant (smallest p) first.
+        pvals = [p for _, p in rows]
+        self.assertEqual(pvals, sorted(pvals),
+                         f"neighbors should rank most-significant first: {pvals}")
+
+    def test_068_neighbors_similarity_unchanged(self):
+        """Regression guard: neighbors -m ochiai still keeps ochiai >= cutoff."""
+        out = os.path.join(self.tmpdir, "nbr_och.tsv")
+        rc, _, stderr = run_command(
+            f'DBRetina neighbors -d {self.pv_dir} "groupa" -m ochiai -c 50 -o {out}'
+        )
+        self.assertEqual(rc, 0, stderr)
+        rows = self._parse_neighbors(out)
+        self.assertGreater(len(rows), 0)
+        for name, val in rows:
+            self.assertGreaterEqual(val, 50.0, f"{name} ochiai {val} < 50")
+
+    def _cluster_members(self, clusters_tsv):
+        """Parse a *_clusters.tsv into {frozenset(member_names)} per cluster."""
+        clusters = set()
+        with open(clusters_tsv) as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if not line or line.startswith("#") or line.startswith("cluster"):
+                    continue
+                parts = line.split("\t")
+                # cluster file: cluster_id, size, members (|-joined)
+                members = frozenset(parts[-1].split("|"))
+                clusters.add(members)
+        return clusters
+
+    def test_068_cluster_pvalue_bare_tsv_matches_store(self):
+        """cluster -m pvalue on a bare TSV (no .dbrp/parquet -> the fixed
+        row-by-row TSV re-filter) must yield the SAME clusters as the parquet
+        store route (which filters pvalue <= cutoff correctly)."""
+        # Correct reference: the parquet-directory (store) route.
+        ref_out = os.path.join(self.tmpdir, "cl_store")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {self.pv_dir} -m pvalue -c {self.PV_CUTOFF} -o {ref_out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        ref = self._cluster_members(f"{ref_out}_clusters.tsv")
+
+        # Bare-TSV route: copy artifacts, then strip .dbrp + parquet dir.
+        pw_tsv = self._copy_pairwise_artifacts()
+        dbrp = pw_tsv.replace(".tsv", ".dbrp")
+        if os.path.exists(dbrp):
+            os.remove(dbrp)
+        pq_dir = pw_tsv[:-len(".tsv")]
+        if os.path.isdir(pq_dir):
+            shutil.rmtree(pq_dir)
+        tsv_out = os.path.join(self.tmpdir, "cl_tsv")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {pw_tsv} -m pvalue -c {self.PV_CUTOFF} -o {tsv_out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        got = self._cluster_members(f"{tsv_out}_clusters.tsv")
+        self.assertEqual(
+            got, ref,
+            "bare-TSV cluster (pvalue) disagrees with the correct store route -- "
+            "the TSV pvalue re-filter is inverted")
+
+
+# ============================================================
 # SECTION 6: Cluster Tests
 # ============================================================
 
@@ -1790,9 +2079,14 @@ class TestPvalueCrossRoute(unittest.TestCase):
         )
 
     def _run_bipartite(self, p, out):
+        # -c 1 keeps every pair: p-values lie in [0, 1] and the cutoff is now
+        # correctly "lower is better" (keep pvalue <= cutoff) (issue 068). The
+        # old default cutoff 0.0 only kept pairs because pvalue filtering was
+        # inverted (pvalue >= 0 matched everything); with the fix, 0.0 would
+        # exclude all pairs and the command would (correctly) report no overlap.
         return run_command(
             f"DBRetina bipartite -p {p} --group1 {self.bg1} --group2 {self.bg2} "
-            f"-m pvalue --no-plot -o {out}"
+            f"-m pvalue -c 1 --no-plot -o {out}"
         )
 
     # =====================================================================
@@ -6306,10 +6600,13 @@ class TestBipartiteMetricRestriction(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def _bip(self, metric, out, pw=None):
+    def _bip(self, metric, out, pw=None, cutoff=0):
+        # cutoff default 0 keeps all pairs for similarity metrics. p-value is
+        # "lower is better" (issue 068): cutoff 0 would exclude every pair
+        # (no p <= 0), so the pvalue case passes cutoff=1 to keep all pairs.
         return run_command(
             f"DBRetina bipartite -p {pw or self.pw_file} --group1 {self.g1} "
-            f"--group2 {self.g2} -m {metric} -c 0 --no-plot -o {out}"
+            f"--group2 {self.g2} -m {metric} -c {cutoff} --no-plot -o {out}"
         )
 
     def test_048_unsupported_metric_clean_error(self):
@@ -6354,7 +6651,9 @@ class TestBipartiteMetricRestriction(unittest.TestCase):
         pvalue must remain accepted (and emit the pvalue column)."""
         prefix, pw = _ensure_shared_pvalue_fixture()
         out = os.path.join(self.tmpdir, "bip_pv")
-        rc, _, stderr = self._bip("pvalue", out, pw=pw)
+        # cutoff 1 keeps every pair (all p-values <= 1); cutoff 0 would now
+        # correctly exclude all pairs since p-value is "lower is better" (068).
+        rc, _, stderr = self._bip("pvalue", out, pw=pw, cutoff=1)
         assert_no_traceback(self, stderr, "bipartite -m pvalue")
         self.assertEqual(rc, 0, stderr)
         tsv = f"{out}_bipartite_pairwise.tsv"

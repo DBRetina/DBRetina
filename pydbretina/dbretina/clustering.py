@@ -3,6 +3,7 @@ import os
 import click
 from dbretina.click_context import cli
 from dbretina.validators import validate_metric
+from dbretina.pairwise_store import passes_cutoff
 import rustworkx as rx
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -291,8 +292,9 @@ class Clusters:
                     row = row.strip().split('\t')
                     similarity = float(row[self.metric_col])
 
-                    # don't make graph edge
-                    if similarity < self.cut_off_threshold:
+                    # don't make graph edge. Metric-aware: pvalue keeps
+                    # value <= cutoff, similarity metrics keep >= cutoff (068).
+                    if not passes_cutoff(similarity, self.cut_off_threshold, self.metric):
                         continue
 
                     # Register nodes only for edges that PASS the cutoff, matching
@@ -399,8 +401,9 @@ class Clusters:
                     row = row.strip().split('\t')
                     similarity = float(row[self.metric_col])
 
-                    # don't make graph edge
-                    if similarity < self.cut_off_threshold:
+                    # don't make graph edge. Metric-aware: pvalue keeps
+                    # value <= cutoff, similarity metrics keep >= cutoff (068).
+                    if not passes_cutoff(similarity, self.cut_off_threshold, self.metric):
                         continue
 
                     # Register nodes only for edges that PASS the cutoff, matching
