@@ -8,7 +8,6 @@ from dbretina.click_context import cli
 import os
 import sys
 import gzip
-import pandas as pd
 from collections import defaultdict
 import json
 import dbretina.dbretina_doc_url as dbretina_doc
@@ -136,28 +135,32 @@ def build_gene_set_json(ctx, association_files, output_prefix):
                     )
                 gene_set_to_genes[group].append(gene)
                 
-    # create dataframe
-    association_df = pd.DataFrame(dict([(k,pd.Series(v)) for k,v in gene_set_to_genes.items()]))
-    association_df = association_df.melt(var_name='gene_set', value_name='gene')
-    association_df = association_df.dropna()
-    
+    # Build the raw + hashed gene-set maps directly from gene_set_to_genes.
+    # The previous pandas round-trip (dict-of-Series -> DataFrame -> melt -> dropna
+    # -> groupby -> dict) just reconstructed this same dict, but first built a DENSE
+    # NaN-padded DataFrame of shape (max_genes x num_groups): on a large GMT (e.g.
+    # DisGenet, 30k groups) that padding blew peak RSS to ~17 GB (issue 072). The
+    # direct build is O(total group,gene pairs). groupby(...).to_dict() emitted the
+    # groups in SORTED key order, so sort here to keep _raw.json / _hashes.json
+    # byte-identical; gene order within a group is the original append order
+    # (groupby was stable, and neither path de-duplicates).
+    ordered_groups = sorted(gene_set_to_genes)
+
     # --------------------- raw
-    raw_json_dict = {"metadata": {}}
-    raw_json_dict["metadata"]["filetype"] = "private"
-    raw_json_dict["data"] = {}
-    raw_json_dict["data"] = association_df.groupby("gene_set")["gene"].apply(list).to_dict()
-    
+    raw_json_dict = {"metadata": {"filetype": "private"}}
+    raw_json_dict["data"] = {g: gene_set_to_genes[g] for g in ordered_groups}
+
     # to json
     raw_json_path = output_prefix + "_raw.json"
     with open(raw_json_path, 'w') as JSON_WRITER:
         JSON_WRITER.write(json.dumps(raw_json_dict))
-    
+
     # --------------------- hashes
-    hashes_json_dict = {"metadata": {}}
-    hashes_json_dict["metadata"]["filetype"] = "public"
-    association_df["gene"] = association_df["gene"].apply(lambda x: fnv1a_64(x))
-    hashes_json_dict["data"] = association_df.groupby("gene_set")["gene"].apply(list).to_dict()
-    
+    hashes_json_dict = {"metadata": {"filetype": "public"}}
+    hashes_json_dict["data"] = {
+        g: [fnv1a_64(gene) for gene in gene_set_to_genes[g]] for g in ordered_groups
+    }
+
     hashes_json_path = output_prefix + "_hashes.json"
     with open(hashes_json_path, "w") as f:
         json.dump(hashes_json_dict, f)

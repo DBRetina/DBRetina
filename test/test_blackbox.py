@@ -526,6 +526,24 @@ class TestIndex(unittest.TestCase):
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, os.path.join(self.tmpdir, "idx.dbri"))
 
+    def test_index_raw_json_groups_sorted(self):
+        """ISSUE-072: the direct (no-pandas) JSON build keeps groups in SORTED key
+        order, matching the prior groupby(...).to_dict() output (so _raw.json /
+        _hashes.json stay byte-identical), with gene append order preserved."""
+        asc = write_file(os.path.join(self.tmpdir, "unsorted.asc"),
+                         "gene_set\tgene\nzebra\tg1\nalpha\tg2\nmiddle\tg3\nalpha\tg4\n")
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        with open(f"{prefix}_raw.json") as f:
+            raw = json.load(f)["data"]
+        with open(f"{prefix}_hashes.json") as f:
+            hashes = json.load(f)["data"]
+        self.assertEqual(list(raw.keys()), sorted(raw.keys()),
+                         f"raw.json groups not sorted: {list(raw.keys())}")
+        self.assertEqual(list(hashes.keys()), sorted(hashes.keys()))
+        self.assertEqual(raw["alpha"], ["g2", "g4"])  # merged dup, append order kept
+
     def test_index_multiple_asc(self):
         """Index from two ASC files merges groups."""
         asc1 = write_file(os.path.join(self.tmpdir, "a.asc"),
