@@ -39,6 +39,13 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
     all_groups = set()
     gene_set_to_length = {}
     dbri_path = f"{index_prefix}.dbri"
+    # -i is a plain STRING (not click.Path), so existence isn't validated by
+    # Click. Guard so a missing/typo'd prefix gives a clean [ERROR] instead of a
+    # raw FileNotFoundError from open('<prefix>.namesMap') below (issue 075).
+    # Mirrors dedup's index guard (dedup.py).
+    if not os.path.exists(dbri_path) and \
+            not os.path.exists(f"{index_prefix}.namesMap"):
+        LOGGER.ERROR(f"index prefix '{index_prefix}' (.dbri / .namesMap) not found")
     if os.path.exists(dbri_path):
         import _dbretina_internal as dbretina_internal
         all_groups = set(dbretina_internal.dbri_load_names_list(dbri_path))

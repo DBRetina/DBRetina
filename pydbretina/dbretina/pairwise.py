@@ -159,6 +159,15 @@ def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pva
     containment_2_in_1 columns.
     """
     
+    # -i is a plain STRING (not click.Path), so existence isn't validated by
+    # Click. Guard here so a missing/typo'd prefix gives a clean [ERROR] instead
+    # of a raw RuntimeError traceback from the unwrapped dbretina_internal.pairwise
+    # call below (issue 073).
+    if not os.path.exists(f"{index_prefix}.dbri") and \
+            not os.path.exists(f"{index_prefix}_raw.json"):
+        ctx.obj.ERROR(f"index prefix '{index_prefix}' (.dbri / _raw.json) not found")
+        sys.exit(1)
+
     commands = inject_index_command(index_prefix) + '\n' + get_command()
 
     # Validate FDR options

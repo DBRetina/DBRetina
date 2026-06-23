@@ -192,11 +192,20 @@ class DBRetinaGraph:
     def parse_node_size(self, index_prefix):
         self.node_to_size = {}
         dbri_path = f"{index_prefix}.dbri"
+        legacy_tsv = f"{index_prefix}_groupID_to_featureCount.tsv"
+        # -i is a plain STRING (not click.Path); guard so a missing/typo'd prefix
+        # gives a clean [ERROR] instead of a raw FileNotFoundError from the open()
+        # below (issue 069). Mirrors genenet's index guard (genenet.py).
+        if not os.path.exists(dbri_path) and not os.path.exists(legacy_tsv):
+            self.LOGGER.ERROR(
+                f"index prefix '{index_prefix}' "
+                f"(.dbri / _groupID_to_featureCount.tsv) not found")
+            sys.exit(1)
         if os.path.exists(dbri_path):
             import _dbretina_internal as dbretina_internal
             self.node_to_size = dbretina_internal.dbri_load_group_feature_counts(dbri_path)
         else:
-            with open(f"{index_prefix}_groupID_to_featureCount.tsv") as F:
+            with open(legacy_tsv) as F:
                 next(F)
                 for line in F:
                     node, size = line.strip().split('\t')
@@ -284,8 +293,18 @@ class DBRetinaGraph:
                     break
 
                 next(pairwise_tsv)  # Skip header
-                for row in pairwise_tsv:
+                for line_no, row in enumerate(pairwise_tsv, start=2):
                     row = row.strip().split('\t')
+                    # A truncated/malformed row with too few columns would IndexError
+                    # on row[self.metric_col] (and on the node columns). Fail with a
+                    # clean message naming the offending line instead (issue 079).
+                    if len(row) <= self.metric_col:
+                        self.LOGGER.ERROR(
+                            f"malformed pairwise row at line {line_no} of "
+                            f"'{self.pairwise_file}': expected at least "
+                            f"{self.metric_col + 1} tab-separated columns, got "
+                            f"{len(row)}")
+                        sys.exit(1)
                     similarity = float(row[self.metric_col])
 
                     # first skip by cutoff. Metric-aware: pvalue keeps value

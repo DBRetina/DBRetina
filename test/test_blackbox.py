@@ -766,6 +766,19 @@ class TestPairwise(unittest.TestCase):
             self.assertNotIn("Traceback", stderr)
             assert_file_exists(self, f"{prefix}_DBRetina_pairwise.tsv")
 
+    def test_pairwise_missing_index_clean_error(self):
+        """ISSUE-073: pairwise -i <nonexistent prefix> must give a clean [ERROR]
+        instead of a raw RuntimeError traceback from the unwrapped C++ call."""
+        bad = os.path.join(self.tmpdir, "does_not_exist_xyz")
+        rc, stdout, stderr = run_command(f"DBRetina pairwise -i {bad}")
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "missing index should exit nonzero")
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("RuntimeError", combined,
+                         f"raw RuntimeError leaked:\n{combined}")
+        self.assertIn("[ERROR]", combined)
+        self.assertIn(bad, combined)
+
 
 # ============================================================
 # SECTION 5: Query Tests
@@ -1211,6 +1224,34 @@ class TestCluster(unittest.TestCase):
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, f"{out}_clusters.tsv")
 
+    def test_cluster_nonexistent_output_dir(self):
+        """ISSUE-078: -o prefix in a nonexistent directory must not crash with a
+        raw FileNotFoundError after the full graph build. We auto-create the
+        parent dir, so it succeeds and the clusters file is present."""
+        out = os.path.join(self.tmpdir, "no_such_dir_xyz", "out")
+        rc, stdout, stderr = run_command(
+            f"DBRetina cluster -p {self.pw_file} -m ochiai -c 30 -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("FileNotFoundError", combined,
+                         f"raw FileNotFoundError leaked:\n{combined}")
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}_clusters.tsv")
+
+    def test_cluster_output_prefix_parent_is_file(self):
+        """ISSUE-078 follow-up: -o whose parent path component is an existing FILE
+        must fail with a clean error, not a raw OSError traceback."""
+        afile = write_file(os.path.join(self.tmpdir, "afile"), "x\n")
+        out = os.path.join(afile, "out")  # parent component 'afile' is a regular file
+        rc, stdout, stderr = run_command(
+            f"DBRetina cluster -p {self.pw_file} -m ochiai -c 30 -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0)
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertIn("[ERROR]", combined)
+
     def test_cluster_linear_transform_warns(self):
         """ISSUE-024: --node-weight-transform linear (community) warns it needs tuned
         --resolution (raw sizes -> all-singletons at default); log2 does not warn."""
@@ -1562,6 +1603,30 @@ class TestDedup(unittest.TestCase):
             finally:
                 os.rename(dbrp_bak, dbrp)
 
+    def test_dedup_pairwise_group_absent_from_index_clean_error(self):
+        """ISSUE-077: a pairwise group name absent from the index (mismatched
+        -i/-p) must give a clean [ERROR] naming the offending group, not a raw
+        KeyError. A standalone TSV (no parquet/.dbrp sibling) forces the TSV
+        fallback and references a group the index never had."""
+        # Pairwise TSV with two groups, one of which ('ghost_group') is NOT in
+        # the shared index. ochiai is column 6; high value so it passes -c.
+        mal = os.path.join(self.tmpdir, "mismatch.tsv")
+        header = ("group_1_ID\tgroup_2_ID\tgroup_1_name\tgroup_2_name\t"
+                  "shared_features\tcontainment\tochiai\tjaccard\tcsi\tdice\todds_ratio\n")
+        row = "1\t99\tgroupa\tghost_group\t3\t90.0\t90.0\t80.0\t85.0\t85.0\t1.0\n"
+        write_file(mal, header + row)
+        out = os.path.join(self.tmpdir, "ddmis")
+        rc, stdout, stderr = run_command(
+            f"DBRetina dedup -i {self.prefix} -p {mal} -c 50 -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "mismatched index/pairwise should exit nonzero")
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("KeyError", combined, f"raw KeyError leaked:\n{combined}")
+        self.assertIn("[ERROR]", combined)
+        # names the offending group and advises matching -i/-p
+        self.assertIn("ghost_group", combined)
+
 
 # ============================================================
 # SECTION 9: Modularity Tests
@@ -1629,6 +1694,22 @@ class TestModularity(unittest.TestCase):
                 gene_sets.add(parts[0].lower())
         self.assertEqual(gene_sets, EXPECTED_GROUP_NAMES)
 
+    def test_modularity_missing_index_clean_error(self):
+        """ISSUE-075: modularity -i <nonexistent prefix> must give a clean [ERROR]
+        instead of a raw FileNotFoundError from open('<prefix>.namesMap')."""
+        bad = os.path.join(self.tmpdir, "nonexistent")
+        out = os.path.join(self.tmpdir, "mbad")
+        rc, stdout, stderr = run_command(
+            f"DBRetina modularity -i {bad} -p {self.pw_file} -c 80 -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "missing index should exit nonzero")
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("FileNotFoundError", combined,
+                         f"raw FileNotFoundError leaked:\n{combined}")
+        self.assertIn("[ERROR]", combined)
+        self.assertIn(bad, combined)
+
 
 # ============================================================
 # SECTION 10: Bipartite Tests
@@ -1658,6 +1739,30 @@ class TestBipartite(unittest.TestCase):
         self.assertEqual(rc, 0, stderr)
         self.assertNotIn("Traceback", stderr)
         assert_file_exists(self, f"{out}_bipartite_pairwise.tsv")
+
+    def test_bipartite_malformed_pairwise_row_clean_error(self):
+        """ISSUE-079: a truncated pairwise TSV row (too few columns) on bipartite's
+        TSV fallback must give a clean [ERROR] naming the line, not a raw
+        IndexError. A standalone TSV (no parquet/.dbrp sibling) forces the
+        fallback."""
+        mal = os.path.join(self.tmpdir, "mal.tsv")
+        header = ("group_1_ID\tgroup_2_ID\tgroup_1_name\tgroup_2_name\t"
+                  "shared_features\tcontainment\tochiai\tjaccard\tcsi\tdice\todds_ratio\n")
+        good = "1\t3\tgroupa\tgroupc\t2\t40.0\t40.0\t20.0\t30.0\t30.0\t1.0\n"
+        bad = "only\ttwo\n"
+        write_file(mal, header + good + bad)
+        out = os.path.join(self.tmpdir, "bmal")
+        rc, stdout, stderr = run_command(
+            f"DBRetina bipartite -p {mal} --group1 {self.g1} --group2 {self.g2} "
+            f"-m ochiai -c 0 --no-plot -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "malformed row should exit nonzero")
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("IndexError", combined,
+                         f"raw IndexError leaked:\n{combined}")
+        self.assertIn("[ERROR]", combined)
+        self.assertIn("malformed", combined.lower())
 
     def test_bipartite_default_plot_no_kaleido_clean(self):
         """ISSUE-002: default (plotting on) with kaleido absent must NOT crash —
@@ -1914,6 +2019,64 @@ class TestGraph(unittest.TestCase):
         self.assertNotEqual(rc2, 0, "-m NA should exit nonzero")
         self.assertNotIn("Traceback", stderr2)
         self.assertNotIn("KeyError", stderr2)
+
+    def test_graph_missing_index_clean_error(self):
+        """ISSUE-069: graph -i <missing prefix> must give a clean [ERROR] (like
+        genenet) instead of a raw FileNotFoundError from parse_node_size."""
+        bad = os.path.join(self.tmpdir, "nope_prefix")
+        out = os.path.join(self.tmpdir, "gmiss")
+        rc, stdout, stderr = run_command(
+            f"DBRetina graph -i {bad} -p {self.pw_file} -m ochiai -c 30 -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "missing index should exit nonzero")
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("FileNotFoundError", combined,
+                         f"raw FileNotFoundError leaked:\n{combined}")
+        self.assertIn("[ERROR]", combined)
+        self.assertIn(bad, combined)
+
+    def test_graph_malformed_pairwise_row_clean_error(self):
+        """ISSUE-079: a truncated pairwise TSV row (too few columns) on the TSV
+        fallback path must give a clean [ERROR] naming the line, not a raw
+        IndexError. A sibling parquet dir/.dbrp would bypass the TSV path, so we
+        build a standalone TSV (no siblings) to force the fallback."""
+        # Standalone pairwise TSV (header + a couple valid rows + one truncated).
+        mal = os.path.join(self.tmpdir, "mal.tsv")
+        header = ("group_1_ID\tgroup_2_ID\tgroup_1_name\tgroup_2_name\t"
+                  "shared_features\tcontainment\tochiai\tjaccard\tcsi\tdice\todds_ratio\n")
+        good = "1\t2\tgroupa\tgroupb\t3\t60.0\t60.0\t50.0\t55.0\t55.0\t1.0\n"
+        bad = "only\ttwo\n"
+        write_file(mal, header + good + bad)
+        out = os.path.join(self.tmpdir, "gmal")
+        rc, stdout, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {mal} -m ochiai -c 0 -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "malformed row should exit nonzero")
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("IndexError", combined,
+                         f"raw IndexError leaked:\n{combined}")
+        self.assertIn("[ERROR]", combined)
+        self.assertIn("malformed", combined.lower())
+
+    def test_graph_wellformed_tsv_fallback_still_works(self):
+        """ISSUE-079 guard: a well-formed standalone pairwise TSV (TSV fallback,
+        no parquet/.dbrp sibling) still produces graph output."""
+        good_tsv = os.path.join(self.tmpdir, "good.tsv")
+        header = ("group_1_ID\tgroup_2_ID\tgroup_1_name\tgroup_2_name\t"
+                  "shared_features\tcontainment\tochiai\tjaccard\tcsi\tdice\todds_ratio\n")
+        rows = ("1\t2\tgroupa\tgroupb\t3\t60.0\t60.0\t50.0\t55.0\t55.0\t1.0\n"
+                "1\t6\tgroupa\tgroupf\t5\t100.0\t100.0\t100.0\t100.0\t100.0\t-1.0\n")
+        write_file(good_tsv, header + rows)
+        out = os.path.join(self.tmpdir, "ggood")
+        rc, stdout, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {good_tsv} -m ochiai -c 0 -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertEqual(rc, 0, combined)
+        self.assertNotIn("Traceback", combined)
+        assert_file_exists(self, f"{out}_edges.tsv")
 
     # ---- Regression: ISSUE-009 (graph with NO targets, the documented default) ----
 
@@ -2606,6 +2769,20 @@ class TestSetcov(unittest.TestCase):
         )
         self.assertEqual(rc, 0, stderr)
 
+    def test_setcov_missing_index_clean_error(self):
+        """ISSUE-074: setcov -i <nonexistent prefix> must give a clean [ERROR]
+        instead of a raw FileNotFoundError from open('<prefix>_raw.json')."""
+        rc, stdout, stderr = run_command(
+            "DBRetina setcov -i nonexistent_pref -o s6", cwd=self.tmpdir
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "missing index should exit nonzero")
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("FileNotFoundError", combined,
+                         f"raw FileNotFoundError leaked:\n{combined}")
+        self.assertIn("[ERROR]", combined)
+        self.assertIn("nonexistent_pref", combined)
+
 
 # ============================================================
 # SECTION 15: Index Management Tests (append, merge)
@@ -2652,6 +2829,38 @@ class TestIndexManagement(unittest.TestCase):
         )
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, out)
+
+    def test_append_duplicate_group_clean_error(self):
+        """ISSUE-083: append a GMT whose group name already exists in the base
+        index must give a clean [ERROR] (like merge), NOT a raw RuntimeError
+        traceback. The message must not mention the nonexistent --force flag, and
+        no intermediate temp files (_raw.json/_hashes.json) may be left behind."""
+        idx = self._create_index("base",
+            "gene_set\tgene\nfoo\tAlpha\nfoo\tBeta\nbar\tGamma\n")
+        # GMT whose group name 'foo' duplicates an existing index group.
+        gmt = write_file(os.path.join(self.tmpdir, "dup.gmt"),
+            "foo\tdesc\tGENEX\tGENEY\n")
+        out_prefix = os.path.join(self.tmpdir, "app_dup")
+        out = f"{out_prefix}.dbri"
+        rc, stdout, stderr = run_command(
+            f"DBRetina append -i {idx}.dbri -g {gmt} -o {out}"
+        )
+        combined = stdout + stderr
+        self.assertNotEqual(rc, 0, "duplicate-name append should fail")
+        self.assertNotIn("Traceback", combined, f"raw traceback leaked:\n{combined}")
+        self.assertNotIn("RuntimeError", combined,
+                         f"raw RuntimeError leaked:\n{combined}")
+        self.assertIn("[ERROR]", combined)
+        # append has NO --force option -> the hint must be gone.
+        self.assertNotIn("--force", combined,
+                         f"error references the nonexistent --force flag:\n{combined}")
+        # the offending group name is still reported.
+        self.assertIn("foo", combined)
+        # no leaked intermediate temp files.
+        self.assertFalse(os.path.exists(f"{out_prefix}_raw.json"),
+                         "append left behind a _raw.json temp file")
+        self.assertFalse(os.path.exists(f"{out_prefix}_hashes.json"),
+                         "append left behind a _hashes.json temp file")
 
     def test_merge_indexes(self):
         """Merge two indexes into one."""

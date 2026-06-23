@@ -972,6 +972,13 @@ def main(ctx, index_prefix, containment_cutoff, ochiai_cutoff, GC, output_prefix
     """Apply set-cover algorithm.
     """
     dbri_path = f"{index_prefix}.dbri"
+    # -i is a plain STRING (not click.Path), so existence isn't validated by
+    # Click. Guard so a missing/typo'd prefix gives a clean [ERROR] instead of a
+    # raw FileNotFoundError from open('<prefix>_raw.json') below (issue 074).
+    # Mirrors dedup's index guard (dedup.py).
+    if not os.path.exists(dbri_path) and \
+            not os.path.exists(f"{index_prefix}_raw.json"):
+        ctx.obj.ERROR(f"index prefix '{index_prefix}' (.dbri / _raw.json) not found")
     if os.path.exists(dbri_path):
         import _dbretina_internal as dbretina_internal
         raw_json_str = dbretina_internal.dbri_load_raw_gene_sets(dbri_path)

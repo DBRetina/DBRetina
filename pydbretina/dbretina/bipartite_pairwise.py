@@ -428,9 +428,28 @@ def main(ctx, pairwise_file, group_1_file, group_2_file, gmt_1_file, gmt_2_file,
                         metadata.append(line)
                 metadata.append(f"#command: {get_command()}\n")
 
+                # Highest column this loop will read: the metric columns
+                # (containment/ochiai/jaccard, optionally pvalue) and the
+                # selected -m metric. A truncated row with fewer columns would
+                # IndexError; fail with a clean message naming the line instead
+                # (issue 079, same shape as graph's TSV fallback).
+                needed_cols = {2, 3, metric_to_col[metric],
+                               metric_to_col["containment"],
+                               metric_to_col["ochiai"], metric_to_col["jaccard"]}
+                if "pvalue" in df_bipartite.columns:
+                    needed_cols.add(metric_to_col["pvalue"])
+                min_cols = max(needed_cols) + 1
+
                 next(pairwise_tsv)
-                for row in pairwise_tsv:
+                for line_no, row in enumerate(pairwise_tsv, start=2):
                     row = row.strip().split('\t')
+
+                    if len(row) < min_cols:
+                        LOGGER.ERROR(
+                            f"malformed pairwise row at line {line_no} of "
+                            f"'{pairwise_file}': expected at least {min_cols} "
+                            f"tab-separated columns, got {len(row)}")
+                        sys.exit(1)  # defensive: matches bipartite_graph's twin guard
 
                     _source_1 = row[2]
                     _source_2 = row[3]

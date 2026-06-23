@@ -16,13 +16,16 @@ import json
 
 class Graph:
 
-    def __init__(self, index_prefix):
+    def __init__(self, index_prefix, logger=None):
         self.node_to_edges = defaultdict(lambda: 0)
         self.node_to_size = {}
         self.all_groups = set()
         self.parent = {}
         self.components = None
         self.index_prefix = index_prefix
+        # Used to emit a clean [ERROR] for a pairwise group name absent from the
+        # index (mismatched -i/-p) instead of a raw KeyError (issue 077).
+        self.logger = logger
         self.load_raw_json()
 
 
@@ -59,6 +62,18 @@ class Graph:
         self.parent[self.find(x)] = self.find(y)
 
     def add_edge(self, x, y):
+        # node_to_size is populated only from the index's groups. A pairwise
+        # group name not in the index (mismatched -i/-p) would later KeyError in
+        # select_node_from_cluster (self.node_to_size[x]); fail fast with a clean
+        # [ERROR] naming the offending group instead (issue 077).
+        for node in (x, y):
+            if node not in self.node_to_size:
+                msg = (f"group '{node}' is in the pairwise file but not in the "
+                       f"index; the -i index and -p pairwise file describe "
+                       f"different group sets (make sure they match).")
+                if self.logger is not None:
+                    self.logger.ERROR(msg)
+                raise KeyError(msg)
         self.union(x, y)
 
     def _compute_components(self):
@@ -106,7 +121,7 @@ def main(ctx, pairwise_file, cutoff, output_prefix, index_prefix):
             not os.path.exists(f"{index_prefix}_raw.json"):
         LOGGER.ERROR(f"index prefix '{index_prefix}' (.dbri / _raw.json) not found")
 
-    ochiai_graph = Graph(index_prefix)
+    ochiai_graph = Graph(index_prefix, logger=LOGGER)
 
 
     #################################

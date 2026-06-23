@@ -641,6 +641,17 @@ def main(ctx, pairwise_file, cutoff, metric, output_prefix, community, resolutio
     """
 
     cutoff = float(cutoff)
+
+    # Ensure the output directory exists before doing any work, so we fail fast
+    # (and friendly) instead of crashing on the first file write at the end of a
+    # full graph build/cluster (issue 078). Mirrors the export fix (issue 028).
+    out_dir = os.path.dirname(os.path.abspath(output_prefix))
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError as e:
+        # e.g. a path component is an existing file (NotADirectoryError/FileExistsError)
+        ctx.obj.ERROR(f"cannot create output directory for prefix '{output_prefix}': {e}")
+
     clusters = Clusters(
         logger_obj=ctx.obj,
         pairwise_file=pairwise_file,

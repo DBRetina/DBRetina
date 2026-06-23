@@ -56,5 +56,18 @@ def main(ctx, existing_index, asc_file, gmt_file, output_path):
     json_file = f"{output_prefix}_hashes.json"
     raw_json_file = f"{output_prefix}_raw.json"
     ctx.obj.INFO(f"Appending to existing index {existing_index}...")
-    dbretina_internal.dbretina_append(existing_index, json_file, raw_json_file, output_path)
+    try:
+        dbretina_internal.dbretina_append(existing_index, json_file, raw_json_file, output_path)
+    except RuntimeError as e:
+        # Expected append-time errors from the C++ core (e.g. a duplicate group
+        # name already in the base index) -> clean [ERROR], no Python traceback
+        # (issue 083). Drop the C++ "Use --force to replace." advice: append has
+        # no --force option, so that hint is misleading here (merge handles the
+        # identical case cleanly). Also clean up the intermediate temp files this
+        # run created, which would otherwise be left behind.
+        for tmp in (json_file, raw_json_file):
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        msg = str(e).replace("Use --force to replace.", "").strip()
+        ctx.obj.ERROR(msg)
     ctx.obj.SUCCESS(f"Updated index written to {output_path}")
