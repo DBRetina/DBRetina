@@ -30,7 +30,8 @@ import dbretina.dbretina_doc_url as dbretina_doc
     help="Scoring method",
 )
 @click.option(
-    "--hops", default=2, show_default=True, type=int,
+    "--hops", default=2, show_default=True,
+    type=click.IntRange(min=0),
     help="Neighborhood hops (hypergraph/projection methods)",
 )
 @click.option(

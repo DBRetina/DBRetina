@@ -457,6 +457,45 @@ def _cleanup_shared_pvalue_fixture():
         _SHARED_PV_DIR = None
 
 
+# Shared ZERO-PAIR substrate: an index whose groups share no genes, so `pairwise`
+# emits a valid 0-pair dataset (manifest num_pairs:0, an empty data/ with no
+# part_*.parquet). This is the cosmic-like case behind issue 071 -- the lookup
+# commands must handle it without a raw DuckDB IOException.
+_ZERO_PAIR_DISJOINT_ASC = (
+    "gene_set\tgene\n"
+    "GroupX\tgx1\n"
+    "GroupX\tgx2\n"
+    "GroupY\tgy1\n"
+    "GroupY\tgy2\n"
+    "GroupZ\tgz1\n"
+    "GroupZ\tgz2\n"
+)
+
+_SHARED_ZERO_DIR = None
+_SHARED_ZERO_PREFIX = None
+_SHARED_ZERO_PW_FILE = None
+
+
+def _ensure_zero_pair_fixture():
+    """Index + pairwise over fully disjoint gene sets -> a 0-pair pairwise.
+    Returns (prefix, pw_tsv_path); the parquet dir ``{prefix}_DBRetina_pairwise``
+    has an empty ``data/`` (num_pairs:0)."""
+    global _SHARED_ZERO_DIR, _SHARED_ZERO_PREFIX, _SHARED_ZERO_PW_FILE
+    if _SHARED_ZERO_DIR is None:
+        _SHARED_ZERO_DIR = tempfile.mkdtemp(prefix="dbretina_shared_zero_")
+        _SHARED_ZERO_PREFIX, _SHARED_ZERO_PW_FILE = setup_index_and_pairwise(
+            _SHARED_ZERO_DIR, asc_content=_ZERO_PAIR_DISJOINT_ASC
+        )
+    return _SHARED_ZERO_PREFIX, _SHARED_ZERO_PW_FILE
+
+
+def _cleanup_zero_pair_fixture():
+    global _SHARED_ZERO_DIR
+    if _SHARED_ZERO_DIR is not None:
+        shutil.rmtree(_SHARED_ZERO_DIR, ignore_errors=True)
+        _SHARED_ZERO_DIR = None
+
+
 # ============================================================
 # SECTION 3: Index Tests
 # ============================================================
@@ -5178,6 +5217,267 @@ class TestNeighborsBadMetric(unittest.TestCase):
         self.assertIn("ochiai", stdout)
 
 
+class TestZeroPairLookups(unittest.TestCase):
+    """ISSUE-071 (regression): a legitimately sparse 0-pair pairwise (empty
+    ``data/`` with no part_*.parquet, as ``pairwise`` emits when nothing clears
+    the cutoff -- the cosmic substrate) must NOT crash the lookup commands with a
+    raw _duckdb.IOException ("No files found that match the pattern ...").
+
+    Chosen behavior: lookups WORK with an empty result (a 0-pair dataset is a
+    normal outcome). PairwiseStore now backs ``pairs`` with a typed zero-row
+    relation when there are no parquet files, so every command returns a clean
+    empty result / clean [ERROR]. A normal (non-empty) dataset is unaffected.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_tsv = _ensure_zero_pair_fixture()
+        cls.parquet = f"{cls.prefix}_DBRetina_pairwise"  # empty data/ dir
+        # Real groups/genes that EXIST in the 0-pair fixture, so the commands
+        # reach the (empty) pairs view / gene index rather than a not-found guard.
+        cls.group_a = "groupx"
+        cls.group_b = "groupy"
+        cls.gene = "gx1"
+        # A normal (non-empty) substrate, to confirm the fix is scoped to 0-pair.
+        cls.norm_prefix, cls.norm_pw = _ensure_shared_fixture()
+        cls.norm_parquet = f"{cls.norm_prefix}_DBRetina_pairwise"
+
+    def _assert_no_raw_error(self, label, out, err):
+        """No raw traceback / DuckDB IOException from any lookup on 0-pair data."""
+        blob = out + err
+        self.assertNotIn("Traceback", blob,
+                         f"{label}: raw Python traceback on a 0-pair dataset:\n{err[-400:]}")
+        self.assertNotIn("IOException", blob,
+                         f"{label}: raw DuckDB IOException on a 0-pair dataset:\n{err[-400:]}")
+        self.assertNotIn("No files found that match the pattern", blob,
+                         f"{label}: empty-parquet-glob error leaked:\n{err[-400:]}")
+
+    def test_zero_pair_served_pairs_schema_parity(self):
+        """ISSUE-071 follow-up: a SERVED 0-pair store's hardened `pairs` table must
+        expose group_1_name/group_2_name (schema parity with the non-empty
+        names-joined table), so a raw /sql select of the name columns returns empty
+        rather than a Binder Error; the external-access sandbox stays intact."""
+        from dbretina.compat import open_pairwise
+        store = open_pairwise(self.parquet)
+        try:
+            self.assertEqual(store.num_pairs, 0)
+            store.harden_readonly()
+            df = store._con.execute(
+                "SELECT group_1_name, group_2_name FROM pairs LIMIT 5").fetchdf()
+            self.assertEqual(list(df.columns), ["group_1_name", "group_2_name"])
+            self.assertEqual(len(df), 0)
+            with self.assertRaises(Exception):  # sandbox still blocks file reads
+                store._con.execute("SELECT * FROM read_text('/etc/hostname')")
+        finally:
+            store.close()
+
+    def test_search_zero_pair_clean(self):
+        """search uses the names map -> still lists the groups, no crash."""
+        rc, out, err = run_command(f'DBRetina search -d {self.parquet} "group"')
+        self._assert_no_raw_error("search", out, err)
+        self.assertEqual(rc, 0, err)
+        self.assertIn(self.group_a, out)
+
+    def test_neighbors_zero_pair_clean(self):
+        """neighbors over the empty pairs view -> clean 'No neighbors', exit 0."""
+        rc, out, err = run_command(
+            f'DBRetina neighbors -d {self.parquet} "{self.group_a}" -m ochiai -c 1'
+        )
+        self._assert_no_raw_error("neighbors", out, err)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("No neighbors found", out + err)
+
+    def test_shared_genes_zero_pair_clean(self):
+        """shared-genes (gene sets from .dbri) -> clean result, no crash."""
+        rc, out, err = run_command(
+            f'DBRetina shared-genes -d {self.parquet} -i {self.prefix} '
+            f'"{self.group_a}" "{self.group_b}"'
+        )
+        self._assert_no_raw_error("shared-genes", out, err)
+        self.assertEqual(rc, 0, err)
+
+    def test_gene_search_zero_pair_clean(self):
+        """gene-search (inverted gene index) -> finds the group, no crash."""
+        rc, out, err = run_command(
+            f'DBRetina gene-search -d {self.parquet} -i {self.prefix} "{self.gene}"'
+        )
+        self._assert_no_raw_error("gene-search", out, err)
+        self.assertEqual(rc, 0, err)
+        self.assertIn(self.group_a, out)
+
+    def test_genescore_zero_pair_clean(self):
+        """genescore over the empty pairs view -> clean result, no crash."""
+        rc, out, err = run_command(
+            f'DBRetina genescore -d {self.parquet} -i {self.prefix} '
+            f'"{self.group_a}" -n 3'
+        )
+        self._assert_no_raw_error("genescore", out, err)
+        self.assertEqual(rc, 0, err)
+
+    def test_normal_lookup_unaffected(self):
+        """Sanity: a normal (non-empty) dataset still returns real neighbors."""
+        rc, out, err = run_command(
+            f'DBRetina neighbors -d {self.norm_parquet} "groupa" -m ochiai -c 5'
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("Traceback", out + err)
+        self.assertIn("ochiai", out)  # header + at least one neighbor row
+
+
+class TestNeighborsNegativeTop(unittest.TestCase):
+    """ISSUE-081 (regression): neighbors -n with a negative value fed a negative
+    LIMIT to DuckDB and surfaced a raw BinderException ("LIMIT/OFFSET cannot be
+    negative"). -n is now click.IntRange(min=0): negatives are rejected cleanly
+    before any SQL runs; -n 0 and positive values work."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_tsv = _ensure_shared_fixture()
+        cls.parquet = f"{cls.prefix}_DBRetina_pairwise"
+        cls.group = "groupa"
+
+    def test_negative_top_clean_error(self):
+        rc, out, err = run_command(
+            f'DBRetina neighbors -d {self.parquet} "{self.group}" -m ochiai -c 1 -n -5'
+        )
+        self.assertNotEqual(rc, 0, "negative -n must fail")
+        blob = out + err
+        self.assertNotIn("Traceback", blob, f"-n -5 leaked a traceback:\n{err[-400:]}")
+        self.assertNotIn("BinderException", blob,
+                         f"-n -5 leaked a raw DuckDB BinderException:\n{err[-400:]}")
+        # click.IntRange emits a clean "Invalid value" usage error.
+        self.assertIn("Invalid value", blob, f"expected a clean range error:\n{err[-400:]}")
+
+    def test_zero_top_works(self):
+        """-n 0 is a valid limit (no rows) and must not crash."""
+        rc, out, err = run_command(
+            f'DBRetina neighbors -d {self.parquet} "{self.group}" -m ochiai -c 1 -n 0'
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("Traceback", out + err)
+
+    def test_positive_top_works(self):
+        rc, out, err = run_command(
+            f'DBRetina neighbors -d {self.parquet} "{self.group}" -m ochiai -c 1 -n 5'
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("Traceback", out + err)
+        self.assertIn("ochiai", out)
+
+
+class TestGenescoreNegativeHops(unittest.TestCase):
+    """ISSUE-082 (regression): genescore --hops with a negative value reached
+    igraph's neighborhood(order=hops) and raised a raw ValueError ("neighborhood
+    order must be non-negative"). --hops is now click.IntRange(min=0): negatives
+    are rejected cleanly; --hops 0 and positive values work."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_tsv = _ensure_shared_fixture()
+        cls.parquet = f"{cls.prefix}_DBRetina_pairwise"
+        cls.group = "groupa"
+
+    def test_negative_hops_clean_error(self):
+        rc, out, err = run_command(
+            f'DBRetina genescore -d {self.parquet} -i {self.prefix} '
+            f'"{self.group}" --hops -1 -n 3'
+        )
+        self.assertNotEqual(rc, 0, "negative --hops must fail")
+        blob = out + err
+        self.assertNotIn("Traceback", blob, f"--hops -1 leaked a traceback:\n{err[-400:]}")
+        self.assertNotIn("neighborhood order", blob,
+                         f"--hops -1 leaked a raw igraph ValueError:\n{err[-400:]}")
+        self.assertIn("Invalid value", blob, f"expected a clean range error:\n{err[-400:]}")
+
+    def test_zero_hops_works(self):
+        """--hops 0 (just the center node) is valid and must not crash."""
+        rc, out, err = run_command(
+            f'DBRetina genescore -d {self.parquet} -i {self.prefix} '
+            f'"{self.group}" --hops 0 -n 3'
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("Traceback", out + err)
+
+    def test_positive_hops_works(self):
+        rc, out, err = run_command(
+            f'DBRetina genescore -d {self.parquet} -i {self.prefix} '
+            f'"{self.group}" --hops 1 -n 3'
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("Traceback", out + err)
+
+
+class TestNeighborsPvalueDisplayPrecision(unittest.TestCase):
+    """Display nit (from the pvalue-068 review): neighbors printed the metric
+    value with ``{:.1f}``, so significant p-values all rendered as "0.0",
+    hiding the precision that issue 068 made meaningful. The metric value is now
+    formatted metric-aware -- ``{:.3g}`` for p-value, ``{:.1f}`` for similarity
+    metrics -- so p-values display with real precision."""
+
+    PV_CUTOFF = 0.05
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pv_prefix, cls.pv_pw_tsv = _ensure_shared_pvalue_fixture()
+        cls.pv_dir = f"{cls.pv_prefix}_DBRetina_pairwise"
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_pv_disp_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _neighbor_metric_strings(self, out):
+        """Return the raw printed metric-column strings (parts[1]) per data row."""
+        vals = []
+        header = True
+        for line in out.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("["):
+                continue
+            if header:  # "neighbor\t{metric}\tjaccard\tshared_features"
+                header = False
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                vals.append(parts[1])
+        return vals
+
+    def test_pvalue_values_not_all_zero(self):
+        """neighbors -m pvalue: at least one printed p-value is a real nonzero
+        value (not the ``0.0`` the old {:.1f} collapsed everything to)."""
+        rc, stdout, stderr = run_command(
+            f'DBRetina neighbors -d {self.pv_dir} "groupa" '
+            f"-m pvalue -c {self.PV_CUTOFF}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        vals = self._neighbor_metric_strings(stdout)
+        self.assertTrue(vals, "expected significant pvalue neighbors of groupa")
+        # The bug rendered every p as exactly "0.0". Require a meaningful value.
+        self.assertFalse(
+            all(v == "0.0" for v in vals),
+            f"pvalue column collapsed to '0.0' (precision lost): {vals}")
+        parsed = [float(v) for v in vals]
+        self.assertTrue(
+            any(0.0 < p <= self.PV_CUTOFF for p in parsed),
+            f"expected a nonzero significant p-value in the output: {vals}")
+
+    def test_similarity_metric_still_one_decimal(self):
+        """Regression guard: a similarity metric (ochiai) still prints {:.1f}
+        (one decimal place), unchanged by the metric-aware formatter."""
+        rc, stdout, stderr = run_command(
+            f'DBRetina neighbors -d {self.pv_dir} "groupa" -m ochiai -c 50'
+        )
+        self.assertEqual(rc, 0, stderr)
+        vals = self._neighbor_metric_strings(stdout)
+        self.assertTrue(vals, "expected ochiai neighbors of groupa")
+        import re
+        for v in vals:
+            self.assertRegex(
+                v, r"^\d+\.\d$",
+                f"ochiai value {v!r} not formatted as one-decimal {{:.1f}}")
+
+
 class TestMergeDuplicateName(unittest.TestCase):
     """ISSUE-034: merging two indexes that share a group name must produce a
     clean error (no Python traceback) whose message does NOT reference the
@@ -7743,3 +8043,4 @@ if __name__ == "__main__":
     finally:
         _cleanup_shared_fixture()
         _cleanup_shared_pvalue_fixture()
+        _cleanup_zero_pair_fixture()

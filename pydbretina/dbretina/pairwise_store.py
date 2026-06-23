@@ -39,6 +39,20 @@ def cutoff_operator(metric: str) -> str:
     return "<=" if metric in LOWER_IS_BETTER else ">="
 
 
+def format_metric_value(value: float, metric: str) -> str:
+    """Render a metric value for display, metric-aware.
+
+    Similarity metrics (containment/ochiai/jaccard/csi/dice/odds_ratio) live on a
+    0-100 scale, so one decimal (``{:.1f}``) reads cleanly. A p-value, by contrast,
+    is often tiny (e.g. 1.26e-03): ``{:.1f}`` collapses every significant p to
+    ``"0.0"``, hiding the precision that makes the result meaningful (the issue-068
+    fix made ``neighbors -m pvalue`` correctly return those small-p neighbors). Use
+    a precision-preserving ``{:.3g}`` for p-value instead."""
+    if metric in LOWER_IS_BETTER:
+        return f"{value:.3g}"
+    return f"{value:.1f}"
+
+
 def passes_cutoff(value: float, cutoff: float, metric: str) -> bool:
     """Does ``value`` pass ``cutoff`` for ``metric``? p-value keeps ``value <=
     cutoff`` (lower is better); similarity metrics keep ``value >= cutoff``.
@@ -143,12 +157,19 @@ class PairwiseStore:
         self._con_lock = threading.Lock()
         self._parquet_glob = str(data_dir / "*.parquet")
 
+        # A 0-pair pairwise (a legitimately sparse outcome -- ``pairwise`` emits it
+        # without error when no pair clears the cutoff) leaves ``data/`` present but
+        # WITHOUT any part_*.parquet. ``read_parquet`` over the empty glob then aborts
+        # with a raw _duckdb.IOException ("No files found that match the pattern ..."),
+        # which escaped as a traceback from every lookup command (issue 071). When
+        # there are no parquet files, back ``pairs`` with a typed zero-row relation
+        # instead so downstream queries return empty results cleanly.
+        self._has_parquet = bool(list(data_dir.glob("*.parquet")))
+
         # Lazy 'pairs' view over the parquet (ids + metrics only; cheap, no joins). The
         # served store re-materializes pairs WITH group names in harden_readonly() so the
         # /sql endpoint can query by name; CLI paths add names post-query via resolve_names().
-        self._con.execute(
-            f"CREATE VIEW pairs AS SELECT * FROM read_parquet('{self._parquet_glob}')"
-        )
+        self._con.execute(f"CREATE VIEW pairs AS {self._raw_pairs_select_sql()}")
 
         # Gene set data (lazy-loaded from .dbri)
         self._dbri_path: Optional[str] = dbri_path
@@ -177,11 +198,55 @@ class PairwiseStore:
         with self._con_lock:
             return self._con.cursor()
 
+    def _empty_pairs_sql(self, with_names: bool = False) -> str:
+        """A typed zero-row ``pairs`` relation for the 0-pair (no parquet) case.
+
+        Mirrors the part_*.parquet schema (uint ids/shared_features, float metrics;
+        ``pvalue`` only when the manifest says it was computed) so every query over
+        ``pairs`` -- COUNT(*), the per-group neighbor scans, genescore's edge sums --
+        returns an empty result with the right columns instead of crashing on the
+        empty ``read_parquet`` glob (issue 071). ``with_names`` appends the
+        group_1_name/group_2_name columns so the SERVED 0-pair table matches the
+        schema of the non-empty names-joined table (otherwise a raw /sql
+        ``SELECT group_1_name FROM pairs`` would 400 only on a 0-pair dataset)."""
+        cols = [
+            "CAST(NULL AS UINTEGER) AS group_1_id",
+            "CAST(NULL AS UINTEGER) AS group_2_id",
+            "CAST(NULL AS UBIGINT) AS shared_features",
+            "CAST(NULL AS FLOAT) AS containment",
+            "CAST(NULL AS FLOAT) AS ochiai",
+            "CAST(NULL AS FLOAT) AS jaccard",
+            "CAST(NULL AS FLOAT) AS csi",
+            "CAST(NULL AS FLOAT) AS dice",
+            "CAST(NULL AS FLOAT) AS odds_ratio",
+        ]
+        if self.has_pvalue:
+            cols.append("CAST(NULL AS DOUBLE) AS pvalue")
+        if with_names:
+            cols.append("CAST(NULL AS VARCHAR) AS group_1_name")
+            cols.append("CAST(NULL AS VARCHAR) AS group_2_name")
+        return f"SELECT {', '.join(cols)} WHERE FALSE"
+
+    def _raw_pairs_select_sql(self) -> str:
+        """SELECT for the raw (id + metric) ``pairs`` view used by the CLI paths.
+        Reads the parquet glob normally, or a typed zero-row relation when the
+        dataset has 0 pairs (no part_*.parquet -- issue 071)."""
+        if not self._has_parquet:
+            return self._empty_pairs_sql()
+        return f"SELECT * FROM read_parquet('{self._parquet_glob}')"
+
     def _pairs_select_sql(self) -> str:
         """SELECT defining the served ``pairs`` table (built once in harden_readonly()).
         Joins the names map (when present) so ``pairs`` exposes ``group_1_name``/``group_2_name``
         next to the raw id/metric columns, for the /sql endpoint. The CLI lazy view stays raw."""
+        # 0-pair dataset: no parquet to read or join against. Hand back the typed
+        # zero-row relation so the hardened /sql table is empty-but-valid rather
+        # than crashing on the empty read_parquet glob (issue 071). Include the
+        # name columns when a names map exists, so the served schema matches the
+        # non-empty (names-joined) case regardless of pair count.
         names_path = self._dir / "names.parquet"
+        if not self._has_parquet:
+            return self._empty_pairs_sql(with_names=names_path.exists())
         if names_path.exists():
             return (
                 f"SELECT p.*, "

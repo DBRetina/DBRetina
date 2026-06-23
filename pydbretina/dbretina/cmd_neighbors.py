@@ -24,7 +24,8 @@ import dbretina.dbretina_doc_url as dbretina_doc
     help="Minimum metric value (0-100)",
 )
 @click.option(
-    "-n", "--top", default=20, show_default=True, type=int,
+    "-n", "--top", default=20, show_default=True,
+    type=click.IntRange(min=0),
     help="Number of top results to show",
 )
 @click.option(
@@ -43,7 +44,9 @@ def main(ctx, data_path, group_name, metric, cutoff, top, output):
     LOGGER = ctx.obj
 
     from dbretina.compat import open_pairwise
-    from dbretina.pairwise_store import PairwiseStore, LOWER_IS_BETTER, cutoff_operator
+    from dbretina.pairwise_store import (
+        PairwiseStore, LOWER_IS_BETTER, cutoff_operator, format_metric_value,
+    )
 
     data_path = os.path.abspath(data_path)
     store = open_pairwise(data_path)
@@ -90,7 +93,8 @@ def main(ctx, data_path, group_name, metric, cutoff, top, output):
             else:
                 other = row.get("group_1_name", "")
             lines.append(
-                f"{other}\t{row[metric]:.1f}\t{row['jaccard']:.1f}\t{row['shared_features']}"
+                f"{other}\t{format_metric_value(row[metric], metric)}\t"
+                f"{row['jaccard']:.1f}\t{row['shared_features']}"
             )
 
         text = "\n".join(lines)
