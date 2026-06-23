@@ -564,6 +564,19 @@ class TestPairwise(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
+    def test_pairwise_help_no_phantom_directional_containment(self):
+        """ISSUE-084: pairwise --help/docstring must not promise directional
+        containment_1_in_2 / containment_2_in_1 columns -- they are never emitted
+        (the TSV has a single symmetric `containment` column). It should still
+        document the real `containment` column."""
+        rc, stdout, stderr = run_command("DBRetina pairwise --help")
+        self.assertEqual(rc, 0, stderr)
+        help_text = stdout + stderr
+        self.assertNotIn("containment_1_in_2", help_text)
+        self.assertNotIn("containment_2_in_1", help_text)
+        # The real symmetric column is still documented.
+        self.assertIn("containment", help_text.lower())
+
     def test_pairwise_default(self):
         """Pairwise with defaults produces TSV, DBRP, stats, plots."""
         prefix, pw_file = setup_index_and_pairwise(self.tmpdir)
@@ -1244,6 +1257,45 @@ class TestCluster(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
+    def test_cluster_average_size_log_correct(self):
+        """ISSUE-076: the 'Average cluster size' log must be total clustered nodes /
+        number of EMITTED clusters, not / len(connected_components) (which counts the
+        isolated singletons that are skipped, never written, and never summed) -- that
+        denominator inflated the count and produced an implausible average (often <1).
+
+        ochiai c=70 on the 6-group fixture keeps only {groupa, groupb, groupf} as one
+        cluster; the remaining groups are singleton components that get skipped, so the
+        buggy denominator (4) != the emitted-cluster count (1)."""
+        import re
+        out = os.path.join(self.tmpdir, "cl_avg")
+        rc, stdout, stderr = run_command(
+            f"DBRetina cluster -p {self.pw_file} -m ochiai -c 70 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        combined = stdout + stderr
+
+        def _grab(pattern):
+            m = re.search(pattern, combined)
+            self.assertIsNotNone(m, f"missing log line for /{pattern}/:\n{combined}")
+            return float(m.group(1))
+
+        clustered = _grab(r"Total number of clustered supergroups:\s*([0-9.]+)")
+        num_clusters = _grab(r"number of clusters:\s*([0-9.]+)")
+        avg_logged = _grab(r"Average cluster size:\s*([0-9.]+)")
+
+        self.assertGreaterEqual(num_clusters, 1)
+        expected_avg = clustered / num_clusters
+        self.assertAlmostEqual(
+            avg_logged, expected_avg, places=6,
+            msg=(f"avg-size log {avg_logged} != clustered/clusters "
+                 f"({clustered}/{num_clusters}={expected_avg})"))
+        # The bug divided by every partition incl. skipped singletons, yielding an
+        # average below 1 here (3/4=0.75); a real cluster averages >= 1 node.
+        self.assertGreaterEqual(
+            avg_logged, 1.0,
+            f"avg cluster size {avg_logged} < 1 -> denominator still counts "
+            f"skipped singletons (issue 076)")
+
     def test_cluster_connected_components(self):
         """Cluster with connected components produces expected files."""
         out = os.path.join(self.tmpdir, "cl")
@@ -1365,6 +1417,18 @@ class TestExport(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_export_help_lists_all_accepted_metrics(self):
+        """ISSUE-085: export -m --help must list every metric the command actually
+        accepts (validators.VALID_METRICS), not just 4. csi/dice/odds_ratio were
+        processed but undocumented."""
+        rc, stdout, stderr = run_command("DBRetina export --help")
+        self.assertEqual(rc, 0, stderr)
+        help_text = stdout + stderr
+        for m in ("containment", "ochiai", "jaccard", "csi", "dice",
+                  "odds_ratio", "pvalue"):
+            self.assertIn(m, help_text,
+                          f"export --help omits accepted metric '{m}'")
 
     def test_export_basic(self):
         """Export produces heatmap, distance matrix."""
@@ -1938,6 +2002,51 @@ class TestGraph(unittest.TestCase):
             f"--include-isolates -o {out}"
         )
         self.assertEqual(rc, 0, stderr)
+
+    def test_graph_include_isolates_no_targets(self):
+        """ISSUE-080: --include-isolates with NO targets must list zero-edge
+        (isolate) groups too. At ochiai c=100 only groupa==groupf survives as an
+        edge, so the other 4 groups are isolates. With --include-isolates the node
+        table lists all 6 index groups; without it, only the 2 edge endpoints.
+
+        Pre-fix the no-targets node universe was built solely from edge endpoints,
+        so --include-isolates had nothing to add (empty/edge-only node table)."""
+        # WITH --include-isolates: every index group appears (6 groups -> 6 nodes).
+        out_iso = os.path.join(self.tmpdir, "iso")
+        rc, stdout, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {self.pw_file} "
+            f"-m ochiai -c 100 --include-isolates -o {out_iso}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out_iso}_nodes.tsv")
+        iso_nodes = set()
+        with open(f"{out_iso}_nodes.tsv") as f:
+            for i, line in enumerate(f):
+                if i == 0 or not line.strip():  # header / blank
+                    continue
+                iso_nodes.add(line.split("\t")[0])
+        self.assertEqual(
+            iso_nodes, EXPECTED_GROUP_NAMES,
+            f"--include-isolates (no targets) should list all index groups as "
+            f"isolates; got {sorted(iso_nodes)}")
+
+        # WITHOUT --include-isolates: only the edge endpoints (groupa, groupf).
+        out_noiso = os.path.join(self.tmpdir, "noiso")
+        rc, _, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {self.pw_file} "
+            f"-m ochiai -c 100 -o {out_noiso}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        noiso_nodes = set()
+        with open(f"{out_noiso}_nodes.tsv") as f:
+            for i, line in enumerate(f):
+                if i == 0 or not line.strip():
+                    continue
+                noiso_nodes.add(line.split("\t")[0])
+        self.assertEqual(
+            noiso_nodes, {"groupa", "groupf"},
+            f"without --include-isolates only edge endpoints should appear; "
+            f"got {sorted(noiso_nodes)}")
 
     def test_graph_inter_targets(self):
         """Graph with inter-targets produces output."""
@@ -8031,6 +8140,84 @@ class TestDeduplicateGroupsStateIsolation(unittest.TestCase):
                          "final_remaining_groups leaked across instances (issue 065)")
         self.assertNotIn("sentinel_removed", d2.removed_exact_ochiai_groups,
                          "removed_exact_ochiai_groups leaked across instances (issue 065)")
+
+
+class TestExportNeo4j(unittest.TestCase):
+    """ISSUE-070 + export_neo4j log nit: -d must accept a standalone pairwise TSV
+    (as its --help promises and the sibling `export` command does), and the
+    'Filtering' log must use the metric-aware operator."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import neo4j  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("neo4j driver not installed")
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.pv_prefix, cls.pv_pw_tsv = _ensure_shared_pvalue_fixture()
+        # A high port nothing listens on -> a fast 'connection refused' so the
+        # command fails at the Bolt connect step, never at input-open.
+        cls.dead_uri = "bolt://127.0.0.1:65399"
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_neo4j_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _standalone_tsv(self, src_tsv):
+        """Copy a pairwise TSV to a fresh dir with NO parquet/.dbrp sibling and a
+        name that does not resolve to one -- a genuine standalone TSV input."""
+        solo = os.path.join(self.tmpdir, "solo.tsv")
+        shutil.copy(src_tsv, solo)
+        # Make sure nothing sibling-like exists next to it.
+        self.assertFalse(os.path.isdir(solo[:-len(".tsv")]))
+        return solo
+
+    def test_export_neo4j_accepts_standalone_tsv(self):
+        """ISSUE-070: -d <standalone pairwise TSV> must be ingested (not rejected
+        with 'Pairwise directory not found'); it should get PAST input-open and fail
+        only at the neo4j connection step."""
+        solo = self._standalone_tsv(self.pw_file)
+        rc, stdout, stderr = run_command(
+            f"DBRetina export-neo4j -d {solo} --uri {self.dead_uri} "
+            f"--user '' --password 'x' --database neo4j -m jaccard -c 50 --clear"
+        )
+        combined = stdout + stderr
+        self.assertNotIn("Traceback", combined, f"raw traceback:\n{combined}")
+        # The input was accepted: no 'directory not found' rejection.
+        self.assertNotIn("directory not found", combined.lower(),
+                         f"standalone TSV was rejected as a directory:\n{combined}")
+        self.assertNotIn("could not open pairwise data", combined.lower(),
+                         f"standalone TSV input failed to open:\n{combined}")
+        # It got past input-open (loaded the store) ...
+        self.assertIn("Loaded:", combined, f"input never opened:\n{combined}")
+        # ... and failed only at the neo4j connection.
+        self.assertIn("connect", combined.lower(),
+                      f"expected a neo4j connection error, got:\n{combined}")
+
+    def test_export_neo4j_filter_log_operator_metric_aware(self):
+        """export_neo4j log nit: the 'Filtering' line must use '>=' for similarity
+        metrics and '<=' for pvalue (mirrors the real PairwiseStore cutoff filter,
+        issue 068). It previously hardcoded '>='."""
+        # similarity metric -> '>='
+        solo = self._standalone_tsv(self.pw_file)
+        _, stdout, stderr = run_command(
+            f"DBRetina export-neo4j -d {solo} --uri {self.dead_uri} "
+            f"--user '' --password 'x' --database neo4j -m jaccard -c 50"
+        )
+        self.assertIn("Filtering: jaccard >= 50", stdout + stderr)
+
+        # pvalue -> '<=' (a standalone TSV that actually carries a pvalue column)
+        solo_pv = os.path.join(self.tmpdir, "solo_pv.tsv")
+        shutil.copy(self.pv_pw_tsv, solo_pv)
+        _, stdout, stderr = run_command(
+            f"DBRetina export-neo4j -d {solo_pv} --uri {self.dead_uri} "
+            f"--user '' --password 'x' --database neo4j -m pvalue -c 0.05"
+        )
+        combined = stdout + stderr
+        self.assertIn("Filtering: pvalue <= 0.05", combined)
+        self.assertNotIn("pvalue >=", combined)
 
 
 # ============================================================

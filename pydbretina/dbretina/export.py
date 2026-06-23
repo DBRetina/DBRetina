@@ -164,7 +164,7 @@ def export_heatmap(df, filename):
 
 @cli.command(name="export", epilog = dbretina_doc.doc_url("export"), help_priority=5)
 @click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
-@click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
+@click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="select from ['containment', 'ochiai', 'jaccard', 'csi', 'dice', 'odds_ratio', 'pvalue']")
 @click.option('--newick', "newick", is_flag=True, help="Convert the distance matrix to newick tree format", default=False)
 @click.option('-l', '--labels', "labels_selection", callback = validate_labels, required=False, default="names", show_default=True, type=click.STRING, help="select from ['ids', 'names']")
 @click.option('--linkage', "linkage_method", required=False, default="ward", show_default=True, type=click.STRING, callback=validate_linkage, help="select from ['single', 'complete', 'average', 'weighted', 'centroid', 'median', 'ward']")

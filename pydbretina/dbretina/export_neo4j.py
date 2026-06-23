@@ -7,6 +7,88 @@ from dbretina.click_context import cli
 import dbretina.dbretina_doc_url as dbretina_doc
 
 
+class _TsvPairwiseStore:
+    """Minimal PairwiseStore-shaped adapter over a standalone pairwise TSV.
+
+    ``-d`` advertises a "Pairwise Parquet directory or TSV file", and the sibling
+    ``export`` command ingests a bare pairwise TSV via a pandas read_csv fallback.
+    export-neo4j, however, only ever opened a parquet store, so a genuine standalone
+    TSV (no sibling parquet dir / .dbrp) was rejected with "Pairwise directory not
+    found" (issue 070). This adapter exposes exactly the surface ``export_to_neo4j``
+    consumes -- ``get_names_map()``, ``has_pvalue``, ``filter_pairs(metric, cutoff)``,
+    ``iterate_all()``, ``close()`` -- reading the TSV with pandas (same dependency as
+    ``export``) and yielding pyarrow RecordBatches so the existing
+    ``record_batch.to_pandas()`` streaming loop is unchanged.
+    """
+
+    # TSV header -> the lowercase column names export_to_neo4j reads.
+    _RENAME = {"group_1_ID": "group_1_id", "group_2_ID": "group_2_id"}
+
+    def __init__(self, tsv_path: str):
+        import pandas as pd
+
+        self._path = tsv_path
+        df = pd.read_csv(tsv_path, sep="\t", comment="#")
+        df = df.rename(columns=self._RENAME)
+        required = {"group_1_id", "group_2_id", "shared_features"}
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(
+                f"'{tsv_path}' is not a DBRetina pairwise TSV "
+                f"(missing columns: {', '.join(sorted(missing))})"
+            )
+        self._df = df
+        self._has_pvalue = "pvalue" in df.columns
+
+        # id -> name map from the two id/name column pairs (ids are unique per group).
+        names: dict[int, str] = {}
+        if "group_1_name" in df.columns:
+            for gid, name in zip(df["group_1_id"], df["group_1_name"]):
+                names[int(gid)] = name
+        if "group_2_name" in df.columns:
+            for gid, name in zip(df["group_2_id"], df["group_2_name"]):
+                names[int(gid)] = name
+        self._names = names
+
+    @property
+    def has_pvalue(self) -> bool:
+        return self._has_pvalue
+
+    def get_names_map(self) -> dict:
+        return dict(self._names)
+
+    def _batches(self, df):
+        """Yield the frame as pyarrow RecordBatches (matches the parquet reader API)."""
+        import pyarrow as pa
+
+        return pa.Table.from_pandas(df, preserve_index=False).to_batches()
+
+    def iterate_all(self):
+        return self._batches(self._df)
+
+    def filter_pairs(self, metric: str, cutoff: float):
+        from dbretina.pairwise_store import passes_cutoff
+
+        if metric not in self._df.columns:
+            raise ValueError(
+                f"Unknown metric '{metric}'. Valid: "
+                f"{', '.join(c for c in self._df.columns if c not in ('group_1_id', 'group_2_id', 'group_1_name', 'group_2_name', 'shared_features'))}"
+            )
+        # Metric-aware filter: p-value keeps value <= cutoff, similarity metrics
+        # keep value >= cutoff (issue 068 semantics), via the shared helper.
+        mask = self._df[metric].apply(lambda v: passes_cutoff(float(v), cutoff, metric))
+        return self._batches(self._df[mask])
+
+    def close(self):
+        pass
+
+    def __repr__(self):
+        return (
+            f"TsvPairwiseStore('{self._path}', "
+            f"pairs={len(self._df):,}, groups={len(self._names)})"
+        )
+
+
 def export_to_neo4j(
     store,
     uri: str,
@@ -205,12 +287,25 @@ def main(ctx, data_path, uri, user, password, database, metric, cutoff, batch_si
     data_path = os.path.abspath(data_path)
 
     from dbretina.compat import open_pairwise
-    from dbretina.pairwise_store import PairwiseStore
+    from dbretina.pairwise_store import PairwiseStore, cutoff_operator
 
+    # Resolve -d to a store, mirroring how the sibling `export` command accepts
+    # the same inputs (issue 070):
+    #   1. open_pairwise: a parquet directory, or a .tsv WITH a sibling parquet dir.
+    #   2. PairwiseStore(path): a parquet directory passed directly.
+    #   3. a standalone pairwise .tsv (no parquet sibling) -> the TSV adapter, just
+    #      like export's read_csv fallback. Previously this third case was rejected
+    #      with "Pairwise directory not found" despite -d's help promising a TSV file.
     store = open_pairwise(data_path)
-    if store is None:
+    if store is None and os.path.isdir(data_path):
         try:
             store = PairwiseStore(data_path)
+        except Exception as e:
+            LOGGER.ERROR(f"Could not open pairwise data: {e}")
+            return
+    if store is None:
+        try:
+            store = _TsvPairwiseStore(data_path)
         except Exception as e:
             LOGGER.ERROR(f"Could not open pairwise data: {e}")
             return
@@ -218,7 +313,10 @@ def main(ctx, data_path, uri, user, password, database, metric, cutoff, batch_si
     LOGGER.INFO(f"Loaded: {store}")
     LOGGER.INFO(f"Exporting to {uri} (database={database})")
     if metric:
-        LOGGER.INFO(f"Filtering: {metric} >= {cutoff}")
+        # Metric-aware operator in the log: p-value filters keep value <= cutoff
+        # (lower is better), similarity metrics keep value >= cutoff. The actual
+        # PairwiseStore/adapter filter already uses this; the log hardcoded '>='.
+        LOGGER.INFO(f"Filtering: {metric} {cutoff_operator(metric)} {cutoff}")
 
     def progress(nodes, edges):
         print(f"\r  nodes={nodes:,}  edges={edges:,}", end="", flush=True)

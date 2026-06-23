@@ -213,6 +213,19 @@ class DBRetinaGraph:
 
 
     def export_node_attributes(self, include_isolates):
+        # With --include-isolates the node universe must be every index group,
+        # including degree-0 isolates. In the no-targets case geneSetToTargetsArgumentID
+        # is populated solely from edge endpoints (build_graph), so an all-isolates run
+        # (e.g. a cutoff that drops every edge) left it empty and isolates had nothing
+        # to add -> an empty node table (issue 080). Seed every index group (known from
+        # node_to_size, loaded from the .dbri) as 'ungrouped' so isolates appear; groups
+        # already present (edge endpoints, or target-file members) keep their value.
+        # Without --include-isolates the loc[nodes_with_edges] filter below is unchanged,
+        # so this seeding is a no-op for that path.
+        if include_isolates:
+            for group_name in self.node_to_size:
+                self.geneSetToTargetsArgumentID.setdefault(group_name, 'ungrouped')
+
         df_nodes = pd.DataFrame.from_dict(self.geneSetToTargetsArgumentID, orient='index', columns=['targetGroup'])
         df_nodes["target_name"] = df_nodes.index.map(self.gene_set_to_targetID)
         df_nodes['heterogeneity'] = df_nodes.index.map(self.node_to_heterogeneity)

@@ -154,9 +154,9 @@ def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pva
       - OR < 1: Negative association (less overlap than expected)
       - OR = -1: Undefined (filtered from output)
 
-    CONTAINMENT: Reports shared/min(s1,s2). This is symmetric but loses
-    directionality. For directional containment, see containment_1_in_2 and
-    containment_2_in_1 columns.
+    CONTAINMENT: Reported in the symmetric `containment` column as
+    shared/min(s1,s2) (a single value per pair); directionality is not
+    preserved.
     """
     
     # -i is a plain STRING (not click.Path), so existence isn't validated by

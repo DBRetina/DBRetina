@@ -606,7 +606,15 @@ class Clusters:
         self.Logger.INFO("plotting cluster sizes histogram and bubble plot")
         self.plot_histogram(cluster_sizes, f"{self.output_prefix}_clusters_histogram.png")
         self.Logger.INFO(f"Total number of clustered supergroups: {total_clustered_nodes}")
-        self.Logger.INFO(f"Average cluser size: {total_clustered_nodes / len(self.connected_components)}")
+        # Average over the clusters actually EMITTED (cluster_sizes), not over
+        # len(self.connected_components): the latter counts every partition,
+        # including the isolated singletons skipped above (not written, not
+        # counted in total_clustered_nodes), so it inflated the denominator and
+        # produced an implausible average (often <1) that contradicted the
+        # cluster_size column (issue 076). num_clusters == cluster_id - 1.
+        num_clusters = len(cluster_sizes)
+        avg_cluster_size = total_clustered_nodes / num_clusters if num_clusters else 0
+        self.Logger.INFO(f"Average cluster size: {avg_cluster_size}")
         self.plot_bubbles(cluster_sizes)
         self.Logger.INFO(f"number of clusters: {cluster_id - 1}")
 
