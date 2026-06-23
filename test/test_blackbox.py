@@ -6745,6 +6745,290 @@ class TestPairwiseStoreArrowReader(unittest.TestCase):
 
 
 # ============================================================
+# SECTION: ISSUE-064 (graph -m emits whatever metric is chosen)
+# ============================================================
+
+class TestGraphMetricEmission(unittest.TestCase):
+    """ISSUE-064 (investigation): unlike `bipartite` (issue 048, fixed schema of
+    containment/ochiai/jaccard[/pvalue] columns), the `graph` command emits a
+    GENERIC 3-column edges file (from / to / <metric>) whose single weight column
+    is the chosen -m metric, read via metric_to_col (TSV) / rec[self.metric]
+    (.dbrp) / d[self.metric] (parquet). So graph correctly emits ALL 7 metrics,
+    csi/dice/odds_ratio included -- it does NOT silently drop them. Verdict:
+    NOT a defect; -m must stay permissive (restricting it would break working
+    output). These tests document/lock in that the emitted weights actually match
+    the requested metric's pairwise values (would have caught a silent drop)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_gmetric_")
+        # Ground truth: {frozenset(name1,name2): {metric: value}} from the pairwise TSV.
+        self.truth = {}
+        for r in parse_pairwise_tsv(self.pw_file):
+            self.truth[frozenset((r["group_1_name"], r["group_2_name"]))] = r
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _read_edges(self, edges_path):
+        """Return (header_metric_name, {frozenset(from,to): weight})."""
+        weights = {}
+        header_metric = None
+        with open(edges_path) as f:
+            header = f.readline().rstrip("\n").split("\t")
+            self.assertEqual(header[:2], ["from", "to"],
+                             f"unexpected edges header: {header}")
+            header_metric = header[2]
+            for line in f:
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                a, b, w = line.split("\t")
+                weights[frozenset((a, b))] = float(w)
+        return header_metric, weights
+
+    def _run_and_check(self, metric, pairwise_arg, label):
+        """graph -m <metric> on `pairwise_arg`; assert the emitted weight column is
+        named for the metric and each edge weight equals that metric's pairwise
+        value (i.e. the requested metric is genuinely emitted, not dropped/wrong)."""
+        out = os.path.join(self.tmpdir, f"g_{metric}_{label}")
+        # cutoff 0: odds_ratio's -1.0 (subset/identical) rows fall below 0 and are
+        # excluded -- that's correct cutoff behavior, not a dropped metric.
+        rc, _, stderr = run_command(
+            f"DBRetina graph -i {self.prefix} -p {pairwise_arg} "
+            f"-m {metric} -c 0 -o {out}"
+        )
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("Traceback", stderr)
+        edges_path = f"{out}_edges.tsv"
+        assert_file_exists(self, edges_path)
+
+        header_metric, weights = self._read_edges(edges_path)
+        # 1. The weight column is named for the REQUESTED metric (not a fixed name).
+        self.assertEqual(
+            header_metric, metric,
+            f"[{label}] edges weight column is '{header_metric}', expected "
+            f"'{metric}' -> graph mislabeled/ignored the requested metric",
+        )
+        # 2. At least one edge emitted (the fixture has plenty above cutoff 0).
+        self.assertGreater(
+            len(weights), 0,
+            f"[{label}] graph -m {metric} produced no edges (silently dropped?)",
+        )
+        # 3. Every emitted edge weight equals that metric's pairwise value. A
+        #    silently-dropped/mis-emitted metric (the 048 failure mode) would put a
+        #    different column's number here and fail this. The pairwise TSV columns
+        #    are display-rounded to 1 decimal, while graph emits the full-precision
+        #    value (e.g. csi 13.333... vs TSV 13.3) -- which itself confirms graph
+        #    reads the genuine metric, not a dropped/placeholder one. Compare at the
+        #    TSV's own 1-decimal precision: a *wrong* metric (e.g. ochiai 36.5 for a
+        #    csi 13.3 request) still rounds differently and fails.
+        for pair, w in weights.items():
+            self.assertIn(pair, self.truth, f"[{label}] unknown edge {pair}")
+            expected = self.truth[pair][metric]
+            # Compare at the TSV's 1-decimal precision with a tolerance: the full-precision
+            # dir/.dbrp values can round-half oppositely to the C++ TSV formatter on a *.*5
+            # tie, so use abs-diff <= 0.1 (a *wrong* metric differs by far more).
+            self.assertLessEqual(
+                abs(round(w, 1) - float(expected)), 0.1,
+                msg=(f"[{label}] edge {pair} weight {w} (->{round(w, 1)}) != "
+                     f"pairwise {metric} {expected}: graph emitted the wrong metric"),
+            )
+
+    def test_graph_csi_emitted_correctly_tsv(self):
+        """graph -m csi (TSV route) emits the csi column with correct values."""
+        self._run_and_check("csi", self.pw_file, "tsv")
+
+    def test_graph_dice_emitted_correctly_tsv(self):
+        """graph -m dice (TSV route) emits the dice column with correct values."""
+        self._run_and_check("dice", self.pw_file, "tsv")
+
+    def test_graph_odds_ratio_emitted_correctly_tsv(self):
+        """graph -m odds_ratio (TSV route) emits the odds_ratio column correctly."""
+        self._run_and_check("odds_ratio", self.pw_file, "tsv")
+
+    def test_graph_csi_dice_oddsratio_emitted_correctly_parquet_dir(self):
+        """Same correctness via the parquet-DIR route (d[self.metric])."""
+        pw_dir = self.pw_file[:-len(".tsv")] if self.pw_file.endswith(".tsv") else self.pw_file
+        if not (os.path.isdir(pw_dir)
+                and os.path.exists(os.path.join(pw_dir, "manifest.json"))):
+            self.skipTest("no parquet pairwise directory sibling")
+        for metric in ("csi", "dice", "odds_ratio"):
+            self._run_and_check(metric, pw_dir, "dir")
+
+    def test_graph_csi_dice_oddsratio_emitted_correctly_dbrp(self):
+        """Same correctness via the .dbrp route (rec[self.metric])."""
+        dbrp = self.pw_file[:-len(".tsv")] + ".dbrp" if self.pw_file.endswith(".tsv") else None
+        if not (dbrp and os.path.isfile(dbrp)):
+            self.skipTest("no .dbrp sibling")
+        for metric in ("csi", "dice", "odds_ratio"):
+            self._run_and_check(metric, dbrp, "dbrp")
+
+
+# ============================================================
+# SECTION: ISSUE-065 (Clusters / DeduplicateGroups class-level state leak)
+# ============================================================
+
+class TestClustersStateIsolation(unittest.TestCase):
+    """ISSUE-065 (sibling of 045): Clusters declared its per-run mutable maps
+    (group_to_features, names_map) as CLASS attributes, so a second instantiation
+    in the SAME process inherited the first run's storage. Invisible to the CLI
+    (fresh process per run), but a real latent leak. The per-run mutable state must
+    be INSTANCE-scoped: two instances must not share the same dict/set objects."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+
+    def setUp(self):
+        from dbretina.customLogger import Logger
+        self._Logger = Logger
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_clu_state_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _make_clusters(self):
+        from dbretina.clustering import Clusters
+        out_prefix = os.path.join(self.tmpdir, f"c_{os.urandom(4).hex()}")
+        # community=False -> rustworkx, light construction; reads the pairwise file
+        # only for the node count (the shared fixture .tsv is always present).
+        return Clusters(
+            logger_obj=self._Logger(active=False),
+            pairwise_file=self.pw_file,
+            cut_off_threshold=0.0,
+            metric="ochiai",
+            output_prefix=out_prefix,
+            community=False,
+        )
+
+    def test_two_instances_have_independent_mutable_state(self):
+        """Two fresh Clusters instances must NOT share the same mutable dict objects
+        (pre-fix group_to_features/names_map were one class-level object: same id)."""
+        c1 = self._make_clusters()
+        c2 = self._make_clusters()
+        for attr in ("group_to_features", "names_map"):
+            self.assertIsNot(
+                getattr(c1, attr), getattr(c2, attr),
+                f"Clusters.{attr} is shared across instances (same object) "
+                f"-> class-level mutable state leak (issue 065)",
+            )
+
+    def test_mutable_attrs_are_instance_scoped_and_empty(self):
+        """Each per-run mutable attr is an instance attribute (in the instance
+        __dict__) and starts empty -> no inherited entries from a prior run."""
+        c1 = self._make_clusters()
+        for attr in ("group_to_features", "names_map"):
+            self.assertIn(
+                attr, vars(c1),
+                f"Clusters.{attr} is not instance-scoped (still a class attr) "
+                f"-> latent cross-instance leak (issue 065)",
+            )
+            self.assertEqual(
+                len(getattr(c1, attr)), 0,
+                f"Clusters.{attr} should be empty at construction",
+            )
+
+    def test_no_cross_instance_entry_leak(self):
+        """Mutating one instance's maps must not appear in a later instance."""
+        c1 = self._make_clusters()
+        c1.group_to_features["sentinel_group"] = {"sentinel_feature"}
+        c1.names_map[999999] = "sentinel_name"
+        c2 = self._make_clusters()
+        self.assertNotIn(
+            "sentinel_group", c2.group_to_features,
+            "Clusters.group_to_features leaked an entry across instances (issue 065)",
+        )
+        self.assertNotIn(
+            999999, c2.names_map,
+            "Clusters.names_map leaked an entry across instances (issue 065)",
+        )
+
+
+class TestDeduplicateGroupsStateIsolation(unittest.TestCase):
+    """ISSUE-065 (sibling of 045): DeduplicateGroups declared its per-run mutable
+    state (cluster_id_to_groups, groups_to_items_no, final_remaining_groups,
+    removed_exact_ochiai_groups) as CLASS attributes -> a second in-process
+    instance inherited the first run's storage/entries. They must be INSTANCE
+    attributes initialized in __init__."""
+
+    MUTABLE_ATTRS = (
+        "cluster_id_to_groups",
+        "groups_to_items_no",
+        "final_remaining_groups",
+        "removed_exact_ochiai_groups",
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        # Only the index_prefix string is needed in __init__ (no file reads there).
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+
+    def setUp(self):
+        from dbretina.customLogger import Logger
+        self._Logger = Logger
+
+    def _make_dedup(self):
+        from dbretina.setcov import DeduplicateGroups
+        # __init__ reads no files: it sets attrs, builds an empty df_logging, and
+        # derives main_pairwise_file from index_prefix. A minimal ctx with .obj
+        # (the LOGGER) is all that's required.
+        ctx = SimpleNamespace(obj=self._Logger(active=False))
+        return DeduplicateGroups(
+            associations_file=None,
+            index_prefix=self.prefix,
+            ctx=ctx,
+        )
+
+    def test_two_instances_have_independent_mutable_state(self):
+        """Two fresh DeduplicateGroups instances must NOT share the same mutable
+        dict/set objects (pre-fix all four were single class-level objects)."""
+        d1 = self._make_dedup()
+        d2 = self._make_dedup()
+        for attr in self.MUTABLE_ATTRS:
+            self.assertIsNot(
+                getattr(d1, attr), getattr(d2, attr),
+                f"DeduplicateGroups.{attr} is shared across instances (same object) "
+                f"-> class-level mutable state leak (issue 065)",
+            )
+
+    def test_mutable_attrs_are_instance_scoped_and_empty(self):
+        """Each per-run mutable attr is an instance attribute and starts empty."""
+        d1 = self._make_dedup()
+        for attr in self.MUTABLE_ATTRS:
+            self.assertIn(
+                attr, vars(d1),
+                f"DeduplicateGroups.{attr} is not instance-scoped (still a class "
+                f"attr) -> latent cross-instance leak (issue 065)",
+            )
+            self.assertEqual(
+                len(getattr(d1, attr)), 0,
+                f"DeduplicateGroups.{attr} should be empty at construction",
+            )
+
+    def test_no_cross_instance_entry_leak(self):
+        """Entries added to one instance must not appear in a later instance."""
+        d1 = self._make_dedup()
+        d1.cluster_id_to_groups[42] = ["sentinel_group"]
+        d1.groups_to_items_no["sentinel_group"] = 7
+        d1.final_remaining_groups.add("sentinel_remaining")
+        d1.removed_exact_ochiai_groups.add("sentinel_removed")
+
+        d2 = self._make_dedup()
+        self.assertNotIn(42, d2.cluster_id_to_groups,
+                         "cluster_id_to_groups leaked across instances (issue 065)")
+        self.assertNotIn("sentinel_group", d2.groups_to_items_no,
+                         "groups_to_items_no leaked across instances (issue 065)")
+        self.assertNotIn("sentinel_remaining", d2.final_remaining_groups,
+                         "final_remaining_groups leaked across instances (issue 065)")
+        self.assertNotIn("sentinel_removed", d2.removed_exact_ochiai_groups,
+                         "removed_exact_ochiai_groups leaked across instances (issue 065)")
+
+
+# ============================================================
 # Main
 # ============================================================
 

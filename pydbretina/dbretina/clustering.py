@@ -67,9 +67,12 @@ class Clusters:
         "pvalue": 6,
     }
 
-    group_to_features = dict()
-    names_map = dict()
-    
+    # NOTE: per-run *mutable* attributes (group_to_features, names_map) are
+    # initialized as INSTANCE attributes in __init__, NOT here. Declaring them at
+    # class scope made them shared across instances, so a second Clusters() in the
+    # same process inherited the first run's entries (issue 065, sibling of 045).
+    # Only the read-only metric lookups above live at class scope.
+
     def add_edges(self, edges_tuples):
         pass
     
@@ -126,6 +129,10 @@ class Clusters:
         self.graph.add_nodes_from(nodes)
 
     def __init__(self, logger_obj, pairwise_file, cut_off_threshold, metric, output_prefix, community, resolution=1.0, node_weight_transform='log2'):
+        # Per-run mutable state, instance-scoped so repeated in-process
+        # instantiations don't share or leak entries (issue 065).
+        self.group_to_features = dict()
+        self.names_map = dict()
         self.output_prefix = output_prefix
         self.Logger = logger_obj
         self.edges_batch_number = 10_000_000

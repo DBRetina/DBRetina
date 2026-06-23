@@ -56,10 +56,15 @@ class DeduplicateGroups():
     This class provides methods for deduplicating groups based on various criteria, such as item coverage, GPI, and CSI.
     """
     
+    # NOTE: per-run *mutable* containers (cluster_id_to_groups, groups_to_items_no,
+    # final_remaining_groups, removed_exact_ochiai_groups) are initialized as
+    # INSTANCE attributes in __init__, NOT here. Declaring them at class scope made
+    # them shared across instances, so a second DeduplicateGroups() in the same
+    # process inherited the first run's entries (issue 065, sibling of 045). The
+    # remaining class-scope names below are immutable scalars/None sentinels (each
+    # rebound per instance) or the read-only metric_to_col lookup, which are safe.
     communities_clusters_file = ''
     associations_file = ''
-    cluster_id_to_groups = dict()
-    groups_to_items_no = dict()
     total_number_of_groups = 0
     main_pairwise_file = ''
     index_prefix = ''
@@ -67,9 +72,7 @@ class DeduplicateGroups():
     ochiai_community_cutoff = 30
     GC = 100
     final_remaining_groups_count = 0
-    final_remaining_groups = set()
-    removed_exact_ochiai_groups = set()
-    
+
     # Dataframes
     df_items_metadata = None
     df_groups_metadata = None
@@ -105,6 +108,12 @@ class DeduplicateGroups():
         ochiai_community_cutoff = 30,
         ctx = None
         ):
+        # Per-run mutable state, instance-scoped so repeated in-process
+        # instantiations don't share or leak entries (issue 065).
+        self.cluster_id_to_groups = dict()
+        self.groups_to_items_no = dict()
+        self.final_remaining_groups = set()
+        self.removed_exact_ochiai_groups = set()
         self.associations_file = associations_file
         self.ochiai_community_cutoff = ochiai_community_cutoff
         # Initialize a logging DataFrame
