@@ -722,8 +722,14 @@ namespace dbretina {
             rec.csi = static_cast<float>(distance_metrics["csi"]);
             rec.dice = static_cast<float>(distance_metrics["dice"]);
             rec.odds_ratio = static_cast<float>(distance_metrics["odds_ratio"]);
+            // p-value computed once and reused for both the .dbrp record and the TSV
+            // column below (it was evaluated twice per edge — the boost hypergeometric
+            // CDF is the most expensive scalar op in this loop).
+            double pvalue_val = calculate_pvalue
+                ? fastHyperPValue(shared_features, source_1_features, source_2_features, population_size)
+                : 0.0;
             if (calculate_pvalue) {
-                rec.pvalue = fastHyperPValue(shared_features, source_1_features, source_2_features, population_size);
+                rec.pvalue = pvalue_val;
             }
             pw.write_record(rec);
 
@@ -741,7 +747,7 @@ namespace dbretina {
                 << '\t' << formatDouble(distance_metrics["odds_ratio"]);
 
             if (calculate_pvalue) {
-                myfile << '\t' << fastHyperPValue(shared_features, source_1_features, source_2_features, population_size);
+                myfile << '\t' << pvalue_val;
             }
 
             myfile << '\n';
