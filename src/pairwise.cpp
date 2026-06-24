@@ -488,8 +488,8 @@ namespace dbretina {
 
         cerr << "[dev] average color size = " << (int)average_color_size << endl;
 
-        int thread_num, num_threads, start, end, vec_i;
-        int n = vec_color_to_ids.size();
+        size_t thread_num, num_threads, start, end, vec_i;
+        size_t n = vec_color_to_ids.size();
 
         omp_set_num_threads(user_threads);
         begin_time = Time::now();
@@ -513,7 +513,14 @@ namespace dbretina {
                     ascending(_seq1, _seq2);
 
                     auto _p = make_pair(_seq1, _seq2);
-                    uint32_t ccount = colorsCount[item.first];
+                    // Non-mutating read: colorsCount is fully loaded before this
+                    // parallel region and never written here, so concurrent find()
+                    // is data-race-free (unlike the old mutating operator[], which
+                    // could insert/rehash). Kept in-loop on purpose: hoisting it
+                    // measurably regresses this hot loop under -Ofast, and the probe
+                    // is ~free here. Do NOT write colorsCount concurrently.
+                    const auto _cc_it = colorsCount.find(item.first);
+                    uint32_t ccount = (_cc_it != colorsCount.end()) ? _cc_it->second : 0;
                     edges.try_emplace_l(_p,
                         [ccount](PAIRS_COUNTER::value_type& v) { v.second += ccount; }, // called only when key was already present
                         ccount
@@ -595,7 +602,7 @@ namespace dbretina {
 
         // Convert edges to vector for parallel iteration
         auto vec_edges = std::vector<std::pair<std::pair<uint32_t, uint32_t>, uint64_t>>(edges.begin(), edges.end());
-        int n_edges = vec_edges.size();
+        size_t n_edges = vec_edges.size();
 
         auto parquet_begin = Time::now();
 
@@ -605,16 +612,18 @@ namespace dbretina {
         {
             int tid = omp_get_thread_num();
             int nthreads = omp_get_num_threads();
-            int edge_start = tid * n_edges / nthreads;
-            int edge_end = (tid + 1) * n_edges / nthreads;
+            // n_edges is size_t, so tid * n_edges promotes to 64-bit before the
+            // multiply (no int overflow at >2^31 edges); bounds/index stay size_t.
+            size_t edge_start = (size_t)tid * n_edges / nthreads;
+            size_t edge_end = (size_t)(tid + 1) * n_edges / nthreads;
 
-            for (int ei = edge_start; ei < edge_end; ei++) {
+            for (size_t ei = edge_start; ei < edge_end; ei++) {
                 auto& edge = vec_edges[ei];
                 uint64_t shared_features = edge.second;
                 uint32_t source_1 = edge.first.first;
                 uint32_t source_2 = edge.first.second;
-                uint32_t source_1_features = groupID_to_featureCount[source_1];
-                uint32_t source_2_features = groupID_to_featureCount[source_2];
+                uint32_t source_1_features = groupID_to_featureCount.at(source_1);
+                uint32_t source_2_features = groupID_to_featureCount.at(source_2);
                 uint32_t minimum_source_features = min(source_1_features, source_2_features);
 
                 // Similarity metrics with division-by-zero protection
@@ -670,8 +679,8 @@ namespace dbretina {
             uint64_t shared_features = edge.second;
             uint32_t source_1 = edge.first.first;
             uint32_t source_2 = edge.first.second;
-            uint32_t source_1_features = groupID_to_featureCount[source_1];
-            uint32_t source_2_features = groupID_to_featureCount[source_2];
+            uint32_t source_1_features = groupID_to_featureCount.at(source_1);
+            uint32_t source_2_features = groupID_to_featureCount.at(source_2);
             uint32_t minimum_source_features = min(source_1_features, source_2_features);
             uint32_t maximum_source_features = max(source_1_features, source_2_features);
 
