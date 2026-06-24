@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cstdint>
+#include <algorithm>
 #include <chrono>
 #include <boost/algorithm/string/join.hpp>
 #include <boost/range/adaptor/transformed.hpp>
@@ -41,40 +42,6 @@ using BINS_FEATURE_COUNT = phmap::parallel_flat_hash_map<
     std::mutex>;
 
 typedef std::chrono::high_resolution_clock Time;
-
-class Combo {
-
-public:
-    Combo() = default;
-
-    std::vector<std::pair<uint32_t, uint32_t>> combs;
-
-    void combinations(int n) {
-        this->combs.clear();
-        this->combs.reserve((n * (n - 1)) / 2);
-        this->comb(n, this->r, this->arr);
-    }
-
-private:
-    int* arr = new int[2];
-    int r = 2;
-
-    void comb(int n, int r, int* arr) {
-        for (int i = n; i >= r; i--) {
-            // choose the first element
-            arr[r - 1] = i;
-            if (r > 1) { // if still needs to choose
-                // recursive into smaller problem
-                comb(i - 1, r - 1, arr);
-
-            }
-            else {
-                this->combs.emplace_back(arr[0] - 1, arr[1] - 1);
-            }
-        }
-    }
-
-};
 
 class Stats {
 private:
@@ -488,39 +455,43 @@ namespace dbretina {
 
         cerr << "[dev] average color size = " << (int)average_color_size << endl;
 
-        size_t thread_num, num_threads, start, end, vec_i;
+        // Longest-processing-time-first: per-color work is O(color_size^2), so
+        // dispatch the giant colors before the tail. `edges` is an order-independent
+        // reduction, so reordering colors does not change the output. Sort is
+        // O(n log n) on the color count -- negligible vs the O(sum k^2) loop.
+        std::sort(vec_color_to_ids.begin(), vec_color_to_ids.end(),
+            [](const std::pair<uint32_t, vector<uint32_t>>& a,
+                const std::pair<uint32_t, vector<uint32_t>>& b) {
+                    return a.second.size() > b.second.size();
+            });
+
         size_t n = vec_color_to_ids.size();
 
         omp_set_num_threads(user_threads);
         begin_time = Time::now();
 
-#pragma omp parallel private(vec_i,thread_num,num_threads,start,end)
-        {
-            thread_num = omp_get_thread_num();
-            num_threads = omp_get_num_threads();
-            start = thread_num * n / num_threads;
-            end = (thread_num + 1) * n / num_threads;
+        // Dynamic scheduling balances the heavy-tailed per-color load: big colors
+        // dominate the C(k,2) work and would otherwise pile onto one static block.
+#pragma omp parallel for schedule(dynamic)
+        for (size_t vec_i = 0; vec_i < n; ++vec_i) {
+            const auto& item = vec_color_to_ids[vec_i];
+            const auto& ids = item.second;
+            // Read ccount once per color (colorsCount is fully loaded before this
+            // parallel region and never written here, so concurrent find() is
+            // data-race-free; the old mutating operator[] could insert/rehash).
+            const auto _cc_it = colorsCount.find(item.first);
+            uint32_t ccount = (_cc_it != colorsCount.end()) ? _cc_it->second : 0;
 
-            for (vec_i = start; vec_i != end; ++vec_i) {
-                auto item = vec_color_to_ids[vec_i];
-                Combo combo = Combo();
-                combo.combinations(item.second.size());
-                for (uint32_t i = 0; i < combo.combs.size(); i++) {
-                    // for (auto const& seq_pair : combo.combs) {
-                    auto const& seq_pair = combo.combs[i];
-                    uint32_t _seq1 = item.second[seq_pair.first];
-                    uint32_t _seq2 = item.second[seq_pair.second];
+            // Generate the C(k,2) unordered pairs inline straight into `edges`
+            // (no Combo / no materialized combs vector). This nested a<b loop
+            // enumerates the identical pair set Combo did.
+            for (size_t a = 0; a + 1 < ids.size(); ++a) {
+                for (size_t b = a + 1; b < ids.size(); ++b) {
+                    uint32_t _seq1 = ids[a];
+                    uint32_t _seq2 = ids[b];
                     ascending(_seq1, _seq2);
 
                     auto _p = make_pair(_seq1, _seq2);
-                    // Non-mutating read: colorsCount is fully loaded before this
-                    // parallel region and never written here, so concurrent find()
-                    // is data-race-free (unlike the old mutating operator[], which
-                    // could insert/rehash). Kept in-loop on purpose: hoisting it
-                    // measurably regresses this hot loop under -Ofast, and the probe
-                    // is ~free here. Do NOT write colorsCount concurrently.
-                    const auto _cc_it = colorsCount.find(item.first);
-                    uint32_t ccount = (_cc_it != colorsCount.end()) ? _cc_it->second : 0;
                     edges.try_emplace_l(_p,
                         [ccount](PAIRS_COUNTER::value_type& v) { v.second += ccount; }, // called only when key was already present
                         ccount
