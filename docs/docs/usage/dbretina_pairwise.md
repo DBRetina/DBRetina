@@ -39,15 +39,18 @@ The `-c` argument is used with the `-m` argument to define the cutoff.
 <span class="cmd"> --pvalue                  calculate Hypergeometric p-value </span>
 This flag calculates the Hypergeometric p-value for pairwise comparisons based on shared features between supergroups and the total number of features in the database.
 
+<span class="cmd"> --legacy-output           also write the legacy .tsv + .dbrp pairwise files (default: parquet only) </span>
+By default `pairwise` writes only the partitioned Parquet directory (below). Pass `--legacy-output` to additionally write the legacy `{index_prefix}_DBRetina_pairwise.tsv` and `{index_prefix}_DBRetina_pairwise.dbrp` files. The Parquet output is the canonical form and is what every downstream command (`query`, `cluster`, `export`, …) reads; the legacy files are kept only for backward compatibility and pre-existing pipelines.
+
 <hr class="fancy-hr">
 
 ## Output files
 
-### Primary output files
+### Primary output (Parquet directory)
 
-<span class="cmd"> {index_prefix}_DBRetina_pairwise.tsv </span>
+<span class="cmd"> {index_prefix}_DBRetina_pairwise/ </span>
 
-A TSV file that provides information about shared features between each pair of supergroups. The TSV columns are defined as follows:
+A partitioned **Parquet directory** is the primary, canonical output: it holds one row per pair of supergroups that share at least one feature, plus `manifest.json`, `names.parquet`, and `statistics.json`. It is read directly by the downstream commands via `-p {index_prefix}_DBRetina_pairwise/`. With `--legacy-output`, the same data is also written to `{index_prefix}_DBRetina_pairwise.tsv` (a TSV) and `{index_prefix}_DBRetina_pairwise.dbrp` (a binary). The per-pair columns are:
 
 <table>
   <tbody>
@@ -115,5 +118,4 @@ Same as above, but the y-axis is displayed on a linear scale.
 
 
 ??? info end "Advanced Output (For developers)"
-    `{index_prefix}_DBRetina_pairwise_stats.json`: used to generate the similarity metrics plot.
-    `{index_prefix}_DBRetina_pairwise_stats_odds_ratio.txt`: odds-ratio metadata for next step of commands.
+    `{index_prefix}_DBRetina_pairwise/statistics.json`: similarity-metric histograms (used to generate the plots). `{index_prefix}_DBRetina_pairwise/statistics_odds_ratio.txt`: odds-ratio metadata. (With `--legacy-output`, top-level `{index_prefix}_DBRetina_pairwise_stats.json` + `_stats_odds_ratio.txt` are also written for backward compatibility.)

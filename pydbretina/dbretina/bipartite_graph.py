@@ -391,7 +391,7 @@ def process_targets_option(ctx, param, value):
 
 @cli.command(name="graph", epilog = dbretina_doc.doc_url("graph"), help_priority=9)
 @click.option('-i', '--index-prefix', 'index_prefix', required=True, type=click.STRING, help="Index file prefix")
-@click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise TSV file")
+@click.option('-p', '--pairwise', 'pairwise_file', callback=path_to_absolute_path, required=True, type=click.Path(exists=True), help="the pairwise parquet dir (or legacy .dbrp/.tsv)")
 @click.option('--intra-targets', "intra_targets", multiple=True, callback=process_targets_option, required=False, help="comma separated list of TSV files with first column as gene sets")
 @click.option('--inter-targets', "inter_targets", multiple=True, callback=process_targets_option, required=False, help="comma separated list of TSV files with first column as gene sets")
 @click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="Similarity metric ['containment', 'ochiai', 'jaccard', 'csi', 'dice', 'odds_ratio', 'pvalue']")

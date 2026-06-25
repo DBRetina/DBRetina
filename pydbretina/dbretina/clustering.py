@@ -620,7 +620,7 @@ class Clusters:
 
 
 @cli.command(name="cluster", epilog = dbretina_doc.doc_url("cluster"), help_priority=4)
-@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
+@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise parquet dir (or legacy .dbrp/.tsv)")
 @click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option("--community", "community", is_flag=True, help="clusters as communities", default=False)
 @click.option('-c', '--cutoff', required=True, type=click.FloatRange(0, 100, clamp=False), default=0.0, help="cluster the supergroups with (similarity > cutoff)")

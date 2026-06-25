@@ -127,7 +127,7 @@ def get_command():
 @cli.command(name="genenet", epilog = dbretina_doc.doc_url("genenet"), help_priority=9)
 # @click.option('-t', '--threads', "user_threads", default=1, required=False, type=int, help="number of cores") # TODO later in C++ version
 @click.option('-i', '--index-prefix', "index_prefix", required=True, type=click.STRING, help="index file prefix")
-@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
+@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise parquet dir (or legacy .dbrp/.tsv)")
 @click.option('--graphml', 'graphml', is_flag=True, default = False, help="export genenet as graphml file")
 @click.option('--gexf', 'gexf', is_flag=True, default = False, help="export genenet as gexf file")
 @click.option('-o', '--output-prefix', "output_prefix", required=True, type=click.STRING, help="output file prefix")

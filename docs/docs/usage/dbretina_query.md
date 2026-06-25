@@ -89,7 +89,7 @@ The output files prefix.
     === "Similarity cutoff"
 
         ```bash
-          DBRetina query -p pairwise.tsv -m ochiai -c 60 -o filtered_pairwise
+          DBRetina query -p pairwise_DBRetina_pairwise/ -m ochiai -c 60 -o filtered_pairwise
         ```
 
         This will filter out all pairwise similarities that are below 60% Ochiai similarity.
@@ -97,7 +97,7 @@ The output files prefix.
     === "Similarity cutoff & groups file"
 
         ```bash
-          DBRetina query -p pairwise.tsv -m containment -c 97 -g groups.tsv -o filtered_pairwise
+          DBRetina query -p pairwise_DBRetina_pairwise/ -m containment -c 97 -g groups.tsv -o filtered_pairwise
         ```
 
         This will filter out all pairwise similarities that are below 97% containment similarity AND exist in the `groups.tsv` file.
@@ -106,7 +106,7 @@ The output files prefix.
     === "Cluster IDs"
 
         ```bash
-        DBRetina query -p pairwise.tsv --clusters-file clusters.tsv --clusters-ids 1,2,8 -o filtered_pairwise
+        DBRetina query -p pairwise_DBRetina_pairwise/ --clusters-file clusters.tsv --clusters-ids 1,2,8 -o filtered_pairwise
         ```
 
         This will filter out all pairwise similarities that are not in the clusters with IDs 1, 2, and 8.
@@ -114,7 +114,7 @@ The output files prefix.
     === "Groups file"
 
         ```bash
-          DBRetina query -p pairwise.tsv -g groups.tsv -o filtered_pairwise
+          DBRetina query -p pairwise_DBRetina_pairwise/ -g groups.tsv -o filtered_pairwise
         ```
 
         This will filter out all pairwise similarities that are between groups that are not in the `groups.tsv` file. In other words, it will only keep the similarities between groups that are in the `groups.tsv` file.

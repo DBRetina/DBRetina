@@ -163,7 +163,7 @@ def export_heatmap(df, filename):
     plt.close()  # Close the figure after saving it to a file
 
 @cli.command(name="export", epilog = dbretina_doc.doc_url("export"), help_priority=5)
-@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise TSV file")
+@click.option('-p', '--pairwise', 'pairwise_file', required=True, type=click.Path(exists=True), help="pairwise parquet dir (or legacy .dbrp/.tsv)")
 @click.option('-m', '--metric', "metric", required=True, type=click.STRING, callback=validate_metric, help="select from ['containment', 'ochiai', 'jaccard', 'csi', 'dice', 'odds_ratio', 'pvalue']")
 @click.option('--newick', "newick", is_flag=True, help="Convert the distance matrix to newick tree format", default=False)
 @click.option('-l', '--labels', "labels_selection", callback = validate_labels, required=False, default="names", show_default=True, type=click.STRING, help="select from ['ids', 'names']")

@@ -337,8 +337,77 @@ def parse_pairwise_tsv(filepath):
     return rows
 
 
-def setup_index_and_pairwise(tmpdir, asc_content=TEST_ASC_CONTENT, extra_pw_args=""):
-    """Create index + pairwise in tmpdir. Returns (prefix, pw_tsv_path)."""
+def parse_pairwise_parquet(pw_dir):
+    """Parse a pairwise PARQUET DIRECTORY into the SAME row-dict shape as
+    ``parse_pairwise_tsv`` (the canonical default-mode pairwise output).
+
+    Reads ``<dir>/data/part_*.parquet`` joined to ``<dir>/names.parquet`` so the
+    row dicts carry group_1_name/group_2_name exactly like the .tsv reader. A
+    0-pair dataset (empty ``data/``, no part_*.parquet -- issue 071) yields [].
+    The parquet stores metrics as float32 vs the .tsv's display-rounded %.1f
+    text; callers comparing values use the same tolerances the .tsv path uses.
+    """
+    import glob as _glob
+    import duckdb
+
+    parts = _glob.glob(os.path.join(pw_dir, "data", "part_*.parquet"))
+    if not parts:
+        return []
+    names_path = os.path.join(pw_dir, "names.parquet")
+    con = duckdb.connect()
+    glob_path = os.path.join(pw_dir, "data", "part_*.parquet")
+    sql = (
+        f"SELECT p.*, n1.group_name AS group_1_name, "
+        f"n2.group_name AS group_2_name "
+        f"FROM read_parquet('{glob_path}', union_by_name=true) p "
+        f"LEFT JOIN read_parquet('{names_path}') n1 ON p.group_1_id = n1.group_id "
+        f"LEFT JOIN read_parquet('{names_path}') n2 ON p.group_2_id = n2.group_id"
+    )
+    cur = con.execute(sql)
+    cols = [d[0] for d in cur.description]
+    rows = []
+    for rec in cur.fetchall():
+        d = dict(zip(cols, rec))
+        row = {
+            "group_1_id": int(d["group_1_id"]),
+            "group_2_id": int(d["group_2_id"]),
+            "group_1_name": d["group_1_name"],
+            "group_2_name": d["group_2_name"],
+            "shared_features": int(d["shared_features"]),
+            "containment": float(d["containment"]),
+            "ochiai": float(d["ochiai"]),
+            "jaccard": float(d["jaccard"]),
+            "csi": float(d["csi"]),
+            "dice": float(d["dice"]),
+            "odds_ratio": float(d["odds_ratio"]),
+        }
+        if "pvalue" in d and d["pvalue"] is not None:
+            row["pvalue"] = float(d["pvalue"])
+        rows.append(row)
+    con.close()
+    return rows
+
+
+def count_parquet_data_rows(pw_dir):
+    """Count pair rows in a pairwise parquet directory (mirror of
+    ``count_tsv_data_rows`` but for the default-mode parquet output)."""
+    return len(parse_pairwise_parquet(pw_dir))
+
+
+def setup_index_and_pairwise(tmpdir, asc_content=TEST_ASC_CONTENT, extra_pw_args="",
+                             legacy=False):
+    """Create index + pairwise in tmpdir.
+
+    PLAN-094 Step-3b: ``pairwise`` is now parquet-only by DEFAULT. By default this
+    helper runs the DEFAULT (parquet-only) path and returns
+    ``(prefix, pairwise_DIR)`` -- the canonical ``<prefix>_DBRetina_pairwise``
+    parquet directory that every command accepts as ``-p``.
+
+    ``legacy=True`` re-runs with ``--legacy-output`` (which ALSO emits the legacy
+    ``.tsv`` + ``.dbrp`` + top-level ``_stats.json`` alongside the parquet dir)
+    and returns ``(prefix, pairwise_.tsv)``. It is used only by the tests that
+    genuinely exercise the legacy ``.tsv``/``.dbrp`` reader paths.
+    """
     asc_path = os.path.join(tmpdir, "test_input.asc")
     with open(asc_path, "w") as f:
         f.write(asc_content)
@@ -347,15 +416,13 @@ def setup_index_and_pairwise(tmpdir, asc_content=TEST_ASC_CONTENT, extra_pw_args
     rc, _, stderr = run_command(f"DBRetina index -a {asc_path} -o {prefix}")
     assert rc == 0, f"index failed: {stderr}"
 
-    # PLAN-094 Step-2b: the legacy .tsv/.dbrp/_stats.json writer is now opt-in
-    # (default is parquet-only). The shared fixtures below still read those legacy
-    # artifacts, so bridge them by always requesting --legacy-output here. (Moving
-    # the suite off legacy-output is a separate later cleanup step.)
-    rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix} {extra_pw_args}")
+    flag = "--legacy-output " if legacy else ""
+    rc, _, stderr = run_command(f"DBRetina pairwise {flag}-i {prefix} {extra_pw_args}")
     assert rc == 0, f"pairwise failed: {stderr}"
 
-    pw_file = f"{prefix}_DBRetina_pairwise.tsv"
-    return prefix, pw_file
+    if legacy:
+        return prefix, f"{prefix}_DBRetina_pairwise.tsv"
+    return prefix, f"{prefix}_DBRetina_pairwise"
 
 
 def write_file(path, content):
@@ -411,6 +478,41 @@ def assert_pairwise_matches_expected(test_case, pw_file):
                               f"Zero-overlap pair {sorted(pair_key)} should not appear")
 
 
+def assert_pairwise_matches_expected_parquet(test_case, pw_dir):
+    """Verify a pairwise PARQUET DIRECTORY matches EXPECTED_PAIRWISE exactly.
+
+    Identical intent/assertions to ``assert_pairwise_matches_expected`` but
+    sourced from the canonical default-mode parquet output instead of the legacy
+    .tsv (same pairs, same shared counts, same metric values within the existing
+    0.15 delta; same zero-overlap exclusion)."""
+    rows = parse_pairwise_parquet(pw_dir)
+    test_case.assertEqual(len(rows), len(EXPECTED_PAIRWISE),
+                          f"Expected {len(EXPECTED_PAIRWISE)} pairs, got {len(rows)}")
+    actual = {}
+    for row in rows:
+        key = frozenset({row["group_1_name"], row["group_2_name"]})
+        actual[key] = (
+            row["shared_features"], row["containment"], row["ochiai"],
+            row["jaccard"], row["csi"], row["dice"], row["odds_ratio"],
+        )
+
+    labels = ["shared", "containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio"]
+    for pair_key, expected_vals in EXPECTED_PAIRWISE.items():
+        test_case.assertIn(pair_key, actual, f"Missing pair {sorted(pair_key)}")
+        actual_vals = actual[pair_key]
+        for i, label in enumerate(labels):
+            if label == "shared":
+                test_case.assertEqual(actual_vals[i], expected_vals[i],
+                                      f"{sorted(pair_key)} {label}")
+            else:
+                test_case.assertAlmostEqual(actual_vals[i], expected_vals[i], delta=0.15,
+                                            msg=f"{sorted(pair_key)} {label}")
+
+    for pair_key in ZERO_OVERLAP_PAIRS:
+        test_case.assertNotIn(pair_key, actual,
+                              f"Zero-overlap pair {sorted(pair_key)} should not appear")
+
+
 # ============================================================
 # Shared fixture: index + pairwise created once per module
 # ============================================================
@@ -421,6 +523,13 @@ _SHARED_PW_FILE = None
 
 
 def _ensure_shared_fixture():
+    """The canonical shared fixture: index + DEFAULT (parquet-only) pairwise.
+
+    Returns ``(prefix, pairwise_DIR)`` -- the ``<prefix>_DBRetina_pairwise``
+    parquet directory, which is the canonical ``-p`` input every command accepts.
+    Tests that genuinely need the legacy ``.tsv``/``.dbrp`` reader use
+    ``_ensure_legacy_fixture()`` instead.
+    """
     global _SHARED_DIR, _SHARED_PREFIX, _SHARED_PW_FILE
     if _SHARED_DIR is None:
         _SHARED_DIR = tempfile.mkdtemp(prefix="dbretina_shared_")
@@ -435,6 +544,33 @@ def _cleanup_shared_fixture():
         _SHARED_DIR = None
 
 
+# Shared LEGACY substrate: index + pairwise(--legacy-output), so the legacy
+# .tsv + .dbrp readers stay genuinely exercised. Used ONLY by the legacy
+# input-form / reader tests (they read the .tsv, the .dbrp, or compare the
+# legacy forms against the parquet store). Returns (prefix, pw_TSV_path); the
+# parquet dir is emitted as a sibling too.
+_SHARED_LEGACY_DIR = None
+_SHARED_LEGACY_PREFIX = None
+_SHARED_LEGACY_PW_FILE = None
+
+
+def _ensure_legacy_fixture():
+    global _SHARED_LEGACY_DIR, _SHARED_LEGACY_PREFIX, _SHARED_LEGACY_PW_FILE
+    if _SHARED_LEGACY_DIR is None:
+        _SHARED_LEGACY_DIR = tempfile.mkdtemp(prefix="dbretina_shared_legacy_")
+        _SHARED_LEGACY_PREFIX, _SHARED_LEGACY_PW_FILE = setup_index_and_pairwise(
+            _SHARED_LEGACY_DIR, legacy=True
+        )
+    return _SHARED_LEGACY_PREFIX, _SHARED_LEGACY_PW_FILE
+
+
+def _cleanup_legacy_fixture():
+    global _SHARED_LEGACY_DIR
+    if _SHARED_LEGACY_DIR is not None:
+        shutil.rmtree(_SHARED_LEGACY_DIR, ignore_errors=True)
+        _SHARED_LEGACY_DIR = None
+
+
 # Shared WITH-pvalue substrate (pairwise computed with --pvalue), used by the
 # cross-route pvalue tests below. The standard fixture above is computed WITHOUT
 # --pvalue, so it doubles as the "pvalue absent" case.
@@ -444,12 +580,20 @@ _SHARED_PV_PW_FILE = None
 
 
 def _ensure_shared_pvalue_fixture():
-    """Index + pairwise(--pvalue). Returns (prefix, pw_tsv_path) with a pvalue column."""
+    """Index + pairwise(--pvalue --legacy-output). Returns (prefix, pw_tsv_path)
+    with a pvalue column.
+
+    Generated in LEGACY mode (so the .tsv + .dbrp are present alongside the
+    parquet dir): its consumers are the cross-route pvalue tests, which assert
+    behaviour across ALL three input forms (.tsv / parquet dir / .dbrp). The
+    parquet dir is the sibling ``<prefix>_DBRetina_pairwise`` for the store-route
+    checks. The DEFAULT (parquet-only) --pvalue path is covered by the per-test
+    TestPairwise --pvalue cases."""
     global _SHARED_PV_DIR, _SHARED_PV_PREFIX, _SHARED_PV_PW_FILE
     if _SHARED_PV_DIR is None:
         _SHARED_PV_DIR = tempfile.mkdtemp(prefix="dbretina_shared_pv_")
         _SHARED_PV_PREFIX, _SHARED_PV_PW_FILE = setup_index_and_pairwise(
-            _SHARED_PV_DIR, extra_pw_args="--pvalue"
+            _SHARED_PV_DIR, extra_pw_args="--pvalue", legacy=True
         )
     return _SHARED_PV_PREFIX, _SHARED_PV_PW_FILE
 
@@ -481,9 +625,9 @@ _SHARED_ZERO_PW_FILE = None
 
 
 def _ensure_zero_pair_fixture():
-    """Index + pairwise over fully disjoint gene sets -> a 0-pair pairwise.
-    Returns (prefix, pw_tsv_path); the parquet dir ``{prefix}_DBRetina_pairwise``
-    has an empty ``data/`` (num_pairs:0)."""
+    """Index + DEFAULT (parquet-only) pairwise over fully disjoint gene sets -> a
+    0-pair pairwise. Returns (prefix, pairwise_DIR); the parquet dir
+    ``{prefix}_DBRetina_pairwise`` has an empty ``data/`` (num_pairs:0)."""
     global _SHARED_ZERO_DIR, _SHARED_ZERO_PREFIX, _SHARED_ZERO_PW_FILE
     if _SHARED_ZERO_DIR is None:
         _SHARED_ZERO_DIR = tempfile.mkdtemp(prefix="dbretina_shared_zero_")
@@ -600,14 +744,16 @@ class TestPairwise(unittest.TestCase):
         self.assertIn("containment", help_text.lower())
 
     def test_pairwise_default(self):
-        """Pairwise with defaults produces TSV, DBRP, stats, plots."""
-        prefix, pw_file = setup_index_and_pairwise(self.tmpdir)
-        assert_file_exists(self, pw_file)
-        assert_file_exists(self, f"{prefix}_DBRetina_pairwise.dbrp")
-        assert_file_exists(self, f"{prefix}_DBRetina_pairwise_stats.json")
+        """Pairwise with defaults produces the parquet dir + plots (parquet-only
+        is the default; the legacy .tsv/.dbrp/_stats.json are gated behind
+        --legacy-output, covered by TestLegacyOutputFlag)."""
+        prefix, pw_dir = setup_index_and_pairwise(self.tmpdir)
+        self.assertTrue(os.path.isdir(pw_dir), f"missing parquet dir: {pw_dir}")
+        assert_file_exists(self, os.path.join(pw_dir, "manifest.json"))
+        assert_file_exists(self, os.path.join(pw_dir, "statistics.json"))
         assert_file_exists(self, f"{prefix}_DBRetina_similarity_metrics_plot_linear.png")
         assert_file_exists(self, f"{prefix}_DBRetina_similarity_metrics_plot_log.png")
-        self.assertEqual(count_tsv_data_rows(pw_file), 11)
+        self.assertEqual(count_parquet_data_rows(pw_dir), 11)
 
     def test_pairwise_rerun_clears_stale_parquet_parts(self):
         """Regression: re-running pairwise with fewer threads must not leave stale
@@ -643,9 +789,9 @@ class TestPairwise(unittest.TestCase):
                          f"stale part files left: {len(parts2)} != num_partitions {manifest['num_partitions']}")
 
     def test_pairwise_metric_values(self):
-        """All metric values match hand-computed expectations."""
-        prefix, pw_file = setup_index_and_pairwise(self.tmpdir)
-        rows = parse_pairwise_tsv(pw_file)
+        """All metric values match hand-computed expectations (default parquet)."""
+        prefix, pw_dir = setup_index_and_pairwise(self.tmpdir)
+        rows = parse_pairwise_parquet(pw_dir)
 
         actual = {}
         for row in rows:
@@ -679,8 +825,8 @@ class TestPairwise(unittest.TestCase):
 
     def test_pairwise_with_cutoff(self):
         """Pairwise with -c 50 filters containment < 50."""
-        prefix, pw_file = setup_index_and_pairwise(self.tmpdir, extra_pw_args="-c 50")
-        rows = parse_pairwise_tsv(pw_file)
+        prefix, pw_dir = setup_index_and_pairwise(self.tmpdir, extra_pw_args="-c 50")
+        rows = parse_pairwise_parquet(pw_dir)
         for row in rows:
             self.assertGreaterEqual(row["containment"], 50.0)
         # Known pairs with containment >= 50: A-B(100), A-F(100), B-F(100), D-E(50), C-F(40→no), B-C(33.3→no)
@@ -689,15 +835,15 @@ class TestPairwise(unittest.TestCase):
 
     def test_pairwise_with_pvalue(self):
         """Pairwise with --pvalue includes pvalue column."""
-        prefix, pw_file = setup_index_and_pairwise(self.tmpdir, extra_pw_args="--pvalue")
-        rows = parse_pairwise_tsv(pw_file)
+        prefix, pw_dir = setup_index_and_pairwise(self.tmpdir, extra_pw_args="--pvalue")
+        rows = parse_pairwise_parquet(pw_dir)
         self.assertEqual(len(rows), 11)
         for row in rows:
             self.assertIn("pvalue", row)
 
     def test_pairwise_dbrp_matches_tsv(self):
-        """DBRP binary file contains same data as TSV."""
-        prefix, pw_file = setup_index_and_pairwise(self.tmpdir)
+        """DBRP binary file contains same data as TSV (legacy format/reader)."""
+        prefix, pw_file = setup_index_and_pairwise(self.tmpdir, legacy=True)
         tsv_rows = parse_pairwise_tsv(pw_file)
 
         import _dbretina_internal as dbi
@@ -722,8 +868,8 @@ class TestPairwise(unittest.TestCase):
                                        msg=f"{sorted(key)} {metric}")
 
     def test_pairwise_dbrp_filter(self):
-        """dbrp_filter_pairs correctly filters by ochiai >= 50."""
-        prefix, _ = setup_index_and_pairwise(self.tmpdir)
+        """dbrp_filter_pairs correctly filters by ochiai >= 50 (legacy reader)."""
+        prefix, _ = setup_index_and_pairwise(self.tmpdir, legacy=True)
         import _dbretina_internal as dbi
         dbrp_path = f"{prefix}_DBRetina_pairwise.dbrp"
         filtered = dbi.dbrp_filter_pairs(dbrp_path, 1, 50.0)  # ochiai=1
@@ -739,8 +885,8 @@ class TestPairwise(unittest.TestCase):
         self.assertEqual(len(filtered), 3)
 
     def test_pairwise_dbrp_metadata(self):
-        """dbrp metadata, names, statistics return valid data."""
-        prefix, _ = setup_index_and_pairwise(self.tmpdir)
+        """dbrp metadata, names, statistics return valid data (legacy reader)."""
+        prefix, _ = setup_index_and_pairwise(self.tmpdir, legacy=True)
         import _dbretina_internal as dbi
         dbrp_path = f"{prefix}_DBRetina_pairwise.dbrp"
 
@@ -773,8 +919,8 @@ class TestPairwise(unittest.TestCase):
             extra_pw_args="-t 4"
         )
 
-        rows_st = parse_pairwise_tsv(pw_st)
-        rows_mt = parse_pairwise_tsv(pw_mt)
+        rows_st = parse_pairwise_parquet(pw_st)
+        rows_mt = parse_pairwise_parquet(pw_mt)
         self.assertEqual(len(rows_st), len(rows_mt))
 
         st_pairs = {frozenset({r["group_1_name"], r["group_2_name"]}): r for r in rows_st}
@@ -804,11 +950,11 @@ class TestPairwise(unittest.TestCase):
 
         # a valid thread count still works
         rc, _, stderr = run_command(
-            f"DBRetina pairwise --legacy-output -i {prefix} -m containment -c 0 -t 2"
+            f"DBRetina pairwise -i {prefix} -m containment -c 0 -t 2"
         )
         self.assertEqual(rc, 0, stderr)
         self.assertNotIn("Traceback", stderr)
-        assert_file_exists(self, f"{prefix}_DBRetina_pairwise.tsv")
+        assert_file_exists(self, f"{prefix}_DBRetina_pairwise/manifest.json")
 
     def test_pairwise_unsupported_filter_metric_clean_error(self):
         """ISSUE-032: pairwise -m csi/dice pass the old validator but the C++ cutoff
@@ -834,11 +980,11 @@ class TestPairwise(unittest.TestCase):
         # supported cutoff-filter metrics still work
         for good in ("containment", "ochiai", "jaccard"):
             rc, _, stderr = run_command(
-                f"DBRetina pairwise --legacy-output -i {prefix} -m {good} -c 0"
+                f"DBRetina pairwise -i {prefix} -m {good} -c 0"
             )
             self.assertEqual(rc, 0, f"-m {good} should succeed: {stderr}")
             self.assertNotIn("Traceback", stderr)
-            assert_file_exists(self, f"{prefix}_DBRetina_pairwise.tsv")
+            assert_file_exists(self, f"{prefix}_DBRetina_pairwise/manifest.json")
 
     def test_pairwise_missing_index_clean_error(self):
         """ISSUE-073: pairwise -i <nonexistent prefix> must give a clean [ERROR]
@@ -863,7 +1009,7 @@ class TestPairwise(unittest.TestCase):
         import pandas as pd
         import numpy as np
 
-        prefix, pw_file = setup_index_and_pairwise(
+        prefix, pw_dir = setup_index_and_pairwise(
             self.tmpdir, extra_pw_args="--pvalue --fdr"
         )
         fdr_tsv = f"{prefix}_DBRetina_pairwise_fdr.tsv"
@@ -876,7 +1022,7 @@ class TestPairwise(unittest.TestCase):
         self.assertIn("pvalue", df.columns)
         # one row per pair (the substrate has 11 pairs).
         self.assertEqual(len(df), 11)
-        self.assertEqual(len(df), count_tsv_data_rows(pw_file))
+        self.assertEqual(len(df), count_parquet_data_rows(pw_dir))
 
         # Benjamini-Hochberg validity: q in [0,1], q >= p, and q monotone
         # non-decreasing when the rows are ordered by ascending p-value.
@@ -919,8 +1065,9 @@ class TestPairwise(unittest.TestCase):
         import numpy as np
         from dbretina.pairwise import apply_fdr_correction
 
+        # Legacy mode so the .tsv/.dbrp exist for the parity reference + removal.
         prefix, pw_file = setup_index_and_pairwise(
-            self.tmpdir, extra_pw_args="--pvalue"
+            self.tmpdir, extra_pw_args="--pvalue", legacy=True
         )
         parquet_dir = f"{prefix}_DBRetina_pairwise"
         # Source-of-truth parity reference from the still-present legacy .tsv.
@@ -1067,29 +1214,42 @@ class TestQuery(unittest.TestCase):
         self.assertTrue(len(extended) > 1, f"Expected extended groups, got: {extended}")
 
     def test_query_dbrp_vs_tsv(self):
-        """Query results identical with and without .dbrp file."""
+        """Query a LEGACY .tsv input: results identical with and without the
+        sibling .dbrp (C++ reader vs TSV fallback). Exercises the legacy reader,
+        so it builds its own --legacy-output pairwise (the default fixture is
+        parquet-only)."""
+        # Local legacy pairwise (emits .tsv + .dbrp side by side).
+        _, pw_tsv = setup_index_and_pairwise(self.tmpdir, legacy=True)
+
         out1 = os.path.join(self.tmpdir, "q_dbrp")
         rc, _, _ = run_command(
-            f"DBRetina query -p {self.pw_file} -m ochiai -c 50 -o {out1}"
+            f"DBRetina query -p {pw_tsv} -m ochiai -c 50 -o {out1}"
         )
         self.assertEqual(rc, 0)
         count1 = count_tsv_data_rows(f"{out1}.tsv")
 
-        # Remove .dbrp temporarily, query again
-        dbrp = self.pw_file.replace(".tsv", ".dbrp")
+        # Remove .dbrp (and the sibling parquet dir) so only the bare .tsv
+        # remains, forcing the TSV fallback; query again.
+        dbrp = pw_tsv.replace(".tsv", ".dbrp")
+        pq_dir = pw_tsv[:-len(".tsv")]
+        self.assertTrue(os.path.exists(dbrp), "legacy fixture must ship a .dbrp")
         dbrp_bak = dbrp + ".bak"
-        if os.path.exists(dbrp):
-            os.rename(dbrp, dbrp_bak)
-            try:
-                out2 = os.path.join(self.tmpdir, "q_tsv")
-                rc, _, _ = run_command(
-                    f"DBRetina query -p {self.pw_file} -m ochiai -c 50 -o {out2}"
-                )
-                self.assertEqual(rc, 0)
-                count2 = count_tsv_data_rows(f"{out2}.tsv")
-                self.assertEqual(count1, count2)
-            finally:
-                os.rename(dbrp_bak, dbrp)
+        os.rename(dbrp, dbrp_bak)
+        pq_bak = pq_dir + ".bak_dir"
+        if os.path.isdir(pq_dir):
+            os.rename(pq_dir, pq_bak)
+        try:
+            out2 = os.path.join(self.tmpdir, "q_tsv")
+            rc, _, _ = run_command(
+                f"DBRetina query -p {pw_tsv} -m ochiai -c 50 -o {out2}"
+            )
+            self.assertEqual(rc, 0)
+            count2 = count_tsv_data_rows(f"{out2}.tsv")
+            self.assertEqual(count1, count2)
+        finally:
+            os.rename(dbrp_bak, dbrp)
+            if os.path.isdir(pq_bak):
+                os.rename(pq_bak, pq_dir)
 
 
 # ============================================================
@@ -1114,7 +1274,9 @@ class TestQueryFilterStoreParity(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        # Legacy fixture: this class compares the awk(.tsv) route against the
+        # store(parquet dir) route, so it needs BOTH the .tsv and the dir present.
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
         # The producer emits the parquet store as a sibling directory sharing the
         # ``_DBRetina_pairwise`` stem with the .tsv; ``-p <dir>`` routes to the store.
         cls.pw_dir = f"{cls.prefix}_DBRetina_pairwise"
@@ -1945,27 +2107,39 @@ class TestDedup(unittest.TestCase):
             self.assertNotIn("\t", line, "Should be one group per line, no tabs")
 
     def test_dedup_dbrp_vs_tsv(self):
-        """Dedup produces same result with and without .dbrp."""
+        """Dedup a LEGACY .tsv input: same result with and without the sibling
+        .dbrp (C++ reader vs TSV fallback). Exercises the legacy reader, so it
+        builds its own --legacy-output pairwise (the default fixture is
+        parquet-only)."""
+        prefix, pw_tsv = setup_index_and_pairwise(self.tmpdir, legacy=True)
+
         out1 = os.path.join(self.tmpdir, "dd1")
-        run_command(f"DBRetina dedup -i {self.prefix} -p {self.pw_file} -c 100 -o {out1}")
+        run_command(f"DBRetina dedup -i {prefix} -p {pw_tsv} -c 100 -o {out1}")
         with open(f"{out1}_deduplicated_groups.txt") as f:
             groups1 = {l.strip().lower() for l in f if l.strip()}
 
-        # Remove .dbrp, run again
-        dbrp = self.pw_file.replace(".tsv", ".dbrp")
+        # Remove the .dbrp + sibling parquet dir so only the bare .tsv remains,
+        # forcing the TSV fallback; run again.
+        dbrp = pw_tsv.replace(".tsv", ".dbrp")
+        pq_dir = pw_tsv[:-len(".tsv")]
+        self.assertTrue(os.path.exists(dbrp), "legacy fixture must ship a .dbrp")
         dbrp_bak = dbrp + ".bak"
-        if os.path.exists(dbrp):
-            os.rename(dbrp, dbrp_bak)
-            try:
-                out2 = os.path.join(self.tmpdir, "dd2")
-                run_command(
-                    f"DBRetina dedup -i {self.prefix} -p {self.pw_file} -c 100 -o {out2}"
-                )
-                with open(f"{out2}_deduplicated_groups.txt") as f:
-                    groups2 = {l.strip().lower() for l in f if l.strip()}
-                self.assertEqual(groups1, groups2)
-            finally:
-                os.rename(dbrp_bak, dbrp)
+        os.rename(dbrp, dbrp_bak)
+        pq_bak = pq_dir + ".bak_dir"
+        if os.path.isdir(pq_dir):
+            os.rename(pq_dir, pq_bak)
+        try:
+            out2 = os.path.join(self.tmpdir, "dd2")
+            run_command(
+                f"DBRetina dedup -i {prefix} -p {pw_tsv} -c 100 -o {out2}"
+            )
+            with open(f"{out2}_deduplicated_groups.txt") as f:
+                groups2 = {l.strip().lower() for l in f if l.strip()}
+            self.assertEqual(groups1, groups2)
+        finally:
+            os.rename(dbrp_bak, dbrp)
+            if os.path.isdir(pq_bak):
+                os.rename(pq_bak, pq_dir)
 
     def test_dedup_pairwise_group_absent_from_index_clean_error(self):
         """ISSUE-077: a pairwise group name absent from the index (mismatched
@@ -2226,7 +2400,7 @@ class TestGraph(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="dbretina_graph_")
@@ -2597,7 +2771,7 @@ class TestPvalueCrossRoute(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # NO-pvalue substrate (standard fixture) and WITH-pvalue substrate.
-        cls.prefix, cls.pw_tsv = _ensure_shared_fixture()
+        cls.prefix, cls.pw_tsv = _ensure_legacy_fixture()
         cls.pv_prefix, cls.pv_pw_tsv = _ensure_shared_pvalue_fixture()
 
     def setUp(self):
@@ -2852,11 +3026,14 @@ class TestGenenetPairwiseInputForms(unittest.TestCase):
 
     genenet and interactome share one Click callback (net_kind from
     ctx.info_name), so each scenario is exercised against BOTH command names.
+
+    Uses the legacy fixture: this class exercises the legacy .tsv and .dbrp
+    READER input forms (alongside the parquet dir), so it needs those artifacts.
     """
 
     @classmethod
     def setUpClass(cls):
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="dbretina_gn_forms_")
@@ -3059,11 +3236,14 @@ class TestGeneinfo(unittest.TestCase):
         )
         assert rc == 0, f"index failed: {stderr}"
         rc, _, stderr = run_command(
-            "DBRetina pairwise --legacy-output -i test_idx", cwd=cls.geneinfo_dir
+            "DBRetina pairwise -i test_idx", cwd=cls.geneinfo_dir
         )
         assert rc == 0, f"pairwise failed: {stderr}"
         cls.prefix = "test_idx"
-        cls.pw_file = os.path.join(cls.geneinfo_dir, "test_idx_DBRetina_pairwise.tsv")
+        # DEFAULT (parquet-only) pairwise: cls.pw_file is the parquet DIR, used
+        # only as a -p input to the cluster helper in test_geneinfo_clusters
+        # (geneinfo itself takes -i, not -p).
+        cls.pw_file = os.path.join(cls.geneinfo_dir, "test_idx_DBRetina_pairwise")
 
     @classmethod
     def tearDownClass(cls):
@@ -3140,7 +3320,7 @@ class TestSetcov(unittest.TestCase):
         )
         assert rc == 0, f"index failed: {stderr}"
         rc, _, stderr = run_command(
-            "DBRetina pairwise --legacy-output -i test_idx", cwd=self.tmpdir
+            "DBRetina pairwise -i test_idx", cwd=self.tmpdir
         )
         assert rc == 0, f"pairwise failed: {stderr}"
         self.prefix = "test_idx"
@@ -3361,12 +3541,12 @@ class TestIndexManagement(unittest.TestCase):
         )
         self.assertEqual(rc, 0, stderr)
         rc, _, stderr = run_command(
-            f"DBRetina pairwise --legacy-output -i {out_prefix} -m containment -c 1"
+            f"DBRetina pairwise -i {out_prefix} -m containment -c 1"
         )
         self.assertEqual(rc, 0, stderr)
-        pw_file = f"{out_prefix}_DBRetina_pairwise.tsv"
-        assert_file_exists(self, pw_file)
-        rows = parse_pairwise_tsv(pw_file)
+        pw_dir = f"{out_prefix}_DBRetina_pairwise"
+        self.assertTrue(os.path.isdir(pw_dir), f"missing parquet dir: {pw_dir}")
+        rows = parse_pairwise_parquet(pw_dir)
         names = set()
         for r in rows:
             names.add(r["group_1_name"])
@@ -3441,12 +3621,12 @@ class TestIndexManagement(unittest.TestCase):
         )
         self.assertEqual(rc, 0, stderr)
         rc, _, stderr = run_command(
-            f"DBRetina pairwise --legacy-output -i {out_prefix} -m containment -c 1"
+            f"DBRetina pairwise -i {out_prefix} -m containment -c 1"
         )
         self.assertEqual(rc, 0, stderr)
-        pw_file = f"{out_prefix}_DBRetina_pairwise.tsv"
-        assert_file_exists(self, pw_file)
-        rows = parse_pairwise_tsv(pw_file)
+        pw_dir = f"{out_prefix}_DBRetina_pairwise"
+        self.assertTrue(os.path.isdir(pw_dir), f"missing parquet dir: {pw_dir}")
+        rows = parse_pairwise_parquet(pw_dir)
         names = set()
         for r in rows:
             names.add(r["group_1_name"])
@@ -3473,11 +3653,11 @@ class TestEdgeCases(unittest.TestCase):
                          "gene_set\tgene\nOnlyGroup\tGene1\nOnlyGroup\tGene2\n")
         prefix = os.path.join(self.tmpdir, "idx")
         run_command(f"DBRetina index -a {asc} -o {prefix}")
-        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
+        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix}")
         self.assertEqual(rc, 0, stderr)
-        pw_file = f"{prefix}_DBRetina_pairwise.tsv"
-        assert_file_exists(self, pw_file)
-        self.assertEqual(count_tsv_data_rows(pw_file), 0)
+        pw_dir = f"{prefix}_DBRetina_pairwise"
+        self.assertTrue(os.path.isdir(pw_dir), f"missing parquet dir: {pw_dir}")
+        self.assertEqual(count_parquet_data_rows(pw_dir), 0)
 
     def test_two_groups_no_overlap(self):
         """Two disjoint groups produce zero pairwise rows."""
@@ -3487,9 +3667,9 @@ class TestEdgeCases(unittest.TestCase):
                          "GroupB\tGene3\nGroupB\tGene4\n")
         prefix = os.path.join(self.tmpdir, "idx")
         run_command(f"DBRetina index -a {asc} -o {prefix}")
-        run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
-        pw_file = f"{prefix}_DBRetina_pairwise.tsv"
-        self.assertEqual(count_tsv_data_rows(pw_file), 0)
+        run_command(f"DBRetina pairwise -i {prefix}")
+        pw_dir = f"{prefix}_DBRetina_pairwise"
+        self.assertEqual(count_parquet_data_rows(pw_dir), 0)
 
     def test_two_groups_with_overlap(self):
         """Two overlapping groups produce one pairwise row."""
@@ -3499,12 +3679,12 @@ class TestEdgeCases(unittest.TestCase):
                          "GroupB\tGene2\nGroupB\tGene3\nGroupB\tGene4\n")
         prefix = os.path.join(self.tmpdir, "idx")
         run_command(f"DBRetina index -a {asc} -o {prefix}")
-        run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
-        pw_file = f"{prefix}_DBRetina_pairwise.tsv"
-        self.assertEqual(count_tsv_data_rows(pw_file), 1)
+        run_command(f"DBRetina pairwise -i {prefix}")
+        pw_dir = f"{prefix}_DBRetina_pairwise"
+        self.assertEqual(count_parquet_data_rows(pw_dir), 1)
 
         # Verify metrics for 2 shared out of 3 each
-        rows = parse_pairwise_tsv(pw_file)
+        rows = parse_pairwise_parquet(pw_dir)
         self.assertEqual(rows[0]["shared_features"], 2)
 
     def test_identical_groups(self):
@@ -3515,8 +3695,8 @@ class TestEdgeCases(unittest.TestCase):
                          "GroupB\tG1\nGroupB\tG2\nGroupB\tG3\n")
         prefix = os.path.join(self.tmpdir, "idx")
         run_command(f"DBRetina index -a {asc} -o {prefix}")
-        run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
-        rows = parse_pairwise_tsv(f"{prefix}_DBRetina_pairwise.tsv")
+        run_command(f"DBRetina pairwise -i {prefix}")
+        rows = parse_pairwise_parquet(f"{prefix}_DBRetina_pairwise")
         self.assertEqual(len(rows), 1)
         self.assertAlmostEqual(rows[0]["containment"], 100.0, delta=0.1)
         self.assertAlmostEqual(rows[0]["ochiai"], 100.0, delta=0.1)
@@ -3531,16 +3711,21 @@ class TestEdgeCases(unittest.TestCase):
             tempfile.mkdtemp(dir=self.tmpdir, prefix="mt_"),
             extra_pw_args="-t 4"
         )
-        rows_st = parse_pairwise_tsv(pw_st)
-        rows_mt = parse_pairwise_tsv(pw_mt)
+        rows_st = parse_pairwise_parquet(pw_st)
+        rows_mt = parse_pairwise_parquet(pw_mt)
         self.assertEqual(len(rows_st), len(rows_mt))
 
     def test_dbrp_fallback_dedup(self):
-        """Dedup works with TSV-only (no .dbrp)."""
-        prefix, pw_file = setup_index_and_pairwise(self.tmpdir)
+        """Dedup works with TSV-only (no .dbrp / no parquet dir) -- the legacy
+        bare-TSV fallback. Builds a --legacy-output pairwise then strips the
+        .dbrp + parquet dir so only the .tsv remains."""
+        prefix, pw_file = setup_index_and_pairwise(self.tmpdir, legacy=True)
         dbrp = pw_file.replace(".tsv", ".dbrp")
         if os.path.exists(dbrp):
             os.remove(dbrp)
+        pq_dir = pw_file[:-len(".tsv")]
+        if os.path.isdir(pq_dir):
+            shutil.rmtree(pq_dir)
 
         out = os.path.join(self.tmpdir, "dd")
         rc, _, stderr = run_command(
@@ -3552,11 +3737,15 @@ class TestEdgeCases(unittest.TestCase):
         self.assertEqual(len(groups), 5)
 
     def test_dbrp_fallback_modularity(self):
-        """Modularity works with TSV-only (no .dbrp)."""
-        prefix, pw_file = setup_index_and_pairwise(self.tmpdir)
+        """Modularity works with TSV-only (no .dbrp / no parquet dir) -- the
+        legacy bare-TSV fallback."""
+        prefix, pw_file = setup_index_and_pairwise(self.tmpdir, legacy=True)
         dbrp = pw_file.replace(".tsv", ".dbrp")
         if os.path.exists(dbrp):
             os.remove(dbrp)
+        pq_dir = pw_file[:-len(".tsv")]
+        if os.path.isdir(pq_dir):
+            shutil.rmtree(pq_dir)
 
         out = os.path.join(self.tmpdir, "mod")
         rc, _, stderr = run_command(
@@ -3907,18 +4096,18 @@ class TestPairwiseFromVariants(unittest.TestCase):
 
     def test_pairwise_from_split_rows(self):
         """Split rows with duplicates produce same pairwise as clean input."""
-        _, pw_file = setup_index_and_pairwise(self.tmpdir, asc_content=TEST_ASC_SPLIT_ROWS)
-        assert_pairwise_matches_expected(self, pw_file)
+        _, pw_dir = setup_index_and_pairwise(self.tmpdir, asc_content=TEST_ASC_SPLIT_ROWS)
+        assert_pairwise_matches_expected_parquet(self, pw_dir)
 
     def test_pairwise_from_duplicate_rows(self):
         """Duplicate rows produce same pairwise as clean input."""
-        _, pw_file = setup_index_and_pairwise(self.tmpdir, asc_content=TEST_ASC_DUPLICATE_ROWS)
-        assert_pairwise_matches_expected(self, pw_file)
+        _, pw_dir = setup_index_and_pairwise(self.tmpdir, asc_content=TEST_ASC_DUPLICATE_ROWS)
+        assert_pairwise_matches_expected_parquet(self, pw_dir)
 
     def test_pairwise_from_mixed_case(self):
         """Mixed case input produces same pairwise as clean input."""
-        _, pw_file = setup_index_and_pairwise(self.tmpdir, asc_content=TEST_ASC_MIXED_CASE)
-        assert_pairwise_matches_expected(self, pw_file)
+        _, pw_dir = setup_index_and_pairwise(self.tmpdir, asc_content=TEST_ASC_MIXED_CASE)
+        assert_pairwise_matches_expected_parquet(self, pw_dir)
 
     def test_pairwise_from_multi_file(self):
         """3-file split produces same pairwise as single-file input."""
@@ -3930,15 +4119,15 @@ class TestPairwiseFromVariants(unittest.TestCase):
             f"DBRetina index -a {f1} -a {f2} -a {f3} -o {prefix}"
         )
         self.assertEqual(rc, 0, stderr)
-        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
+        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix}")
         self.assertEqual(rc, 0, stderr)
-        pw_file = f"{prefix}_DBRetina_pairwise.tsv"
-        assert_pairwise_matches_expected(self, pw_file)
+        pw_dir = f"{prefix}_DBRetina_pairwise"
+        assert_pairwise_matches_expected_parquet(self, pw_dir)
 
     def test_pairwise_from_quoted_names(self):
         """Quoted names produce same pairwise as clean input (quotes stripped)."""
-        _, pw_file = setup_index_and_pairwise(self.tmpdir, asc_content=TEST_ASC_QUOTED)
-        assert_pairwise_matches_expected(self, pw_file)
+        _, pw_dir = setup_index_and_pairwise(self.tmpdir, asc_content=TEST_ASC_QUOTED)
+        assert_pairwise_matches_expected_parquet(self, pw_dir)
 
     def test_pairwise_from_gmt(self):
         """GMT format input produces same pairwise as ASC."""
@@ -3947,10 +4136,10 @@ class TestPairwiseFromVariants(unittest.TestCase):
             f"DBRetina index -g {gmt} -o idx", cwd=self.tmpdir
         )
         self.assertEqual(rc, 0, stderr)
-        rc, _, stderr = run_command("DBRetina pairwise --legacy-output -i idx", cwd=self.tmpdir)
+        rc, _, stderr = run_command("DBRetina pairwise -i idx", cwd=self.tmpdir)
         self.assertEqual(rc, 0, stderr)
-        pw_file = os.path.join(self.tmpdir, "idx_DBRetina_pairwise.tsv")
-        assert_pairwise_matches_expected(self, pw_file)
+        pw_dir = os.path.join(self.tmpdir, "idx_DBRetina_pairwise")
+        assert_pairwise_matches_expected_parquet(self, pw_dir)
 
 
 # ============================================================
@@ -3973,12 +4162,12 @@ class TestSpecialCharPairwise(unittest.TestCase):
         rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
         self.assertEqual(rc, 0, stderr)
 
-        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
+        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix}")
         self.assertEqual(rc, 0, stderr)
 
-        pw_file = f"{prefix}_DBRetina_pairwise.tsv"
-        assert_file_exists(self, pw_file)
-        rows = parse_pairwise_tsv(pw_file)
+        pw_dir = f"{prefix}_DBRetina_pairwise"
+        self.assertTrue(os.path.isdir(pw_dir), f"missing parquet dir: {pw_dir}")
+        rows = parse_pairwise_parquet(pw_dir)
         # 2 groups with shared genes -> 1 pair
         self.assertEqual(len(rows), 1)
         # shared features: gene_alpha-v2 and gene [gamma] -> 2
@@ -4000,10 +4189,10 @@ class TestSpecialCharPairwise(unittest.TestCase):
         prefix = os.path.join(self.tmpdir, "idx")
         rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
         self.assertEqual(rc, 0, stderr)
-        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
+        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix}")
         self.assertEqual(rc, 0, stderr)
 
-        pw_file = f"{prefix}_DBRetina_pairwise.tsv"
+        pw_file = f"{prefix}_DBRetina_pairwise"  # parquet dir (query -p accepts it)
         # Query -g requires BOTH groups in a pair to be in the groups file
         groups = write_file(os.path.join(self.tmpdir, "groups.txt"),
                             "gene-set_1\ngroup_2.test\n")
@@ -6109,9 +6298,9 @@ class TestEmptyGraphCrashes(unittest.TestCase):
         self.prefix, self.pw_file = setup_index_and_pairwise(
             self.tmpdir, asc_content=DISJOINT_ASC_CONTENT
         )
-        # Sanity: the pairwise file really has no data rows.
+        # Sanity: the pairwise output really has no data rows (parquet dir).
         self.assertEqual(
-            count_tsv_data_rows(self.pw_file), 0,
+            count_parquet_data_rows(self.pw_file), 0,
             "disjoint fixture unexpectedly produced pairs"
         )
 
@@ -6233,7 +6422,7 @@ class TestQueryClusterInputHandling(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
         cls.parquet_dir = f"{cls.prefix}_DBRetina_pairwise"
         cls.dbrp = f"{cls.prefix}_DBRetina_pairwise.dbrp"
         cls.dbri = f"{cls.prefix}.dbri"
@@ -6461,7 +6650,7 @@ class TestModularityDedupInputHandling(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
         cls.parquet_dir = f"{cls.prefix}_DBRetina_pairwise"
         cls.dbrp = f"{cls.prefix}_DBRetina_pairwise.dbrp"
 
@@ -6875,10 +7064,10 @@ class TestInputRobustness(unittest.TestCase):
         rc, _, stderr = run_command("DBRetina index -a dj.asc -o dj_idx",
                                     cwd=self.tmpdir)
         self.assertEqual(rc, 0, stderr)
-        rc, _, stderr = run_command("DBRetina pairwise --legacy-output -i dj_idx", cwd=self.tmpdir)
+        rc, _, stderr = run_command("DBRetina pairwise -i dj_idx", cwd=self.tmpdir)
         self.assertEqual(rc, 0, stderr)
-        pw = os.path.join(self.tmpdir, "dj_idx_DBRetina_pairwise.tsv")
-        self.assertEqual(count_tsv_data_rows(pw), 0,
+        pw = os.path.join(self.tmpdir, "dj_idx_DBRetina_pairwise")  # parquet dir
+        self.assertEqual(count_parquet_data_rows(pw), 0,
                          "disjoint fixture unexpectedly produced pairs")
 
         out = os.path.join(self.tmpdir, "dd_empty")
@@ -6972,7 +7161,7 @@ class TestExportClusterGraphDbrpFallback(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
         cls.parquet_dir = f"{cls.prefix}_DBRetina_pairwise"
         cls.dbrp = f"{cls.prefix}_DBRetina_pairwise.dbrp"
 
@@ -7247,13 +7436,13 @@ class TestPvalueSmallPopulationCrash(unittest.TestCase):
         """The exact repro from issue 041 must NOT core-dump and must emit pvalues."""
         idx = self._build_small_pop_index()
         rc, stdout, stderr = run_command(
-            f"DBRetina pairwise --legacy-output -i {idx} -m containment -c 0 --pvalue", cwd=self.tmpdir
+            f"DBRetina pairwise -i {idx} -m containment -c 0 --pvalue", cwd=self.tmpdir
         )
         assert_no_coredump(self, rc, stderr, "pairwise --pvalue small pop")
         self.assertEqual(rc, 0, f"pairwise --pvalue should succeed:\n{stderr}")
-        pw_file = os.path.join(self.tmpdir, "idx_DBRetina_pairwise.tsv")
-        assert_file_exists(self, pw_file)
-        rows = parse_pairwise_tsv(pw_file)
+        pw_dir = os.path.join(self.tmpdir, "idx_DBRetina_pairwise")  # parquet dir
+        self.assertTrue(os.path.isdir(pw_dir), f"missing parquet dir: {pw_dir}")
+        rows = parse_pairwise_parquet(pw_dir)
         self.assertGreater(len(rows), 0, "expected pairwise rows")
         # Every row carries a pvalue and it is a valid probability in [0, 1].
         for row in rows:
@@ -7268,8 +7457,8 @@ class TestPvalueSmallPopulationCrash(unittest.TestCase):
         exact pvalue for a known pair (GroupA vs GroupB) computed independently
         with the same hypergeometric definition boost uses.
         """
-        prefix, pw_file = setup_index_and_pairwise(self.tmpdir, extra_pw_args="--pvalue")
-        rows = parse_pairwise_tsv(pw_file)
+        prefix, pw_dir = setup_index_and_pairwise(self.tmpdir, extra_pw_args="--pvalue")
+        rows = parse_pairwise_parquet(pw_dir)
         by_pair = {frozenset({r["group_1_name"], r["group_2_name"]}): r for r in rows}
 
         # Independent reference: over-enrichment pvalue = P(X >= k) = 1 - cdf(k-1)
@@ -7410,7 +7599,7 @@ class TestDataLayerRobustness(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Reuse the module-shared (overlapping) index + pairwise fixture.
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="dbretina_datalayer_")
@@ -7672,7 +7861,7 @@ class TestQueryHeaderConsistency(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
         cls.parquet_dir = f"{cls.prefix}_DBRetina_pairwise"
         cls.dbrp = f"{cls.prefix}_DBRetina_pairwise.dbrp"
 
@@ -7870,7 +8059,7 @@ class TestClusterBareTsvParity(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
         cls.parquet_dir = f"{cls.prefix}_DBRetina_pairwise"
         cls.dbrp = f"{cls.prefix}_DBRetina_pairwise.dbrp"
 
@@ -8242,7 +8431,7 @@ class TestGraphMetricEmission(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp(prefix="dbretina_gmetric_")
@@ -8520,7 +8709,7 @@ class TestExportNeo4j(unittest.TestCase):
             import neo4j  # noqa: F401
         except ImportError:
             raise unittest.SkipTest("neo4j driver not installed")
-        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        cls.prefix, cls.pw_file = _ensure_legacy_fixture()
         cls.pv_prefix, cls.pv_pw_tsv = _ensure_shared_pvalue_fixture()
         # A high port nothing listens on -> a fast 'connection refused' so the
         # command fails at the Bolt connect step, never at input-open.
@@ -8596,5 +8785,6 @@ if __name__ == "__main__":
         unittest.main(verbosity=2)
     finally:
         _cleanup_shared_fixture()
+        _cleanup_legacy_fixture()
         _cleanup_shared_pvalue_fixture()
         _cleanup_zero_pair_fixture()
