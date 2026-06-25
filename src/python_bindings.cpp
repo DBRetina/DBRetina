@@ -24,7 +24,8 @@ NB_MODULE(_dbretina_internal, m) {
           nb::arg("cutoff_distance_type"),
           nb::arg("cutoff_threshold"),
           nb::arg("full_command"),
-          nb::arg("calculate_pvalue"));
+          nb::arg("calculate_pvalue"),
+          nb::arg("legacy_output") = false);
 
     m.def("dbretina_indexing", &dbretina::dbretina_indexing,
           nb::arg("json_file"),

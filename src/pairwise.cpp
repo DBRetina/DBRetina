@@ -382,7 +382,7 @@ namespace dbretina {
     }
 
 
-    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command, bool calculate_pvalue) {
+    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command, bool calculate_pvalue, bool legacy_output) {
 
         vector<string> allowed_distances = { "containment", "ochiai", "jaccard" };
         // cutoff_distance_type must be in allowed_distances
@@ -502,71 +502,6 @@ namespace dbretina {
 
         cout << "[dev] pairwise hashmap construction: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
         cout << "[dev] Number of pairwise comparisons: " << edges.size() << endl;
-        cout << "[dev] writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv | Please wait..." << endl;
-
-        Stats distances_stats;
-
-        auto formatDouble = [](double val) {
-            char buffer[20];
-            std::snprintf(buffer, sizeof(buffer), "%.1f", val);
-            return std::string(buffer);
-            };
-
-        // --- TSV output (kept for migration) ---
-        std::ofstream myfile;
-        myfile.open(index_prefix + "_DBRetina_pairwise.tsv");
-        myfile << "# DBRetina pairwise output\n";
-        myfile << "# population_size: " << population_size << '\n';
-        myfile << "# NOTE: This file contains raw (uncorrected) p-values. FDR-corrected results are in *_fdr.tsv if --fdr was used.\n";
-        myfile << "# containment = shared/min(s1,s2)\n";
-        myfile << "#nodes:" << namesMap.size() << '\n';
-        myfile << "#command: " << full_command << '\n';
-
-        myfile
-            << "group_1_ID"
-            << "\tgroup_2_ID"
-            << "\tgroup_1_name"
-            << "\tgroup_2_name"
-            << "\tshared_features"
-            << "\tcontainment"
-            << "\tochiai"
-            << "\tjaccard"
-            << "\tcsi"
-            << "\tdice"
-            << "\todds_ratio";
-        if (calculate_pvalue) { myfile << "\tpvalue"; }
-
-        myfile << '\n';
-
-        // --- .dbrp binary output ---
-        DBRetinaPairwise pw;
-        uint8_t dbrp_flags = 0x3F;  // all metrics except pvalue
-        if (calculate_pvalue) dbrp_flags |= 0x40;
-
-        // Build metadata JSON for .dbrp
-        std::string dbrp_metadata = "{\"population_size\":" + std::to_string(population_size)
-            + ",\"cutoff_metric\":\"" + cutoff_distance_type + "\""
-            + ",\"cutoff_threshold\":" + std::to_string(cutoff_threshold)
-            + ",\"command\":\"" + full_command + "\""
-            + ",\"num_groups\":" + std::to_string(namesMap.size())
-            + "}";
-
-        pw.begin_write(index_prefix + "_DBRetina_pairwise.dbrp", dbrp_flags, namesMap, dbrp_metadata);
-
-        // Stats tracking for .dbrp
-        PairwiseStatistics dbrp_stats;
-        dbrp_stats.min_odds_ratio = 1.0;
-        dbrp_stats.max_odds_ratio = 1.0;
-        // Initialize histograms for 5 metrics (containment, ochiai, jaccard, csi, dice)
-        for (uint8_t mid = 0; mid < 5; mid++) {
-            MetricHistogram hist;
-            hist.metric_id = mid;
-            hist.bucket_counts.resize(21, 0);
-            dbrp_stats.histograms.push_back(hist);
-        }
-
-        uint64_t line_count = 0;
-
         // --- Parquet output (parallel) ---
         std::string parquet_dir = index_prefix + "_DBRetina_pairwise";
         ParquetPairwiseWriter parquet_writer(parquet_dir, calculate_pvalue, user_threads, namesMap);
@@ -637,7 +572,76 @@ namespace dbretina {
         cout << "[dev] parallel parquet write: " << std::chrono::duration<double, std::milli>(Time::now() - parquet_begin).count() / 1000 << " secs" << endl;
         cout << "[dev] wrote parquet pairwise to: " << parquet_dir << "/ (" << parquet_writer.get_stats().num_pairs << " pairs)" << endl;
 
-        // --- Sequential TSV + .dbrp output (legacy, kept for compatibility) ---
+        // --- Sequential TSV + .dbrp output (legacy, opt-in via --legacy-output) ---
+        // Gated behind `legacy_output` (PLAN-094 Step-2b). The parquet writer above
+        // already emitted the canonical, self-sufficient output; this Phase-3 block
+        // re-derives the same per-pair metrics to write the byte-identical legacy
+        // `.tsv` + `.dbrp` + top-level `_DBRetina_pairwise_stats.json`. Default path
+        // (legacy_output == false) skips it entirely -> ~4x faster, no recompute.
+        if (legacy_output) {
+        cout << "[dev] writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv | Please wait..." << endl;
+
+        Stats distances_stats;
+
+        auto formatDouble = [](double val) {
+            char buffer[20];
+            std::snprintf(buffer, sizeof(buffer), "%.1f", val);
+            return std::string(buffer);
+            };
+
+        // --- TSV output (kept for migration) ---
+        std::ofstream myfile;
+        myfile.open(index_prefix + "_DBRetina_pairwise.tsv");
+        myfile << "# DBRetina pairwise output\n";
+        myfile << "# population_size: " << population_size << '\n';
+        myfile << "# NOTE: This file contains raw (uncorrected) p-values. FDR-corrected results are in *_fdr.tsv if --fdr was used.\n";
+        myfile << "# containment = shared/min(s1,s2)\n";
+        myfile << "#nodes:" << namesMap.size() << '\n';
+        myfile << "#command: " << full_command << '\n';
+
+        myfile
+            << "group_1_ID"
+            << "\tgroup_2_ID"
+            << "\tgroup_1_name"
+            << "\tgroup_2_name"
+            << "\tshared_features"
+            << "\tcontainment"
+            << "\tochiai"
+            << "\tjaccard"
+            << "\tcsi"
+            << "\tdice"
+            << "\todds_ratio";
+        if (calculate_pvalue) { myfile << "\tpvalue"; }
+
+        myfile << '\n';
+
+        // --- .dbrp binary output ---
+        DBRetinaPairwise pw;
+        uint8_t dbrp_flags = 0x3F;  // all metrics except pvalue
+        if (calculate_pvalue) dbrp_flags |= 0x40;
+
+        // Build metadata JSON for .dbrp
+        std::string dbrp_metadata = "{\"population_size\":" + std::to_string(population_size)
+            + ",\"cutoff_metric\":\"" + cutoff_distance_type + "\""
+            + ",\"cutoff_threshold\":" + std::to_string(cutoff_threshold)
+            + ",\"command\":\"" + full_command + "\""
+            + ",\"num_groups\":" + std::to_string(namesMap.size())
+            + "}";
+
+        pw.begin_write(index_prefix + "_DBRetina_pairwise.dbrp", dbrp_flags, namesMap, dbrp_metadata);
+
+        // Stats tracking for .dbrp
+        PairwiseStatistics dbrp_stats;
+        dbrp_stats.min_odds_ratio = 1.0;
+        dbrp_stats.max_odds_ratio = 1.0;
+        // Initialize histograms for 5 metrics (containment, ochiai, jaccard, csi, dice)
+        for (uint8_t mid = 0; mid < 5; mid++) {
+            MetricHistogram hist;
+            hist.metric_id = mid;
+            hist.bucket_counts.resize(21, 0);
+            dbrp_stats.histograms.push_back(hist);
+        }
+
         auto legacy_begin = Time::now();
 
         for (const auto& edge : edges) {
@@ -757,5 +761,6 @@ namespace dbretina {
         pw.finalize_write(dbrp_stats, dbrp_metadata);
         cout << "[dev] legacy TSV + .dbrp write: " << std::chrono::duration<double, std::milli>(Time::now() - legacy_begin).count() / 1000 << " secs" << endl;
         cout << "[dev] wrote .dbrp binary pairwise file: " << index_prefix << "_DBRetina_pairwise.dbrp" << endl;
+        } // end if (legacy_output)
     }
 }

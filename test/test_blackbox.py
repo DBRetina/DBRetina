@@ -347,7 +347,11 @@ def setup_index_and_pairwise(tmpdir, asc_content=TEST_ASC_CONTENT, extra_pw_args
     rc, _, stderr = run_command(f"DBRetina index -a {asc_path} -o {prefix}")
     assert rc == 0, f"index failed: {stderr}"
 
-    rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix} {extra_pw_args}")
+    # PLAN-094 Step-2b: the legacy .tsv/.dbrp/_stats.json writer is now opt-in
+    # (default is parquet-only). The shared fixtures below still read those legacy
+    # artifacts, so bridge them by always requesting --legacy-output here. (Moving
+    # the suite off legacy-output is a separate later cleanup step.)
+    rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix} {extra_pw_args}")
     assert rc == 0, f"pairwise failed: {stderr}"
 
     pw_file = f"{prefix}_DBRetina_pairwise.tsv"
@@ -800,7 +804,7 @@ class TestPairwise(unittest.TestCase):
 
         # a valid thread count still works
         rc, _, stderr = run_command(
-            f"DBRetina pairwise -i {prefix} -m containment -c 0 -t 2"
+            f"DBRetina pairwise --legacy-output -i {prefix} -m containment -c 0 -t 2"
         )
         self.assertEqual(rc, 0, stderr)
         self.assertNotIn("Traceback", stderr)
@@ -830,7 +834,7 @@ class TestPairwise(unittest.TestCase):
         # supported cutoff-filter metrics still work
         for good in ("containment", "ochiai", "jaccard"):
             rc, _, stderr = run_command(
-                f"DBRetina pairwise -i {prefix} -m {good} -c 0"
+                f"DBRetina pairwise --legacy-output -i {prefix} -m {good} -c 0"
             )
             self.assertEqual(rc, 0, f"-m {good} should succeed: {stderr}")
             self.assertNotIn("Traceback", stderr)
@@ -3055,7 +3059,7 @@ class TestGeneinfo(unittest.TestCase):
         )
         assert rc == 0, f"index failed: {stderr}"
         rc, _, stderr = run_command(
-            "DBRetina pairwise -i test_idx", cwd=cls.geneinfo_dir
+            "DBRetina pairwise --legacy-output -i test_idx", cwd=cls.geneinfo_dir
         )
         assert rc == 0, f"pairwise failed: {stderr}"
         cls.prefix = "test_idx"
@@ -3136,7 +3140,7 @@ class TestSetcov(unittest.TestCase):
         )
         assert rc == 0, f"index failed: {stderr}"
         rc, _, stderr = run_command(
-            "DBRetina pairwise -i test_idx", cwd=self.tmpdir
+            "DBRetina pairwise --legacy-output -i test_idx", cwd=self.tmpdir
         )
         assert rc == 0, f"pairwise failed: {stderr}"
         self.prefix = "test_idx"
@@ -3357,7 +3361,7 @@ class TestIndexManagement(unittest.TestCase):
         )
         self.assertEqual(rc, 0, stderr)
         rc, _, stderr = run_command(
-            f"DBRetina pairwise -i {out_prefix} -m containment -c 1"
+            f"DBRetina pairwise --legacy-output -i {out_prefix} -m containment -c 1"
         )
         self.assertEqual(rc, 0, stderr)
         pw_file = f"{out_prefix}_DBRetina_pairwise.tsv"
@@ -3437,7 +3441,7 @@ class TestIndexManagement(unittest.TestCase):
         )
         self.assertEqual(rc, 0, stderr)
         rc, _, stderr = run_command(
-            f"DBRetina pairwise -i {out_prefix} -m containment -c 1"
+            f"DBRetina pairwise --legacy-output -i {out_prefix} -m containment -c 1"
         )
         self.assertEqual(rc, 0, stderr)
         pw_file = f"{out_prefix}_DBRetina_pairwise.tsv"
@@ -3469,7 +3473,7 @@ class TestEdgeCases(unittest.TestCase):
                          "gene_set\tgene\nOnlyGroup\tGene1\nOnlyGroup\tGene2\n")
         prefix = os.path.join(self.tmpdir, "idx")
         run_command(f"DBRetina index -a {asc} -o {prefix}")
-        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix}")
+        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
         self.assertEqual(rc, 0, stderr)
         pw_file = f"{prefix}_DBRetina_pairwise.tsv"
         assert_file_exists(self, pw_file)
@@ -3483,7 +3487,7 @@ class TestEdgeCases(unittest.TestCase):
                          "GroupB\tGene3\nGroupB\tGene4\n")
         prefix = os.path.join(self.tmpdir, "idx")
         run_command(f"DBRetina index -a {asc} -o {prefix}")
-        run_command(f"DBRetina pairwise -i {prefix}")
+        run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
         pw_file = f"{prefix}_DBRetina_pairwise.tsv"
         self.assertEqual(count_tsv_data_rows(pw_file), 0)
 
@@ -3495,7 +3499,7 @@ class TestEdgeCases(unittest.TestCase):
                          "GroupB\tGene2\nGroupB\tGene3\nGroupB\tGene4\n")
         prefix = os.path.join(self.tmpdir, "idx")
         run_command(f"DBRetina index -a {asc} -o {prefix}")
-        run_command(f"DBRetina pairwise -i {prefix}")
+        run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
         pw_file = f"{prefix}_DBRetina_pairwise.tsv"
         self.assertEqual(count_tsv_data_rows(pw_file), 1)
 
@@ -3511,7 +3515,7 @@ class TestEdgeCases(unittest.TestCase):
                          "GroupB\tG1\nGroupB\tG2\nGroupB\tG3\n")
         prefix = os.path.join(self.tmpdir, "idx")
         run_command(f"DBRetina index -a {asc} -o {prefix}")
-        run_command(f"DBRetina pairwise -i {prefix}")
+        run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
         rows = parse_pairwise_tsv(f"{prefix}_DBRetina_pairwise.tsv")
         self.assertEqual(len(rows), 1)
         self.assertAlmostEqual(rows[0]["containment"], 100.0, delta=0.1)
@@ -3560,6 +3564,112 @@ class TestEdgeCases(unittest.TestCase):
         )
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, f"{out}_modularity.tsv")
+
+
+# ============================================================
+# SECTION 16b: --legacy-output gating (PLAN-094 Step-2b)
+# ============================================================
+
+class TestLegacyOutputFlag(unittest.TestCase):
+    """`pairwise` default = parquet only; `--legacy-output` re-adds .tsv/.dbrp/_stats.json.
+
+    The legacy Phase-3 writer (the sequential .tsv + .dbrp + top-level
+    _DBRetina_pairwise_stats.json) is now gated behind --legacy-output (default
+    OFF). The parquet dir must be produced identically either way.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_legacy_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _index(self, sub):
+        asc = write_file(os.path.join(self.tmpdir, f"{sub}.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, sub)
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        return prefix
+
+    @staticmethod
+    def _legacy_paths(prefix):
+        return (
+            f"{prefix}_DBRetina_pairwise.tsv",
+            f"{prefix}_DBRetina_pairwise.dbrp",
+            f"{prefix}_DBRetina_pairwise_stats.json",
+            f"{prefix}_DBRetina_pairwise_stats_odds_ratio.txt",
+        )
+
+    def test_default_pairwise_is_parquet_only(self):
+        """Default `pairwise` writes the parquet dir but NOT .tsv/.dbrp/_stats.json."""
+        prefix = self._index("def")
+        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix}")
+        self.assertEqual(rc, 0, stderr)
+
+        parquet_dir = f"{prefix}_DBRetina_pairwise"
+        self.assertTrue(os.path.isdir(parquet_dir),
+                        f"expected parquet dir {parquet_dir}")
+
+        for p in self._legacy_paths(prefix):
+            self.assertFalse(os.path.exists(p),
+                             f"legacy artifact should be absent by default: {p}")
+
+    def test_legacy_output_produces_all_three(self):
+        """`pairwise --legacy-output` writes .tsv + .dbrp + top-level _stats.json."""
+        prefix = self._index("leg")
+        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
+        self.assertEqual(rc, 0, stderr)
+
+        self.assertTrue(os.path.isdir(f"{prefix}_DBRetina_pairwise"))
+        for p in self._legacy_paths(prefix):
+            assert_file_exists(self, p)
+
+    def test_default_run_removes_stale_legacy_artifacts(self):
+        """A default re-run after a --legacy-output run removes the stale
+        .tsv/.dbrp/_stats.json, so a downstream command can't read outdated data."""
+        prefix = self._index("stale")
+        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        for p in self._legacy_paths(prefix):
+            assert_file_exists(self, p)  # present after the legacy run
+        # default re-run: parquet regenerated, stale legacy artifacts cleaned up
+        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertTrue(os.path.isdir(f"{prefix}_DBRetina_pairwise"))
+        for p in self._legacy_paths(prefix):
+            self.assertFalse(os.path.exists(p),
+                             f"stale legacy artifact should be removed by a default re-run: {p}")
+
+    def test_parquet_content_identical_default_vs_legacy(self):
+        """The parquet dir CONTENT is identical with and without --legacy-output."""
+        import duckdb
+
+        prefix_def = self._index("pd")
+        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix_def}")
+        self.assertEqual(rc, 0, stderr)
+
+        prefix_leg = self._index("pl")
+        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix_leg}")
+        self.assertEqual(rc, 0, stderr)
+
+        def rows(prefix):
+            glob_path = os.path.join(
+                f"{prefix}_DBRetina_pairwise", "data", "*.parquet"
+            )
+            con = duckdb.connect()
+            try:
+                res = con.execute(
+                    "SELECT group_1_id, group_2_id, shared_features, "
+                    "containment, ochiai, jaccard, csi, dice, odds_ratio "
+                    f"FROM read_parquet('{glob_path}') "
+                    "ORDER BY group_1_id, group_2_id"
+                ).fetchall()
+            finally:
+                con.close()
+            return res
+
+        self.assertEqual(rows(prefix_def), rows(prefix_leg),
+                         "parquet per-pair content must be byte-identical regardless of --legacy-output")
 
 
 # ============================================================
@@ -3820,7 +3930,7 @@ class TestPairwiseFromVariants(unittest.TestCase):
             f"DBRetina index -a {f1} -a {f2} -a {f3} -o {prefix}"
         )
         self.assertEqual(rc, 0, stderr)
-        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix}")
+        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
         self.assertEqual(rc, 0, stderr)
         pw_file = f"{prefix}_DBRetina_pairwise.tsv"
         assert_pairwise_matches_expected(self, pw_file)
@@ -3837,7 +3947,7 @@ class TestPairwiseFromVariants(unittest.TestCase):
             f"DBRetina index -g {gmt} -o idx", cwd=self.tmpdir
         )
         self.assertEqual(rc, 0, stderr)
-        rc, _, stderr = run_command("DBRetina pairwise -i idx", cwd=self.tmpdir)
+        rc, _, stderr = run_command("DBRetina pairwise --legacy-output -i idx", cwd=self.tmpdir)
         self.assertEqual(rc, 0, stderr)
         pw_file = os.path.join(self.tmpdir, "idx_DBRetina_pairwise.tsv")
         assert_pairwise_matches_expected(self, pw_file)
@@ -3863,7 +3973,7 @@ class TestSpecialCharPairwise(unittest.TestCase):
         rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
         self.assertEqual(rc, 0, stderr)
 
-        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix}")
+        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
         self.assertEqual(rc, 0, stderr)
 
         pw_file = f"{prefix}_DBRetina_pairwise.tsv"
@@ -3890,7 +4000,7 @@ class TestSpecialCharPairwise(unittest.TestCase):
         prefix = os.path.join(self.tmpdir, "idx")
         rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
         self.assertEqual(rc, 0, stderr)
-        rc, _, stderr = run_command(f"DBRetina pairwise -i {prefix}")
+        rc, _, stderr = run_command(f"DBRetina pairwise --legacy-output -i {prefix}")
         self.assertEqual(rc, 0, stderr)
 
         pw_file = f"{prefix}_DBRetina_pairwise.tsv"
@@ -6765,7 +6875,7 @@ class TestInputRobustness(unittest.TestCase):
         rc, _, stderr = run_command("DBRetina index -a dj.asc -o dj_idx",
                                     cwd=self.tmpdir)
         self.assertEqual(rc, 0, stderr)
-        rc, _, stderr = run_command("DBRetina pairwise -i dj_idx", cwd=self.tmpdir)
+        rc, _, stderr = run_command("DBRetina pairwise --legacy-output -i dj_idx", cwd=self.tmpdir)
         self.assertEqual(rc, 0, stderr)
         pw = os.path.join(self.tmpdir, "dj_idx_DBRetina_pairwise.tsv")
         self.assertEqual(count_tsv_data_rows(pw), 0,
@@ -7137,7 +7247,7 @@ class TestPvalueSmallPopulationCrash(unittest.TestCase):
         """The exact repro from issue 041 must NOT core-dump and must emit pvalues."""
         idx = self._build_small_pop_index()
         rc, stdout, stderr = run_command(
-            f"DBRetina pairwise -i {idx} -m containment -c 0 --pvalue", cwd=self.tmpdir
+            f"DBRetina pairwise --legacy-output -i {idx} -m containment -c 0 --pvalue", cwd=self.tmpdir
         )
         assert_no_coredump(self, rc, stderr, "pairwise --pvalue small pop")
         self.assertEqual(rc, 0, f"pairwise --pvalue should succeed:\n{stderr}")

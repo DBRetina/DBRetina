@@ -173,8 +173,9 @@ def apply_fdr_correction(pairwise_path, alpha=0.05, method='fdr_bh'):
 @click.option('--pvalue', 'calculate_pvalue', is_flag=True, required = False, default = False, help="calculate Hypergeometric p-value")
 @click.option('--fdr', 'apply_fdr', is_flag=True, default=False, help="Apply Benjamini-Hochberg FDR correction to p-values (requires --pvalue and statsmodels)")
 @click.option('--fdr-alpha', 'fdr_alpha', default=0.05, type=float, show_default=True, help="FDR significance threshold")
+@click.option('--legacy-output', 'legacy_output', is_flag=True, default=False, help="also write the legacy .tsv + .dbrp pairwise files (default: parquet only)")
 @click.pass_context
-def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pvalue, apply_fdr, fdr_alpha):
+def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pvalue, apply_fdr, fdr_alpha, legacy_output):
     """
     Calculate pairwise similarities.
 
@@ -225,7 +226,20 @@ def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pva
 
     ctx.obj.INFO(
         f"Constructing the pairwise matrix using {user_threads} cores.")
-    dbretina_internal.pairwise(index_prefix, user_threads, similarity_type, cutoff, commands, calculate_pvalue)
+    dbretina_internal.pairwise(index_prefix, user_threads, similarity_type, cutoff, commands, calculate_pvalue, legacy_output)
+
+    # In the default (parquet-only) path, remove any stale legacy outputs left by a
+    # prior --legacy-output (or pre-migration) run on this prefix. The fresh parquet
+    # dir is regenerated each run, but the .tsv/.dbrp/_stats.json are not written in
+    # default mode -- so without this a downstream command could pick up a stale
+    # .tsv/.dbrp that no longer matches the current parquet (PLAN-094).
+    if not legacy_output:
+        for stale in (f"{index_prefix}_DBRetina_pairwise.tsv",
+                      f"{index_prefix}_DBRetina_pairwise.dbrp",
+                      f"{index_prefix}_DBRetina_pairwise_stats.json",
+                      f"{index_prefix}_DBRetina_pairwise_stats_odds_ratio.txt"):
+            if os.path.exists(stale):
+                os.remove(stale)
 
     # Warn users about multiple testing when p-values are computed without FDR
     if calculate_pvalue and not apply_fdr:
