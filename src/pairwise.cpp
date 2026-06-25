@@ -571,25 +571,21 @@ namespace dbretina {
         std::string parquet_dir = index_prefix + "_DBRetina_pairwise";
         ParquetPairwiseWriter parquet_writer(parquet_dir, calculate_pvalue, user_threads, namesMap);
 
-        // Convert edges to vector for parallel iteration
-        auto vec_edges = std::vector<std::pair<std::pair<uint32_t, uint32_t>, uint64_t>>(edges.begin(), edges.end());
-        size_t n_edges = vec_edges.size();
-
         auto parquet_begin = Time::now();
 
-        // Parallel Parquet write
+        // Parallel Parquet write — partition over the edges map's internal submaps
+        // (phmap's parallel_flat_hash_map has 2^12 == 4096 submaps; subcnt() returns
+        // that count). Each edge lives in exactly one submap, so each is processed
+        // exactly once and written to the executing thread's parquet shard. This
+        // avoids the full ~500 MB vec_edges copy. with_submap takes a shared lock,
+        // which is safe here: Phase 1 (edges build) is complete, `edges` is frozen,
+        // and there are no concurrent writers.
         omp_set_num_threads(user_threads);
-#pragma omp parallel
-        {
+#pragma omp parallel for schedule(dynamic)
+        for (size_t s = 0; s < edges.subcnt(); ++s) {
             int tid = omp_get_thread_num();
-            int nthreads = omp_get_num_threads();
-            // n_edges is size_t, so tid * n_edges promotes to 64-bit before the
-            // multiply (no int overflow at >2^31 edges); bounds/index stay size_t.
-            size_t edge_start = (size_t)tid * n_edges / nthreads;
-            size_t edge_end = (size_t)(tid + 1) * n_edges / nthreads;
-
-            for (size_t ei = edge_start; ei < edge_end; ei++) {
-                auto& edge = vec_edges[ei];
+            edges.with_submap(s, [&](const PAIRS_COUNTER::EmbeddedSet& set) {
+            for (const auto& edge : set) {
                 uint64_t shared_features = edge.second;
                 uint32_t source_1 = edge.first.first;
                 uint32_t source_2 = edge.first.second;
@@ -634,6 +630,7 @@ namespace dbretina {
 
                 parquet_writer.write_record(tid, prec);
             }
+            });
         }
 
         parquet_writer.finalize(full_command, population_size, cutoff_distance_type, cutoff_threshold);
