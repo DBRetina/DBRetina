@@ -421,7 +421,17 @@ Detailed description:
         store.close()
 
     elif extend:
-        awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) || (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} {awk_op} {cutoff}) {{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}"}}}}'"""
+        # Pairs with EITHER endpoint in the group set, then collect BOTH endpoints
+        # as the extended set. The metric cutoff is applied only when one was given;
+        # without -m/-c (metric==NA, cutoff==-1) extend over all such pairs (issue
+        # 095 -- awk_column/awk_op are unset then; matches the parquet-store extend
+        # path, which likewise skips the cutoff here).
+        either_in = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) || (tolower($4) in id_map) ) {{ print $0 }} }}'"""
+        if cutoff != -1:
+            collect = f"""awk -F'\t' '{{if (${awk_column} {awk_op} {cutoff}) {{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}"}}}}'"""
+        else:
+            collect = f"""awk -F'\t' '{{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}" }}'"""
+        awk_script = either_in + " | " + collect
 
         result = execute_bash_command(awk_script)
         bash_script = f"""sort -u {extended_ids_list} -o {extended_supergroups_file}"""

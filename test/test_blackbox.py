@@ -1339,7 +1339,6 @@ class TestQueryFilterStoreParity(unittest.TestCase):
                 except ValueError:
                     self.assertEqual(ft[ci], fd[ci])
         return list(rows_tsv.values())
-        return rows_tsv
 
     def test_parity_groups_file(self):
         """--groups-file selection is identical across the two routes."""
@@ -1372,6 +1371,13 @@ class TestQueryFilterStoreParity(unittest.TestCase):
         and the *_extended_supergroups.txt contents match too."""
         groups = write_file(os.path.join(self.tmpdir, "g.txt"), "GroupA\n")
         rows = self._assert_parity(f"-g {groups} -m ochiai -c 50 --extend")
+        self.assertTrue(len(rows) >= 1, "expected extended selection to be non-empty")
+
+    def test_parity_extend_no_metric(self):
+        """ISSUE-095: --extend WITHOUT -m/-c must not crash the awk path; both routes
+        extend over ALL linked pairs (no cutoff) and select the same pair set."""
+        groups = write_file(os.path.join(self.tmpdir, "g.txt"), "GroupA\n")
+        rows = self._assert_parity(f"-g {groups} --extend")
         self.assertTrue(len(rows) >= 1, "expected extended selection to be non-empty")
 
 
