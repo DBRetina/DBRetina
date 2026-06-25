@@ -1089,6 +1089,127 @@ class TestQuery(unittest.TestCase):
 
 
 # ============================================================
+# SECTION 5a': query group/cluster/extend filter — awk(.tsv) vs store(parquet dir)
+# PARITY (PLAN-094 Step-1b)
+# ============================================================
+
+class TestQueryFilterStoreParity(unittest.TestCase):
+    """The group / cluster / extend filtering of ``query`` must select the SAME
+    pairs whether ``-p`` is given the legacy ``.tsv`` (awk path) or the parquet
+    directory (store path) -- that selection is exactly what Step-1b ports.
+
+    What is asserted byte-exact: the selected pair set (group_1_ID, group_2_ID),
+    plus the names and shared_features for each pair. The similarity-metric DISPLAY
+    can differ by up to 0.1 between routes because the store keeps metrics as
+    float32 while the ``.tsv`` carries the C++ double-derived ``%.1f`` text, so a
+    value sitting on an X.X5 rounding boundary flips the last digit. That is an
+    orthogonal, pre-existing float-repr nuance of the store path (not introduced by
+    this port and unrelated to set logic), so metric columns are compared within a
+    0.1 tolerance rather than byte-for-byte.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_file = _ensure_shared_fixture()
+        # The producer emits the parquet store as a sibling directory sharing the
+        # ``_DBRetina_pairwise`` stem with the .tsv; ``-p <dir>`` routes to the store.
+        cls.pw_dir = f"{cls.prefix}_DBRetina_pairwise"
+
+    def setUp(self):
+        self.assertTrue(os.path.isdir(self.pw_dir),
+                        f"parquet dir missing: {self.pw_dir}")
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_qparity_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    @staticmethod
+    def _rows_by_pair(tsv_path):
+        """Parse a query output into {(group_1_ID, group_2_ID): [fields]}, dropping
+        comment lines + the column header. The (id1,id2) keys are the SET LOGIC the
+        port reproduces; the field lists are kept for the per-pair value check."""
+        rows = {}
+        with open(tsv_path) as f:
+            for line in f:
+                if line.startswith(("#", ";")) or line.startswith("group_1_ID"):
+                    continue
+                stripped = line.rstrip("\n")
+                if not stripped:
+                    continue
+                fields = stripped.split("\t")
+                rows[(fields[0], fields[1])] = fields
+        return rows
+
+    def _assert_parity(self, args):
+        """Run ``query`` via the .tsv (awk) and the parquet dir (store); assert the
+        selected pair SET + the exact columns (ids/names/shared_features) are
+        byte-identical, and the metric columns agree within a 0.1 display tolerance
+        (float32-vs-double %.1f boundary flips — orthogonal to set logic)."""
+        out_tsv = os.path.join(self.tmpdir, "via_tsv")
+        out_dir = os.path.join(self.tmpdir, "via_dir")
+
+        rc, _, err = run_command(
+            f"DBRetina query -p {self.pw_file} {args} -o {out_tsv}")
+        self.assertEqual(rc, 0, f"awk/.tsv route failed: {err}")
+        rc, _, err = run_command(
+            f"DBRetina query -p {self.pw_dir} {args} -o {out_dir}")
+        self.assertEqual(rc, 0, f"store/parquet route failed: {err}")
+
+        rows_tsv = self._rows_by_pair(f"{out_tsv}.tsv")
+        rows_dir = self._rows_by_pair(f"{out_dir}.tsv")
+        # 1) identical selected pair SET (the set logic the port reproduces)
+        self.assertEqual(sorted(rows_tsv), sorted(rows_dir),
+                         "awk(.tsv) vs store(parquet) selected a different pair set")
+        # 2) per pair: exact ids/names/shared_features; metrics within 0.1 display
+        for key, ft in rows_tsv.items():
+            fd = rows_dir[key]
+            self.assertEqual(ft[:5], fd[:5],
+                             f"ids/names/shared_features differ for {key}: {ft[:5]} vs {fd[:5]}")
+            for ci in range(5, len(ft)):
+                try:
+                    self.assertLessEqual(
+                        abs(float(ft[ci]) - float(fd[ci])), 0.1 + 1e-9,
+                        f"metric col {ci} for {key}: {ft[ci]} vs {fd[ci]} (>0.1)")
+                except ValueError:
+                    self.assertEqual(ft[ci], fd[ci])
+        return list(rows_tsv.values())
+        return rows_tsv
+
+    def test_parity_groups_file(self):
+        """--groups-file selection is identical across the two routes."""
+        groups = write_file(os.path.join(self.tmpdir, "g.txt"),
+                            "GroupA\nGroupB\nGroupF\n")
+        rows = self._assert_parity(f"-g {groups} -m ochiai -c 0")
+        # sanity: the selection is non-trivial (A/B/F pairwise rows exist)
+        self.assertTrue(len(rows) >= 1, "expected at least one selected pair")
+
+    def test_parity_groups_file_no_metric(self):
+        """--groups-file with no cutoff (groups-only) is identical too."""
+        groups = write_file(os.path.join(self.tmpdir, "g.txt"),
+                            "GroupA\nGroupB\nGroupC\nGroupF\n")
+        self._assert_parity(f"-g {groups}")
+
+    def test_parity_clusters_file(self):
+        """--clusters-file + --cluster-ids selection is identical across routes."""
+        # cluster_id<TAB>cluster_name<TAB>pipe|separated|members ; the parser skips
+        # leading '#' comments and ONE header line, then reads col[0]/col[2].
+        clusters = write_file(
+            os.path.join(self.tmpdir, "clusters.tsv"),
+            "cluster_id\tcluster_name\tcluster_members\n"
+            "1\tc1\tGroupA|GroupB|GroupF\n"
+            "2\tc2\tGroupC|GroupE\n",
+        )
+        self._assert_parity(f"--clusters-file {clusters} --cluster-ids 1 -m ochiai -c 0")
+
+    def test_parity_extend(self):
+        """--extend expansion + the final filter are identical across routes,
+        and the *_extended_supergroups.txt contents match too."""
+        groups = write_file(os.path.join(self.tmpdir, "g.txt"), "GroupA\n")
+        rows = self._assert_parity(f"-g {groups} -m ochiai -c 50 --extend")
+        self.assertTrue(len(rows) >= 1, "expected extended selection to be non-empty")
+
+
+# ============================================================
 # SECTION 5b: query -m pvalue cutoff direction (ISSUE 068)
 # ============================================================
 

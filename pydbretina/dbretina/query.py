@@ -29,6 +29,44 @@ def cutoff_operator(metric):
     return "<=" if metric in LOWER_IS_BETTER else ">="
 
 
+def _read_group_name_set(groups_file):
+    """Read a single-column groups file into a lowercased name set.
+
+    Mirrors the awk ``BEGIN`` block exactly:
+    ``gsub(/"/, "", $1); id_map[tolower($1)]=1`` -- take the first tab field,
+    strip ALL double quotes, lowercase. Blank lines are ignored.
+    """
+    names = set()
+    with open(groups_file) as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            first = line.split("\t", 1)[0].replace('"', "")
+            if first:
+                names.add(first.lower())
+    return names
+
+
+def _format_store_row(row, gid1, gid2, names_map, has_pvalue):
+    """Format one store DataFrame row to the canonical query output line.
+
+    Matches the cutoff-only store branch byte-for-byte: ids, names from the
+    names map, integer shared_features, then the six similarity metrics at
+    ``%.1f`` and (when present) the raw-string pvalue. Names are joined via the
+    store names map (the parquet rows carry only ids), exactly like the awk path
+    which prints the source TSV's own name columns ($3/$4)."""
+    fields = [str(gid1), str(gid2),
+              names_map.get(gid1, ""), names_map.get(gid2, ""),
+              str(int(row['shared_features'])),
+              f"{row['containment']:.1f}", f"{row['ochiai']:.1f}",
+              f"{row['jaccard']:.1f}", f"{row['csi']:.1f}",
+              f"{row['dice']:.1f}", f"{row['odds_ratio']:.1f}"]
+    if has_pvalue:
+        fields.append(str(row['pvalue']))
+    return '\t'.join(fields)
+
+
 def is_awk_available():
     try:
         subprocess.run(["awk"], stdin=subprocess.DEVNULL,
@@ -210,12 +248,22 @@ Detailed description:
         ctx.obj.ERROR(
             f"'{pairwise_file}' is a DBRetina index (.dbri), not a pairwise file. "
             "Pass the pairwise TSV (or its parquet directory / .dbrp) to -p.")
+    # A groups/clusters filter over a parquet store input (PLAN-094 Step-1b): the
+    # awk path below needs the text TSV, but the producer also emits a parquet
+    # directory, so port the SAME group/cluster/extend selection to the store
+    # (see _query_store_groups). A bare pre-existing .tsv stays on the awk path.
+    store_for_filter = None
     if input_kind == "store" and (groups_file != "NA" or clusters_file != "NA"):
-        # The groups/clusters filter is awk-based and needs the text TSV; the
-        # parquet/.dbrp store path here only supports cutoff filtering.
-        ctx.obj.ERROR(
-            "Filtering by a groups/clusters file requires the pairwise TSV; got a "
-            "parquet directory / .dbrp. Re-run with the pairwise TSV passed to -p.")
+        from dbretina.compat import open_pairwise
+        try:
+            store_for_filter = open_pairwise(pairwise_file)
+        except Exception:
+            store_for_filter = None
+        if store_for_filter is None:
+            ctx.obj.ERROR(
+                f"'{pairwise_file}' is a pairwise directory without a usable "
+                f"parquet store (no manifest.json); pass the pairwise TSV, its "
+                f"parquet directory, or the .dbrp to -p.")
 
     metric_to_col = {
         "containment": 5,
@@ -316,17 +364,74 @@ Detailed description:
     with open(extended_ids_list, 'w') as f:
         f.write("")
 
-    if extend:    
+    extended_supergroups_file = f"{output_file.replace('.tsv','')}_extended_supergroups.txt"
+
+    # ── Parquet-store group/cluster/extend filtering (PLAN-094 Step-1b) ──
+    # Reproduces the awk selection below over the parquet store so the legacy
+    # .tsv is no longer required for a groups/clusters query. A bare pre-existing
+    # .tsv (input_kind == "tsv") still takes the awk path further down.
+    if store_for_filter is not None:
+        store = store_for_filter
+        names_map = store.get_names_map()                 # id -> name (lowercased)
+        name_to_ids = {}                                  # name -> {ids}
+        for _gid, _name in names_map.items():
+            name_to_ids.setdefault(_name, set()).add(int(_gid))
+        has_pvalue = store.has_pvalue
+
+        # The working id-set, from the (lowercased) group-name set. Names not in
+        # the index simply never match -- drop them, exactly as awk would.
+        working_names = _read_group_name_set(groups_file)
+        working_ids = set()
+        for nm in working_names:
+            working_ids.update(name_to_ids.get(nm, ()))
+
+        # Pull the passing pairs once (cutoff applied in SQL when present).
+        cols = ["group_1_id", "group_2_id", "shared_features",
+                "containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio"]
+        if has_pvalue:
+            cols.append("pvalue")
+        if cutoff != -1:
+            df = store.to_pandas(metric=metric, cutoff=cutoff, columns=cols)
+        else:
+            df = store.to_pandas(columns=cols)
+        id1 = df["group_1_id"].astype("int64")
+        id2 = df["group_2_id"].astype("int64")
+
+        if extend:
+            # EITHER endpoint in the set (cutoff already applied above) -> collect
+            # BOTH endpoints of those pairs as the extended id-set.
+            mask = id1.isin(working_ids) | id2.isin(working_ids)
+            extended_ids = set(id1[mask]).union(set(id2[mask]))
+            # Write the extended supergroup NAMES (sorted unique), same file the
+            # awk path produces, then the final filter uses this set.
+            ext_names = sorted({names_map.get(i, "") for i in extended_ids} - {""})
+            with open(extended_supergroups_file, "w") as ef:
+                for nm in ext_names:
+                    ef.write(nm + "\n")
+            working_ids = extended_ids
+
+        # Final filter: BOTH endpoints in the (possibly extended) id-set.
+        both = id1.isin(working_ids) & id2.isin(working_ids)
+        sel = df[both]
+        with open(output_file, "a") as out:
+            for _, row in sel.iterrows():
+                out.write(_format_store_row(
+                    row, int(row["group_1_id"]), int(row["group_2_id"]),
+                    names_map, has_pvalue) + "\n")
+        store.close()
+
+    elif extend:
         awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) || (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} {awk_op} {cutoff}) {{ print $3 >> "{extended_ids_list}"; print $4 >> "{extended_ids_list}"}}}}'"""
 
         result = execute_bash_command(awk_script)
-        extended_supergroups_file = f"{output_file.replace('.tsv','')}_extended_supergroups.txt"
         bash_script = f"""sort -u {extended_ids_list} -o {extended_supergroups_file}"""
         result = execute_bash_command(bash_script)
         groups_file = extended_supergroups_file
 
     # filter by both cutoff and groups
-    if cutoff != -1 and groups_file != "NA":
+    if store_for_filter is not None:
+        pass  # handled above in the parquet-store branch
+    elif cutoff != -1 and groups_file != "NA":
         awk_script = f"""grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' 'BEGIN {{ while ( getline < "{groups_file}" ) {{ gsub(/"/, "", $1); id_map[tolower($1)]=1 }} }} {{ if ( (tolower($3) in id_map) && (tolower($4) in id_map) ) {{ print $0 }} }}' | awk -F'\t' '{{if (${awk_column} {awk_op} {cutoff}) print $0}}' >> {output_file}"""
         result = execute_bash_command(awk_script)
 
