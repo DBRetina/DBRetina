@@ -8,9 +8,24 @@ from dbretina.click_context import cli
 import os
 import sys
 import gzip
+import time
+import resource
 from collections import defaultdict
 import json
 import dbretina.dbretina_doc_url as dbretina_doc
+from tqdm import tqdm
+
+
+def _progress_disabled():
+    """Progress bars are off when the user passed --no-progress (env var) or when
+    stderr is not a TTY (pipes/CI/the blackbox suite) — keeping logs/stdout clean."""
+    return bool(os.environ.get("DBRETINA_NO_PROGRESS")) or not sys.stderr.isatty()
+
+
+def _count_lines(path, opener=open):
+    """Cheap upfront line count for a tqdm total, without materializing the file."""
+    with opener(path) as fh:
+        return sum(1 for _ in fh)
 
 class StringHasher:
     FNV_prime = 1099511628211
@@ -71,8 +86,10 @@ def gmts_to_association(ctx, gmt_paths, tsv_path):
         writer.write(f"gene_set\tgene\n")
         for gmt_path in gmt_paths:
             ctx.obj.INFO(f"Processing {gmt_path}")
+            n_lines = _count_lines(gmt_path, _open_gmt)
             with _open_gmt(gmt_path) as f:
-                for line in f:
+                for line in tqdm(f, total=n_lines, desc=f"parse {os.path.basename(gmt_path)}",
+                                 disable=_progress_disabled(), file=sys.stderr):
                     if not line.strip():
                         continue  # tolerate blank lines (common in real GMTs)
                     split_line = line.strip().split('\t')
@@ -123,9 +140,12 @@ def build_gene_set_json(ctx, association_files, output_prefix):
     # default dictionary string to list of 
     gene_set_to_genes = defaultdict(list)
     for asc in association_files:
+        n_lines = _count_lines(asc)
         with open(asc) as asc_reader:
             next(asc_reader)
-            for line in asc_reader:
+            for line in tqdm(asc_reader, total=max(n_lines - 1, 0),
+                             desc=f"build {os.path.basename(asc)}",
+                             disable=_progress_disabled(), file=sys.stderr):
                 line = line.strip().lower().split('\t')
                 group = line[0].replace('"', '')
                 gene = line[1].replace('"', '')
@@ -181,12 +201,23 @@ def validate_all_files_exist(ctx, param, value):
 @click.option('-g', '--gmt', "gmt_file", multiple=True, required=False, callback = validate_all_files_exist, help="GMT file(s)")
 # @click.option('-n', '--names', "names_file", required=False, type=click.Path(exists=True), help="names file")
 @click.option('-o', '--output', "output_prefix", required=True, help="output file prefix")
+@click.option('--debug', "debug", is_flag=True, default=False, help="show verbose [dev] per-phase diagnostics")
+@click.option('--no-progress', "no_progress", is_flag=True, default=False, help="disable progress bars")
 @click.pass_context
-def main(ctx, asc_file, output_prefix, gmt_file):
+def main(ctx, asc_file, output_prefix, gmt_file, debug, no_progress):
     """
     Index the input data files.
     """
-    
+    # Control knobs passed to the C++ core via env vars so the nanobind binding
+    # signatures stay unchanged (Part C of PLAN-096).
+    if debug:
+        os.environ["DBRETINA_DEBUG"] = "1"
+    if no_progress:
+        os.environ["DBRETINA_NO_PROGRESS"] = "1"
+
+    _t_start = time.perf_counter()
+    _t_parse = 0.0
+
     # create output_path directories if they don't exist
     parent_directories = os.path.dirname(os.path.abspath(output_prefix))    
     if not os.path.exists(parent_directories):
@@ -212,7 +243,9 @@ def main(ctx, asc_file, output_prefix, gmt_file):
         output_dir = os.path.dirname(os.path.abspath(output_prefix))
         base = os.path.basename(output_prefix)
         asc_file = os.path.join(output_dir, f"generated_{base}_gmt_to_asc.tsv")
+        _t0 = time.perf_counter()
         gmts_to_association(ctx, list(gmt_file), asc_file)
+        _t_parse += time.perf_counter() - _t0
         asc_file = [asc_file]
         asc_from_gmt = True
 
@@ -220,13 +253,29 @@ def main(ctx, asc_file, output_prefix, gmt_file):
     ctx.obj.INFO("Indexing in progress, please wait...")
     # dbretina_internal.sketch_dbretina(asc_file, names_file, output_prefix)
     # sketch(asc_file, output_prefix)
+    _t0 = time.perf_counter()
     build_gene_set_json(ctx, asc_file, output_prefix)
-    
+    _t_build = time.perf_counter() - _t0
+
     if asc_from_gmt:
         os.remove(asc_file[0])
 
     json_file = f"{output_prefix}_hashes.json"
     ctx.obj.SUCCESS("File(s) have been indexed.")
     ctx.obj.INFO("Indexing in progress, please wait...")
+    _t0 = time.perf_counter()
     dbretina_internal.dbretina_indexing(json_file, output_prefix)
+    _t_index = time.perf_counter() - _t0
     ctx.obj.SUCCESS(f"Index written to {output_prefix}.dbri")
+
+    # One-line runtime summary (stderr only; always printed — see PLAN-096 Part A).
+    _total = time.perf_counter() - _t_start
+    _peak_gib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024.0 * 1024.0)
+    _parts = []
+    if _t_parse:
+        _parts.append(f"parse {_t_parse:.1f}s")
+    _parts.append(f"build json {_t_build:.1f}s")
+    _parts.append(f"index {_t_index:.1f}s")
+    _parts.append(f"total {_total:.1f}s")
+    _parts.append(f"peak memory {_peak_gib:.2f} GiB")
+    print("✓ index done · " + " · ".join(_parts), file=sys.stderr)

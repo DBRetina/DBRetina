@@ -717,6 +717,45 @@ class TestIndex(unittest.TestCase):
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, f"{prefix}.dbri")
 
+    # ---- PLAN-096: progress bar + runtime summary + --debug / --no-progress ----
+
+    def test_index_summary_line_always_printed(self):
+        """The one-line runtime summary (with 'peak memory') is always printed to stderr."""
+        asc = write_file(os.path.join(self.tmpdir, "test.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, stdout, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertIn("peak memory", stderr, "summary line missing from stderr")
+        self.assertIn("index done", stderr)
+        # Summary must NOT pollute stdout (blackbox tests parse stdout).
+        self.assertNotIn("peak memory", stdout)
+
+    def test_index_debug_shows_dev_lines(self):
+        """--debug surfaces the C++ '[dev]' phase lines; default run does not."""
+        asc = write_file(os.path.join(self.tmpdir, "test.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, _, stderr = run_command(f"DBRetina index --debug -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertIn("[dev]", stderr, "--debug should show [dev] lines")
+
+    def test_index_default_hides_dev_lines(self):
+        """Default (no --debug) run suppresses the C++ '[dev]' phase lines."""
+        asc = write_file(os.path.join(self.tmpdir, "test.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("[dev]", stderr, "default run must not show [dev] lines")
+
+    def test_index_no_progress_keeps_summary(self):
+        """--no-progress suppresses the bar but keeps the summary; no bar leaks (non-TTY anyway)."""
+        asc = write_file(os.path.join(self.tmpdir, "test.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, stdout, stderr = run_command(f"DBRetina index --no-progress -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertIn("peak memory", stderr)
+        # tqdm draws bars with carriage returns; the non-TTY run must not emit one.
+        self.assertNotIn("\r", stderr)
+
 
 # ============================================================
 # SECTION 4: Pairwise Tests

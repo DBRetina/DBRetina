@@ -1,6 +1,7 @@
 #include "dbretina_core.hpp"
 #include <iostream>
 #include <cstdint>
+#include <cstdlib>
 #include <chrono>
 #include "DBRetina_kf.hpp"
 #include "parallel_hashmap/phmap.h"
@@ -227,7 +228,8 @@ namespace dbretina {
 
         }
 
-        cerr << "[dev] Total number of colors: " << legend->size() << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cerr << "[dev] Total number of colors: " << legend->size() << endl;
 
         string output_prefix = user_index_prefix;
 
@@ -242,7 +244,8 @@ namespace dbretina {
         for (auto& [color, sources] : *legend) {
             if (colorsCount[color] > 0) selected_colors++;
         }
-        cerr << "[dev] Total selected colors: " << selected_colors << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cerr << "[dev] Total selected colors: " << selected_colors << endl;
 
         // Find max group ID for metadata
         uint64_t max_group_id = 0;
@@ -297,7 +300,8 @@ namespace dbretina {
 
         dbri.finalize_write();
 
-        cerr << "[dev] Wrote unified index to " << dbri_path << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cerr << "[dev] Wrote unified index to " << dbri_path << endl;
 
         delete legend;
         delete frame;
