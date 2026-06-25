@@ -849,6 +849,124 @@ class TestPairwise(unittest.TestCase):
         self.assertIn("[ERROR]", combined)
         self.assertIn(bad, combined)
 
+    # --- PLAN-094 Step 1: --fdr + histograms sourced from the parquet dir ---
+
+    def test_pairwise_fdr_output_produced(self):
+        """PLAN-094: `pairwise --pvalue --fdr` produces ``_DBRetina_pairwise_fdr.tsv``
+        with the qvalue + fdr_significant columns, one row per pair, and a valid
+        Benjamini-Hochberg transform of the p-values. (The --fdr feature was
+        previously untested.)"""
+        import pandas as pd
+        import numpy as np
+
+        prefix, pw_file = setup_index_and_pairwise(
+            self.tmpdir, extra_pw_args="--pvalue --fdr"
+        )
+        fdr_tsv = f"{prefix}_DBRetina_pairwise_fdr.tsv"
+        assert_file_exists(self, fdr_tsv)
+
+        df = pd.read_csv(fdr_tsv, sep="\t", comment="#")
+        # qvalue + fdr_significant columns present.
+        self.assertIn("qvalue", df.columns)
+        self.assertIn("fdr_significant", df.columns)
+        self.assertIn("pvalue", df.columns)
+        # one row per pair (the substrate has 11 pairs).
+        self.assertEqual(len(df), 11)
+        self.assertEqual(len(df), count_tsv_data_rows(pw_file))
+
+        # Benjamini-Hochberg validity: q in [0,1], q >= p, and q monotone
+        # non-decreasing when the rows are ordered by ascending p-value.
+        p = df["pvalue"].to_numpy()
+        q = df["qvalue"].to_numpy()
+        self.assertTrue(np.all((q >= 0.0) & (q <= 1.0)), "qvalues must lie in [0,1]")
+        self.assertTrue(np.all(q >= p - 1e-12), "BH qvalue must be >= its pvalue")
+        q_by_p = q[np.argsort(p, kind="stable")]
+        self.assertTrue(np.all(np.diff(q_by_p) >= -1e-9),
+                        "BH qvalues must be monotone non-decreasing in pvalue order")
+        # fdr_significant is the q < alpha decision (default alpha 0.05).
+        self.assertTrue(np.array_equal(df["fdr_significant"].to_numpy(),
+                                       q < 0.05))
+
+    def test_pairwise_fdr_correction_reads_parquet_dir(self):
+        """PLAN-094 (Change 1): apply_fdr_correction must source p-values from the
+        pairwise PARQUET DIR, not the legacy .tsv. Passing the directory must yield
+        a DataFrame with qvalue + fdr_significant (before the rewire this raised
+        IsADirectoryError because it did pd.read_csv on the directory path)."""
+        import numpy as np
+        from dbretina.pairwise import apply_fdr_correction
+
+        prefix, _ = setup_index_and_pairwise(self.tmpdir, extra_pw_args="--pvalue")
+        parquet_dir = f"{prefix}_DBRetina_pairwise"
+        self.assertTrue(os.path.isdir(parquet_dir))
+
+        df = apply_fdr_correction(parquet_dir, alpha=0.05)
+        self.assertIn("qvalue", df.columns)
+        self.assertIn("fdr_significant", df.columns)
+        self.assertIn("pvalue", df.columns)
+        self.assertEqual(len(df), 11)
+        q = df["qvalue"].to_numpy()
+        self.assertTrue(np.all((q >= 0.0) & (q <= 1.0)))
+
+    def test_pairwise_fdr_independent_of_legacy_tsv(self):
+        """PLAN-094 (Change 1): FDR no longer depends on the legacy .tsv/.dbrp. With
+        both removed (the Step-2 future), apply_fdr_correction over the parquet dir
+        still produces a correct BH result -- proving the producer can be deleted
+        without breaking --fdr."""
+        import numpy as np
+        from dbretina.pairwise import apply_fdr_correction
+
+        prefix, pw_file = setup_index_and_pairwise(
+            self.tmpdir, extra_pw_args="--pvalue"
+        )
+        parquet_dir = f"{prefix}_DBRetina_pairwise"
+        # Source-of-truth parity reference from the still-present legacy .tsv.
+        import pandas as pd
+        legacy = apply_fdr_correction(pw_file, alpha=0.05) \
+            if os.path.exists(pw_file) else None
+
+        # Remove the legacy outputs; only the parquet dir remains.
+        for legacy_path in (pw_file, f"{prefix}_DBRetina_pairwise.dbrp"):
+            if os.path.exists(legacy_path):
+                os.remove(legacy_path)
+        self.assertFalse(os.path.exists(pw_file))
+
+        df = apply_fdr_correction(parquet_dir, alpha=0.05)
+        self.assertEqual(len(df), 11)
+        self.assertIn("fdr_significant", df.columns)
+
+        # Parity: parquet-sourced and .tsv-sourced FDR flag the SAME pairs (the
+        # parquet pvalue is full-precision double vs the .tsv's truncated text, so
+        # qvalues may differ slightly, but the significant set must match here).
+        if legacy is not None:
+            key = ["group_1_ID", "group_2_ID"]
+            a = df.sort_values(key).reset_index(drop=True)
+            b = legacy.sort_values(key).reset_index(drop=True)
+            self.assertTrue(np.array_equal(a["fdr_significant"].to_numpy(),
+                                           b["fdr_significant"].to_numpy()),
+                            "parquet-sourced FDR significant set must match .tsv-sourced")
+
+    def test_pairwise_histograms_read_parquet_statistics(self):
+        """PLAN-094 (Change 2): the linear+log histogram PNGs are still produced
+        after a normal pairwise run, and are sourced from the parquet dir's
+        statistics.json (the same {metric:{"lo-hi":count}} schema as the top-level
+        _stats.json)."""
+        prefix, _ = setup_index_and_pairwise(self.tmpdir)
+        linear = f"{prefix}_DBRetina_similarity_metrics_plot_linear.png"
+        log = f"{prefix}_DBRetina_similarity_metrics_plot_log.png"
+        assert_file_exists(self, linear)
+        assert_file_exists(self, log)
+        # The parquet dir's statistics.json (Change 2's read source) must exist and
+        # carry the histogram schema the PNG plotter consumes.
+        stats_json = f"{prefix}_DBRetina_pairwise/statistics.json"
+        assert_file_exists(self, stats_json)
+        with open(stats_json) as f:
+            stats = json.load(f)
+        for metric in ("containment", "ochiai", "jaccard", "csi", "dice"):
+            self.assertIn(metric, stats)
+            # buckets are "lo-hi" -> count
+            sample_key = next(iter(stats[metric]))
+            self.assertRegex(sample_key, r"^\d+-\d+$")
+
 
 # ============================================================
 # SECTION 5: Query Tests

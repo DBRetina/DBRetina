@@ -91,12 +91,34 @@ def get_command():
             _sys_argv[i+1] = os.path.abspath(_sys_argv[i+1])
     return "#command: DBRetina " + " ".join(_sys_argv[1:])
 
-def apply_fdr_correction(tsv_path, alpha=0.05, method='fdr_bh'):
+# The legacy ``_DBRetina_pairwise_fdr.tsv`` column LAYOUT (matches the Phase-3
+# .tsv header + the BH columns). The parquet store yields lowercase id columns
+# and no name columns, so we resolve names and rename ids to reproduce the same
+# column order/names (PLAN-094 Change 1). NOTE: the source moved from the .tsv to
+# the parquet dir, so the numeric VALUES are now full-precision parquet floats --
+# the pvalue is full float64 (was ostream-truncated text) and the metric columns
+# are full float32 (the .tsv rounded them to 1 decimal via %.1f). This is an
+# accuracy improvement; FDR correctness is unaffected (qvalue derives from pvalue).
+_FDR_TSV_COLUMNS = [
+    "group_1_ID", "group_2_ID", "group_1_name", "group_2_name",
+    "shared_features", "containment", "ochiai", "jaccard", "csi", "dice",
+    "odds_ratio", "pvalue", "qvalue", "fdr_significant",
+]
+
+
+def apply_fdr_correction(pairwise_path, alpha=0.05, method='fdr_bh'):
     """
-    Apply FDR correction to p-values in pairwise output TSV.
+    Apply FDR correction to the p-values in a pairwise result.
+
+    Reads the pairwise PARQUET DIR (``<prefix>_DBRetina_pairwise/``) via the
+    PairwiseStore -- the full-precision (float64) p-value source -- rather than
+    the ostream-truncated legacy ``.tsv``. The returned DataFrame matches the
+    legacy ``_DBRetina_pairwise_fdr.tsv`` columns (group ids/names + metrics +
+    pvalue) plus ``qvalue`` and ``fdr_significant``.
 
     Args:
-        tsv_path: Path to the pairwise TSV file
+        pairwise_path: Path to the pairwise parquet directory (a sibling .tsv
+            path resolves to it too, via compat.open_pairwise).
         alpha: Significance threshold (default: 0.05)
         method: Correction method ('fdr_bh' for Benjamini-Hochberg)
 
@@ -109,8 +131,22 @@ def apply_fdr_correction(tsv_path, alpha=0.05, method='fdr_bh'):
             "Install with: pip install 'DBRetina[stats]' or pip install 'DBRetina[all]'"
         )
 
-    # Read TSV, skipping comment lines
-    df = pd.read_csv(tsv_path, sep='\t', comment='#')
+    from dbretina.compat import open_pairwise
+
+    store = open_pairwise(pairwise_path)
+    if store is None:
+        raise FileNotFoundError(
+            f"pairwise parquet directory not found for: {pairwise_path}"
+        )
+    try:
+        if not store.has_pvalue:
+            raise ValueError(
+                "No 'pvalue' column found. Run pairwise with --pvalue flag first."
+            )
+        df = store.to_pandas()
+        store.resolve_names(df)
+    finally:
+        store.close()
 
     if 'pvalue' not in df.columns:
         raise ValueError("No 'pvalue' column found. Run pairwise with --pvalue flag first.")
@@ -120,6 +156,11 @@ def apply_fdr_correction(tsv_path, alpha=0.05, method='fdr_bh'):
 
     df['qvalue'] = qvalues
     df['fdr_significant'] = qvalues < alpha
+
+    # Reproduce the legacy _fdr.tsv column names/order: the store uses lowercase
+    # group_1_id/group_2_id, the .tsv used group_1_ID/group_2_ID.
+    df = df.rename(columns={"group_1_id": "group_1_ID", "group_2_id": "group_2_ID"})
+    df = df[_FDR_TSV_COLUMNS]
 
     return df
 
@@ -193,24 +234,19 @@ def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pva
             "For multiple testing correction, consider using --fdr flag."
         )
 
-    stats_json_path = f"{index_prefix}_DBRetina_pairwise_stats.json"
-    dbrp_path = f"{index_prefix}_DBRetina_pairwise.dbrp"
-    tsv_path = f"{index_prefix}_DBRetina_pairwise.tsv"
+    # PLAN-094: read both the histogram stats and the FDR p-values from the
+    # pairwise PARQUET DIR (Phase 2), not the Phase-3 top-level _stats.json / .tsv.
+    parquet_dir = f"{index_prefix}_DBRetina_pairwise"
+    parquet_stats_json = os.path.join(parquet_dir, "statistics.json")
     linear_histo = f"{index_prefix}_DBRetina_similarity_metrics_plot_linear.png"
     log_histo = f"{index_prefix}_DBRetina_similarity_metrics_plot_log.png"
 
-    if os.path.exists(dbrp_path) and not os.path.exists(stats_json_path):
-        # Read statistics from .dbrp binary file
-        stats_json_str = dbretina_internal.dbrp_load_statistics(dbrp_path)
-        stats_data = json.loads(stats_json_str)
-        with open(stats_json_path, 'w') as f:
-            json.dump(stats_data, f, indent=2)
-
-    # Apply FDR correction if requested
-    if apply_fdr and os.path.exists(tsv_path):
+    # Apply FDR correction if requested. Guard on the parquet dir (the new source)
+    # rather than the legacy .tsv.
+    if apply_fdr and os.path.isdir(parquet_dir):
         ctx.obj.INFO(f"Applying Benjamini-Hochberg FDR correction (alpha={fdr_alpha})...")
         try:
-            df = apply_fdr_correction(tsv_path, alpha=fdr_alpha)
+            df = apply_fdr_correction(parquet_dir, alpha=fdr_alpha)
 
             # Count significant pairs
             raw_sig = (df['pvalue'] < fdr_alpha).sum()
@@ -228,7 +264,7 @@ def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pva
             ctx.obj.ERROR(f"FDR correction failed: {e}")
 
     ctx.obj.INFO(f"Plotting similarity metrics distribution to {linear_histo} and {log_histo}")
-    plot_histogram(stats_json_path, linear_histo, use_log=False)
-    plot_histogram(stats_json_path, log_histo, use_log=True)
+    plot_histogram(parquet_stats_json, linear_histo, use_log=False)
+    plot_histogram(parquet_stats_json, log_histo, use_log=True)
 
     ctx.obj.SUCCESS("Done.")
