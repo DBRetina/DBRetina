@@ -794,6 +794,76 @@ class TestPairwise(unittest.TestCase):
         assert_file_exists(self, f"{prefix}_DBRetina_similarity_metrics_plot_log.png")
         self.assertEqual(count_parquet_data_rows(pw_dir), 11)
 
+    # ---- PLAN-096 commit 2: progress bar + runtime summary + --debug / --no-progress ----
+
+    def test_pairwise_summary_line_always_printed(self):
+        """The one-line runtime summary (with 'peak memory') always goes to
+        stderr, and must not pollute stdout. Printed by Python (PLAN-096
+        commit 2) so 'total' is the true end-to-end wall, matching the index
+        summary format."""
+        asc = write_file(os.path.join(self.tmpdir, "test.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        rc, stdout, stderr = run_command(f"DBRetina pairwise -i {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertIn("pairwise done", stderr, "summary line missing from stderr")
+        self.assertIn("peak memory", stderr)
+        self.assertNotIn("peak memory", stdout)
+
+    def test_pairwise_summary_total_is_realistic_wall(self):
+        """`total` must be the true end-to-end Python wall (covers startup + the
+        post-compute PNG plotting), NOT the ~0s C++ compute. On a tiny index the
+        compute is sub-millisecond, yet the command does real work (load + plot),
+        so total must be strictly > 0 and >= the build stage -- a discriminator
+        the old C++ compute-total (which printed total 0.0s) would fail."""
+        import re
+        asc = write_file(os.path.join(self.tmpdir, "test.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        rc, stdout, stderr = run_command(f"DBRetina pairwise -i {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        m = re.search(r"pairwise done .*?· build (\d+\.\d+)s.*?· total (\d+\.\d+)s",
+                      stderr)
+        self.assertIsNotNone(m, f"could not parse summary stages from: {stderr!r}")
+        build_s, total_s = float(m.group(1)), float(m.group(2))
+        self.assertGreater(total_s, 0.0,
+                           "total must be the real wall, not the ~0 compute")
+        self.assertGreaterEqual(total_s, build_s,
+                                "total (end-to-end wall) must be >= the build stage")
+
+    def test_pairwise_debug_shows_dev_lines(self):
+        """--debug surfaces the C++ '[dev]' per-phase diagnostic lines."""
+        asc = write_file(os.path.join(self.tmpdir, "test.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        rc, stdout, stderr = run_command(f"DBRetina pairwise --debug -i {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertIn("[dev]", stdout + stderr, "--debug should show [dev] lines")
+
+    def test_pairwise_default_hides_dev_lines(self):
+        """Default (no --debug) run suppresses the C++ '[dev]' phase lines."""
+        asc = write_file(os.path.join(self.tmpdir, "test.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        rc, stdout, stderr = run_command(f"DBRetina pairwise -i {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertNotIn("[dev]", stdout + stderr, "default run must not show [dev] lines")
+
+    def test_pairwise_no_progress_keeps_summary(self):
+        """--no-progress / non-TTY: no bar (carriage-return) leaks, summary stays."""
+        asc = write_file(os.path.join(self.tmpdir, "test.asc"), TEST_ASC_CONTENT)
+        prefix = os.path.join(self.tmpdir, "idx")
+        rc, _, stderr = run_command(f"DBRetina index -a {asc} -o {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        rc, stdout, stderr = run_command(f"DBRetina pairwise --no-progress -i {prefix}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertIn("pairwise done", stderr)
+        self.assertNotIn("\r", stderr, "non-TTY/--no-progress must not draw a bar")
+
     def test_pairwise_rerun_clears_stale_parquet_parts(self):
         """Regression: re-running pairwise with fewer threads must not leave stale
         parquet parts that silently inflate glob-based row counts."""

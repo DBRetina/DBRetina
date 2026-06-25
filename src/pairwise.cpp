@@ -1,5 +1,10 @@
 #include <iostream>
+#include <iomanip>
 #include <cstdint>
+#include <cstdlib>
+#include <atomic>
+#include <unistd.h>
+#include <map>
 #include <algorithm>
 #include <chrono>
 #include <boost/algorithm/string/join.hpp>
@@ -42,6 +47,48 @@ using BINS_FEATURE_COUNT = phmap::parallel_flat_hash_map<
     std::mutex>;
 
 typedef std::chrono::high_resolution_clock Time;
+
+// --- PLAN-096: coarse stderr progress bar -----------------------------------
+// A throttled `\rLabel [#####.....] NN% (n/total)` drawn to std::cerr. The hot
+// loop increments a std::atomic<size_t> ONCE per color (Phase 1) / per submap
+// (Phase 2) -- never per pair -- and only enters the (serialized) draw critical
+// section ~100 times total. Shown iff progress is enabled AND stderr is a TTY,
+// so logs/pipes/CI (and the non-TTY blackbox suite) see nothing.
+namespace dbretina_progress {
+
+    inline bool enabled() {
+        static const bool on =
+            !getenv("DBRETINA_NO_PROGRESS") && isatty(fileno(stderr));
+        return on;
+    }
+
+    inline void draw(const char* label, size_t done, size_t total) {
+        const int width = 20;
+        double frac = total ? (double)done / (double)total : 1.0;
+        if (frac > 1.0) frac = 1.0;
+        int filled = (int)(frac * width);
+        std::cerr << '\r' << label << " [";
+        for (int i = 0; i < width; ++i) std::cerr << (i < filled ? '#' : '.');
+        std::cerr << "] " << (int)(frac * 100 + 0.5) << "% ("
+                  << done << '/' << total << ")" << std::flush;
+    }
+
+    // Bump the shared counter (cheap, always) and -- only when a ~1% step is
+    // crossed -- redraw inside a single critical region to avoid interleaving.
+    inline void tick(std::atomic<size_t>& counter, size_t total,
+                     size_t step, const char* label) {
+        size_t done = counter.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (!enabled()) return;
+        if (done == total || done % step == 0) {
+#pragma omp critical(dbretina_progress)
+            draw(label, done, total);
+        }
+    }
+
+    inline void finish() {
+        if (enabled()) std::cerr << std::endl;
+    }
+}
 
 class Stats {
 private:
@@ -382,7 +429,7 @@ namespace dbretina {
     }
 
 
-    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command, bool calculate_pvalue, bool legacy_output) {
+    std::map<std::string, double> pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command, bool calculate_pvalue, bool legacy_output) {
 
         vector<string> allowed_distances = { "containment", "ochiai", "jaccard" };
         // cutoff_distance_type must be in allowed_distances
@@ -394,16 +441,20 @@ namespace dbretina {
         std::string dbri_path = index_prefix + ".dbri";
         auto dbri = DBRetinaIndex::open(dbri_path);
 
+        // Overall load-phase clock (mapping colors -> feature counting); summed
+        // into the end-of-run summary as the "load" stage (PLAN-096 Part A).
+        auto load_start = Time::now();
         auto begin_time = Time::now();
 
         // Load population size from metadata (fixes hardcoded 44260 bug)
         uint64_t population_size = dbri.get_population_size();
-        cout << "population_size: " << population_size << endl;
+        if (getenv("DBRETINA_DEBUG")) cout << "population_size: " << population_size << endl;
 
         // Load color_to_sources
         int_vec_map color_to_ids;
         dbri.load_color_to_sources(color_to_ids);
-        cout << "[dev] mapping colors to groups: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cout << "[dev] mapping colors to groups: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
         // Load namesMap
         flat_hash_map<int, std::string> namesMap;
@@ -414,7 +465,8 @@ namespace dbretina {
         begin_time = Time::now();
         int_int_map colorsCount;
         dbri.load_color_count(colorsCount);
-        cout << "[dev] parsing index colors: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cout << "[dev] parsing index colors: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
         // Load feature counts
         begin_time = Time::now();
@@ -430,9 +482,11 @@ namespace dbretina {
             fstream_featureCount << ++counter << '\t' << item.first << '\t' << item.second << '\n';
         }
         fstream_featureCount.close();
-        cout << "[dev] features counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cout << "[dev] features counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
         // Loading done
+        double load_secs = std::chrono::duration<double, std::milli>(Time::now() - load_start).count() / 1000;
 
         begin_time = Time::now();
         clock_t begin_detailed_pairwise_comb, begin_detailed_pairwise_edges, begin_detailed_pairwise_edges_insertion;
@@ -445,7 +499,8 @@ namespace dbretina {
         // convert map to vec for parallelization purposes.
         auto vec_color_to_ids = std::vector<std::pair<uint32_t, vector<uint32_t>>>(color_to_ids.begin(), color_to_ids.end());
 
-        cerr << "[dev] number of colors = " << vec_color_to_ids.size() << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cerr << "[dev] number of colors = " << vec_color_to_ids.size() << endl;
 
         double average_color_size = 0.0;
         for (auto const& item : vec_color_to_ids) {
@@ -453,7 +508,8 @@ namespace dbretina {
         }
         average_color_size /= vec_color_to_ids.size();
 
-        cerr << "[dev] average color size = " << (int)average_color_size << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cerr << "[dev] average color size = " << (int)average_color_size << endl;
 
         // Longest-processing-time-first: per-color work is O(color_size^2), so
         // dispatch the giant colors before the tail. `edges` is an order-independent
@@ -469,6 +525,11 @@ namespace dbretina {
 
         omp_set_num_threads(user_threads);
         begin_time = Time::now();
+
+        // Coarse progress over colors (one atomic bump per color; the draw is
+        // throttled to ~100 redraws). Per-pair work is untouched.
+        std::atomic<size_t> p1_done{ 0 };
+        size_t p1_step = std::max<size_t>(1, n / 100);
 
         // Dynamic scheduling balances the heavy-tailed per-color load: big colors
         // dominate the C(k,2) work and would otherwise pile onto one static block.
@@ -498,10 +559,15 @@ namespace dbretina {
                     );
                 }
             }
+            dbretina_progress::tick(p1_done, n, p1_step, "building");
         }
+        dbretina_progress::finish();
+        double build_secs = std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000;
 
-        cout << "[dev] pairwise hashmap construction: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
-        cout << "[dev] Number of pairwise comparisons: " << edges.size() << endl;
+        if (getenv("DBRETINA_DEBUG")) {
+            cout << "[dev] pairwise hashmap construction: " << build_secs << " secs" << endl;
+            cout << "[dev] Number of pairwise comparisons: " << edges.size() << endl;
+        }
         // --- Parquet output (parallel) ---
         std::string parquet_dir = index_prefix + "_DBRetina_pairwise";
         ParquetPairwiseWriter parquet_writer(parquet_dir, calculate_pvalue, user_threads, namesMap);
@@ -516,8 +582,11 @@ namespace dbretina {
         // which is safe here: Phase 1 (edges build) is complete, `edges` is frozen,
         // and there are no concurrent writers.
         omp_set_num_threads(user_threads);
+        const size_t n_submaps = edges.subcnt();
+        std::atomic<size_t> p2_done{ 0 };
+        size_t p2_step = std::max<size_t>(1, n_submaps / 100);
 #pragma omp parallel for schedule(dynamic)
-        for (size_t s = 0; s < edges.subcnt(); ++s) {
+        for (size_t s = 0; s < n_submaps; ++s) {
             int tid = omp_get_thread_num();
             edges.with_submap(s, [&](const PAIRS_COUNTER::EmbeddedSet& set) {
             for (const auto& edge : set) {
@@ -566,11 +635,16 @@ namespace dbretina {
                 parquet_writer.write_record(tid, prec);
             }
             });
+            dbretina_progress::tick(p2_done, n_submaps, p2_step, "writing");
         }
+        dbretina_progress::finish();
 
         parquet_writer.finalize(full_command, population_size, cutoff_distance_type, cutoff_threshold);
-        cout << "[dev] parallel parquet write: " << std::chrono::duration<double, std::milli>(Time::now() - parquet_begin).count() / 1000 << " secs" << endl;
-        cout << "[dev] wrote parquet pairwise to: " << parquet_dir << "/ (" << parquet_writer.get_stats().num_pairs << " pairs)" << endl;
+        double write_secs = std::chrono::duration<double, std::milli>(Time::now() - parquet_begin).count() / 1000;
+        if (getenv("DBRETINA_DEBUG")) {
+            cout << "[dev] parallel parquet write: " << write_secs << " secs" << endl;
+            cout << "[dev] wrote parquet pairwise to: " << parquet_dir << "/ (" << parquet_writer.get_stats().num_pairs << " pairs)" << endl;
+        }
 
         // --- Sequential TSV + .dbrp output (legacy, opt-in via --legacy-output) ---
         // Gated behind `legacy_output` (PLAN-094 Step-2b). The parquet writer above
@@ -578,8 +652,10 @@ namespace dbretina {
         // re-derives the same per-pair metrics to write the byte-identical legacy
         // `.tsv` + `.dbrp` + top-level `_DBRetina_pairwise_stats.json`. Default path
         // (legacy_output == false) skips it entirely -> ~4x faster, no recompute.
+        double legacy_secs = 0.0;
         if (legacy_output) {
-        cout << "[dev] writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv | Please wait..." << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cout << "[dev] writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv | Please wait..." << endl;
 
         Stats distances_stats;
 
@@ -759,8 +835,25 @@ namespace dbretina {
 
         // Finalize .dbrp
         pw.finalize_write(dbrp_stats, dbrp_metadata);
-        cout << "[dev] legacy TSV + .dbrp write: " << std::chrono::duration<double, std::milli>(Time::now() - legacy_begin).count() / 1000 << " secs" << endl;
-        cout << "[dev] wrote .dbrp binary pairwise file: " << index_prefix << "_DBRetina_pairwise.dbrp" << endl;
+        legacy_secs = std::chrono::duration<double, std::milli>(Time::now() - legacy_begin).count() / 1000;
+        if (getenv("DBRETINA_DEBUG")) {
+            cout << "[dev] legacy TSV + .dbrp write: " << legacy_secs << " secs" << endl;
+            cout << "[dev] wrote .dbrp binary pairwise file: " << index_prefix << "_DBRetina_pairwise.dbrp" << endl;
+        }
         } // end if (legacy_output)
+
+        // Return the per-stage wall clocks to the caller (Python) instead of
+        // printing a C++ summary here (PLAN-096 commit 2). The old C++ summary's
+        // `total` was just the sum/clock of pairwise() -- it MISSED Python startup
+        // and the post-compute PNG plotting (e.g. omim printed "total 0.0s" for a
+        // ~5.8s command). Python now wraps the whole command in perf_counter() and
+        // prints ONE honest line (matching the index summary), so `total` is the
+        // true end-to-end wall. legacy_secs stays 0.0 when --legacy-output is off.
+        return {
+            {"load", load_secs},
+            {"build", build_secs},
+            {"write", write_secs},
+            {"legacy", legacy_secs},
+        };
     }
 }

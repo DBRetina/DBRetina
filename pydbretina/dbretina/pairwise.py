@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import division
 import sys
+import time
+import resource
 import _dbretina_internal as dbretina_internal
 import click
 from dbretina.click_context import cli
@@ -174,8 +176,10 @@ def apply_fdr_correction(pairwise_path, alpha=0.05, method='fdr_bh'):
 @click.option('--fdr', 'apply_fdr', is_flag=True, default=False, help="Apply Benjamini-Hochberg FDR correction to p-values (requires --pvalue and statsmodels)")
 @click.option('--fdr-alpha', 'fdr_alpha', default=0.05, type=float, show_default=True, help="FDR significance threshold")
 @click.option('--legacy-output', 'legacy_output', is_flag=True, default=False, help="also write the legacy .tsv + .dbrp pairwise files (default: parquet only)")
+@click.option('--debug', "debug", is_flag=True, default=False, help="show verbose [dev] per-phase diagnostics")
+@click.option('--no-progress', "no_progress", is_flag=True, default=False, help="disable progress bars")
 @click.pass_context
-def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pvalue, apply_fdr, fdr_alpha, legacy_output):
+def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pvalue, apply_fdr, fdr_alpha, legacy_output, debug, no_progress):
     """
     Calculate pairwise similarities.
 
@@ -200,7 +204,13 @@ def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pva
     shared/min(s1,s2) (a single value per pair); directionality is not
     preserved.
     """
-    
+
+    # True end-to-end wall (PLAN-096 commit 2): start at the top of the command
+    # so `total` in the summary covers Python startup work, the C++ compute, the
+    # FDR pass, AND the post-compute PNG plotting -- not just the C++ compute
+    # (which is what the old C++-printed summary timed, hence "total 0.0s").
+    _t_start = time.perf_counter()
+
     # -i is a plain STRING (not click.Path), so existence isn't validated by
     # Click. Guard here so a missing/typo'd prefix gives a clean [ERROR] instead
     # of a raw RuntimeError traceback from the unwrapped dbretina_internal.pairwise
@@ -224,9 +234,17 @@ def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pva
     if calculate_pvalue:
         ctx.obj.INFO("Please wait for a while, calculating p-value may take a long time.")
 
+    # Control knobs passed to the C++ core via env vars so the nanobind binding
+    # signature stays unchanged (PLAN-096 Part C). The C++ pairwise() reads these
+    # via getenv: --debug -> [dev] lines, --no-progress -> suppress the bar.
+    if debug:
+        os.environ["DBRETINA_DEBUG"] = "1"
+    if no_progress:
+        os.environ["DBRETINA_NO_PROGRESS"] = "1"
+
     ctx.obj.INFO(
         f"Constructing the pairwise matrix using {user_threads} cores.")
-    dbretina_internal.pairwise(index_prefix, user_threads, similarity_type, cutoff, commands, calculate_pvalue, legacy_output)
+    stage_times = dbretina_internal.pairwise(index_prefix, user_threads, similarity_type, cutoff, commands, calculate_pvalue, legacy_output)
 
     # In the default (parquet-only) path, remove any stale legacy outputs left by a
     # prior --legacy-output (or pre-migration) run on this prefix. The fresh parquet
@@ -280,5 +298,22 @@ def main(ctx, index_prefix, user_threads, similarity_type, cutoff, calculate_pva
     ctx.obj.INFO(f"Plotting similarity metrics distribution to {linear_histo} and {log_histo}")
     plot_histogram(parquet_stats_json, linear_histo, use_log=False)
     plot_histogram(parquet_stats_json, log_histo, use_log=True)
+
+    # One honest one-line runtime summary (stderr only; always printed), matching
+    # the index summary format (PLAN-096 commit 2). The per-stage clocks come from
+    # the C++ core (now returned as a dict); `total` is the true end-to-end wall
+    # measured here, and peak RSS via getrusage (Linux KiB -> GiB).
+    _total = time.perf_counter() - _t_start
+    _peak_gib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024.0 * 1024.0)
+    _parts = [
+        f"load {stage_times['load']:.1f}s",
+        f"build {stage_times['build']:.1f}s",
+        f"write {stage_times['write']:.1f}s",
+    ]
+    if legacy_output or stage_times.get('legacy', 0.0) > 0:
+        _parts.append(f"legacy {stage_times['legacy']:.1f}s")
+    _parts.append(f"total {_total:.1f}s")
+    _parts.append(f"peak memory {_peak_gib:.2f} GiB")
+    print("✓ pairwise done · " + " · ".join(_parts), file=sys.stderr)
 
     ctx.obj.SUCCESS("Done.")
