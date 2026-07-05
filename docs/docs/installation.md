@@ -2,7 +2,7 @@
 
 ## System requirements
 
-The current version of DBRetina is compatible exclusively with `x86_64` architecture systems running Linux and Python versions 3.8 to 3.11. In the future we will support conda installations and Docker.
+The current version of DBRetina targets `x86_64` Linux and requires **Python 3.11 or newer** (3.12 recommended; prebuilt wheels are published for CPython 3.12 and 3.13). Docker support is planned.
 
 ## Installation
 
@@ -12,10 +12,20 @@ To install DBRetina, type in the terminal:
 pip install DBRetina
 ```
 
-Alternavely if you're working in a conda environment, you can type:
+Alternatively, if you're working in a conda environment, you can type:
 
-```
-conda create -n dbretina python=3.10
+```sh
+conda create -n dbretina python=3.12
 conda activate dbretina
 pip install DBRetina
+```
+
+### Building from source
+
+The commands above install the published wheel. To build from source you need the C++ toolchain and Arrow/Parquet; create the environment from `environment.yml`:
+
+```sh
+conda env create -f environment.yml
+conda activate dbretina
+pip install '.[all]'
 ```
