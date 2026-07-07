@@ -56,6 +56,9 @@ _safe_add_command("cmd_neighbors", "main", "neighbors")
 _safe_add_command("cmd_shared_genes", "main", "shared-genes")
 _safe_add_command("cmd_gene_search", "main", "gene-search")
 _safe_add_command("cmd_genescore", "main", "genescore")
+_safe_add_command("cmd_connect", "main", "connect")
+_safe_add_command("cmd_module", "main", "module")
+_safe_add_command("cmd_enrich", "main", "enrich")
 
 
 if __name__ == '__main__':

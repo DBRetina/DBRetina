@@ -1,7 +1,6 @@
 """DBRetina neighbors command — show top co-occurring groups."""
 
 import os
-import sys
 
 import click
 from dbretina.click_context import cli
@@ -29,11 +28,16 @@ import dbretina.dbretina_doc_url as dbretina_doc
     help="Number of top results to show",
 )
 @click.option(
+    "--min-shared", "min_shared", default=0, show_default=True,
+    type=click.IntRange(min=0),
+    help="Drop pairs sharing fewer than this many features",
+)
+@click.option(
     "-o", "--output", default=None, type=str,
     help="Output file path (default: print to stdout)",
 )
 @click.pass_context
-def main(ctx, data_path, group_name, metric, cutoff, top, output):
+def main(ctx, data_path, group_name, metric, cutoff, top, min_shared, output):
     """Show top co-occurring groups for a target group.
 
     \b
@@ -74,6 +78,7 @@ def main(ctx, data_path, group_name, metric, cutoff, top, output):
             f"FROM pairs "
             f"WHERE (group_1_id = {gid} OR group_2_id = {gid}) "
             f"AND {metric} {cutoff_operator(metric)} {cutoff} "
+            f"AND shared_features >= {min_shared} "
             f"ORDER BY {metric} {order_dir} LIMIT {top}"
         ).fetchdf()
 

@@ -8891,6 +8891,107 @@ class TestExportNeo4j(unittest.TestCase):
         self.assertNotIn("pvalue >=", combined)
 
 
+class TestNetworkCommands(unittest.TestCase):
+    """Network-analysis commands (neighbors --min-shared, connect, module, enrich).
+
+    Shared fixture overlaps: A={Alpha,Beta,Gamma,Delta,Epsilon}, B={Alpha,Beta,Gamma}
+    (A-B share 3), F identical to A (share 5), A-C share 2, A-E share 1, A-D share 0.
+    D is nearly isolated (shares one gene with E only), so A reaches D only through E.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw = _ensure_shared_fixture()
+
+    def test_min_shared_filters_low_overlap_neighbours(self):
+        """A's neighbours F(5), B(3), C(2), E(1): --min-shared 3 keeps F, B only."""
+        rc, out, err = run_command(
+            f'DBRetina neighbors -d {self.pw} "groupa" -m containment -c 0 --min-shared 3'
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertIn("groupf", out)
+        self.assertIn("groupb", out)
+        self.assertNotIn("groupc", out)
+        self.assertNotIn("groupe", out)
+
+    def test_min_shared_zero_keeps_low_overlap(self):
+        """--min-shared 0 (default) keeps the single-gene-overlap neighbour E."""
+        rc, out, err = run_command(
+            f'DBRetina neighbors -d {self.pw} "groupa" -m containment -c 0 --min-shared 0'
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertIn("groupe", out)
+
+    def test_connect_through_bridge_node(self):
+        """A and D do not overlap, so connect must route A -> E -> D (2 hops)."""
+        rc, out, err = run_command(
+            f'DBRetina connect -d {self.pw} "groupa" "groupd" -m containment -c 0'
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("Traceback", err)
+        self.assertIn("groupe", out)
+        self.assertIn("2-hop", err)
+
+    def test_connect_missing_group_clean_error(self):
+        rc, out, err = run_command(
+            f'DBRetina connect -d {self.pw} "groupa" "nosuchgroup" -m containment -c 0'
+        )
+        self.assertNotEqual(rc, 0)
+        self.assertNotIn("Traceback", err)
+        self.assertIn("[ERROR]", err)
+
+    def test_module_writes_characteristic_neighbours(self):
+        out_file = os.path.join(tempfile.mkdtemp(), "mod.txt")
+        rc, out, err = run_command(
+            f'DBRetina module -d {self.pw} "groupa" -m containment -c 0 --min-shared 3 -o {out_file}'
+        )
+        self.assertEqual(rc, 0, err)
+        with open(out_file) as f:
+            names = {line.strip() for line in f if line.strip()}
+        self.assertIn("groupf", names)
+        self.assertIn("groupb", names)
+        self.assertNotIn("groupc", names)
+
+    def test_enrich_ranks_and_has_header(self):
+        mod = os.path.join(tempfile.mkdtemp(), "module.txt")
+        with open(mod, "w") as f:
+            f.write("groupf\ngroupb\n")
+        rc, out, err = run_command(
+            f'DBRetina enrich -d {self.pw} --module {mod} -m containment -c 0'
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("Traceback", err)
+        self.assertIn("enrichment_p", out)
+        self.assertIn("groupa", out)
+
+    def test_enrich_empty_module_clean_error(self):
+        mod = os.path.join(tempfile.mkdtemp(), "empty.txt")
+        with open(mod, "w") as f:
+            f.write("nosuchgroup\n")
+        rc, out, err = run_command(
+            f'DBRetina enrich -d {self.pw} --module {mod} -m containment -c 0'
+        )
+        self.assertNotEqual(rc, 0)
+        self.assertIn("[ERROR]", err)
+
+    def test_enrich_exclude_module_drops_members(self):
+        """--exclude-module keeps only new candidates, not the module's own members."""
+        mod = os.path.join(tempfile.mkdtemp(), "module.txt")
+        with open(mod, "w") as f:
+            f.write("groupa\ngroupf\n")
+        rc, out, err = run_command(
+            f'DBRetina enrich -d {self.pw} --module {mod} -m containment -c 0 --exclude-module'
+        )
+        self.assertEqual(rc, 0, err)
+        ranked = [
+            line.split("\t")[0]
+            for line in out.splitlines()
+            if line and not line.startswith("group\t")
+        ]
+        self.assertNotIn("groupa", ranked)
+        self.assertNotIn("groupf", ranked)
+
+
 # ============================================================
 # Main
 # ============================================================
