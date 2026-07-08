@@ -1,6 +1,7 @@
-#include "kSpider.hpp"
+#include "dbretina_core.hpp"
 #include <iostream>
 #include <cstdint>
+#include <cstdlib>
 #include <chrono>
 #include "DBRetina_kf.hpp"
 #include "parallel_hashmap/phmap.h"
@@ -15,10 +16,11 @@
 #include "parallel_hashmap/phmap.h"
 #include "parallel_hashmap/phmap_dump.h"
 #include "DBRetina.hpp"
+#include "DBRetinaIndex.hpp"
 
 
 
-namespace kSpider {
+namespace dbretina {
 
     void dbretina_indexing(string json_file, string user_index_prefix) {
 
@@ -36,7 +38,7 @@ namespace kSpider {
         
 
         flat_hash_map<string, string> namesMap;
-        int selective_kSize = 31;
+        int selective_hashSize = 31;
 
         flat_hash_map<string, uint64_t> tagsMap;
         flat_hash_map<string, uint64_t> groupNameMap;
@@ -47,20 +49,20 @@ namespace kSpider {
         string line;
         priority_queue<uint64_t, vector<uint64_t>, std::greater<uint64_t>> freeColors;
         flat_hash_map<string, uint64_t> groupCounter;
-        int detected_kSize = 0;
+        int detected_hashSize = 0;
 
         int total_groups_number = 0;
-        frame = new DBRetina_PHMAP(selective_kSize);
+        frame = new DBRetina_PHMAP(selective_hashSize);
 
-        flat_hash_map<string, uint32_t> groupName_to_kmerCount;
+        flat_hash_map<string, uint32_t> groupName_to_featureCount;
 
-        // hashed_MAP* groupName_to_kmerSet = new(hashed_MAP);
-        hashed_MAP groupName_to_kmerSet; // = new(hashed_MAP);
+        // hashed_MAP* groupName_to_featureSet = new(hashed_MAP);
+        hashed_MAP groupName_to_featureSet; // = new(hashed_MAP);
 
-        parse_dbretina_json(json_file, &groupName_to_kmerSet);
+        parse_dbretina_json(json_file, &groupName_to_featureSet);
 
 
-        for (auto& group : groupName_to_kmerSet) {
+        for (auto& group : groupName_to_featureSet) {
             total_groups_number++;
             string group_name = group.first;
 
@@ -96,7 +98,7 @@ namespace kSpider {
 
 
         int currIndex = 0;
-        string kmer;
+        string feature;
         uint64_t tagBits = 0;
         uint64_t maxTagValue = (1ULL << tagBits) - 1;
 
@@ -106,12 +108,12 @@ namespace kSpider {
         int processed_sigs_count = 0;
 
         // START
-        for (auto& group : groupName_to_kmerSet) {
+        for (auto& group : groupName_to_featureSet) {
             string group_name = group.first;
-            flat_hash_set<uint64_t>& kmerSet = group.second;
+            flat_hash_set<uint64_t>& featureSet = group.second;
 
             //START
-            for (auto it = kmerSet.begin(); it != kmerSet.end(); ++it) {
+            for (auto it = featureSet.begin(); it != featureSet.end(); ++it) {
 
 
                 // cout << "Processing " << ++processed_sigs_count << "/" << total_groups_number << " | " << group_name << " ... " << endl;
@@ -122,34 +124,28 @@ namespace kSpider {
                 string readName = group_name;
                 string groupName = group_name;
 
-                uint64_t readTag = groupNameMap.find(groupName)->second;
+                uint64_t groupTag = groupNameMap.find(groupName)->second;
 
 
                 convertMap.clear();
-                convertMap.insert(make_pair(0, readTag));
-                convertMap.insert(make_pair(readTag, readTag));
+                convertMap.insert(make_pair(0, groupTag));
+                convertMap.insert(make_pair(groupTag, groupTag));
 
-                auto loaded_kmers_it = kmerSet.begin();
-                groupName_to_kmerCount[groupName] = kmerSet.size();
+                auto loaded_features_it = featureSet.begin();
+                groupName_to_featureCount[groupName] = featureSet.size();
 
 
-                while (loaded_kmers_it != kmerSet.end()) {
-                    uint64_t hashed_kmer = *loaded_kmers_it;
-                    uint64_t currentTag = frame->getCount(hashed_kmer);
+                while (loaded_features_it != featureSet.end()) {
+                    uint64_t hashed_feature = *loaded_features_it;
+                    uint64_t currentTag = frame->getCount(hashed_feature);
                     auto itc = convertMap.find(currentTag);
                     if (itc == convertMap.end()) {
                         vector<uint32_t> colors = legend->find(currentTag)->second;
-                        auto tmpiT = find(colors.begin(), colors.end(), readTag);
+                        auto tmpiT = find(colors.begin(), colors.end(), groupTag);
                         if (tmpiT == colors.end()) {
-                            colors.push_back(readTag);
+                            colors.push_back(groupTag);
                             sort(colors.begin(), colors.end());
                         }
-
-                        // [OPTIMIZE] [TODO] Optimize colors concatenation
-                        // string colorsString = to_string(colors[0]);
-                        // for (int k = 1; k < colors.size(); k++) {
-                        //     colorsString += ";" + to_string(colors[k]);
-                        // }
 
                         std::stringstream ss;
                         if (!colors.empty()) {
@@ -159,26 +155,8 @@ namespace kSpider {
                             }
                         }
                         std::string colorsString = ss.str();
-                        // END [OPTIMIZE] [TODO] Optimize colors concatenation
-
 
                         auto itTag = tagsMap.find(colorsString);
-
-                        // START [OPTIMIZE] [TODO] Optimize
-                        // if (itTag == tagsMap.end()) {
-                        //     uint64_t newColor;
-                        //     if (freeColors.size() == 0) {
-                        //         newColor = groupID++;
-                        //     }
-                        //     else {
-                        //         newColor = freeColors.top();
-                        //         freeColors.pop();
-                        //     }
-                        //     tagsMap.insert(make_pair(colorsString, newColor));
-                        //     legend->insert(make_pair(newColor, colors));
-                        //     itTag = tagsMap.find(colorsString);
-                        //     colorsCount[newColor] = 0;
-                        // }
 
                         if (itTag == tagsMap.end()) {
                             uint64_t newColor;
@@ -192,35 +170,11 @@ namespace kSpider {
                             itTag = inserted.first;
                             colorsCount[newColor] = 0;
                         }
-                        // END [OPTIMIZE] [TODO] Optimize
                         uint64_t newColor = itTag->second;
 
                         convertMap.emplace(currentTag, newColor);
                         itc = convertMap.find(currentTag);
                     }
-                    // START [OPTIMIZE] [TODO] Optimize
-                    // if (itc->second != currentTag) {
-
-                    //     colorsCount[currentTag]--;
-                    //     if (colorsCount[currentTag] == 0 && currentTag != 0) {
-
-                    //         auto _invGroupNameIT = inv_groupNameMap.find(currentTag);
-                    //         if (_invGroupNameIT == inv_groupNameMap.end()) {
-                    //             freeColors.push(currentTag);
-                    //             vector<uint32_t> colors = legend->find(currentTag)->second;
-                    //             string colorsString = to_string(colors[0]);
-                    //             for (unsigned int k = 1; k < colors.size(); k++) {
-                    //                 colorsString += ";" + to_string(colors[k]);
-                    //             }
-                    //             tagsMap.erase(colorsString);
-                    //             legend->erase(currentTag);
-                    //             if (convertMap.find(currentTag) != convertMap.end())
-                    //                 convertMap.erase(currentTag);
-                    //         }
-
-                    //     }
-                    //     colorsCount[itc->second]++;
-                    // }
 
                     if (itc->second != currentTag) {
                         --colorsCount[currentTag];
@@ -247,25 +201,21 @@ namespace kSpider {
                         ++colorsCount[itc->second];
                     }
 
-                    // END [OPTIMIZE] [TODO] Optimize
-
-
-
-                    frame->setCount(hashed_kmer, itc->second);
-                    if (frame->getCount(hashed_kmer) != itc->second) {
+                    frame->setCount(hashed_feature, itc->second);
+                    if (frame->getCount(hashed_feature) != itc->second) {
                         //frame->setC(kmer,itc->second);
-                        cout << "Error Founded " << hashed_kmer << " from sequence " << readName << " expected "
-                            << itc->second << " found " << frame->getCount(hashed_kmer) << endl;
+                        cout << "Error Founded " << hashed_feature << " from group " << readName << " expected "
+                            << itc->second << " found " << frame->getCount(hashed_feature) << endl;
                         exit(1);
                     }
-                    loaded_kmers_it++;
+                    loaded_features_it++;
                 }
                 readID += 1;
                 groupCounter[groupName]--;
-                if (colorsCount[readTag] == 0) {
+                if (colorsCount[groupTag] == 0) {
                     if (groupCounter[groupName] == 0) {
-                        freeColors.push(readTag);
-                        legend->erase(readTag);
+                        freeColors.push(groupTag);
+                        legend->erase(groupTag);
                     }
 
                 }
@@ -278,108 +228,83 @@ namespace kSpider {
 
         }
 
-        cerr << "[dev] Total number of colors: " << legend->size() << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cerr << "[dev] Total number of colors: " << legend->size() << endl;
 
         string output_prefix = user_index_prefix;
 
-        // Dump kmer count
-        flat_hash_map<uint32_t, uint32_t> groupID_to_kmerCount;
-        for (auto& [groupName, kmerCount] : groupName_to_kmerCount) {
-            groupID_to_kmerCount[groupNameMap[groupName]] = kmerCount;
+        // Build groupID_to_featureCount
+        flat_hash_map<uint32_t, uint32_t> groupID_to_featureCount;
+        for (auto& [groupName, featureCount] : groupName_to_featureCount) {
+            groupID_to_featureCount[groupNameMap[groupName]] = featureCount;
         }
 
-        phmap::BinaryOutputArchive ar_out(string(output_prefix + "_groupID_to_featureCount.bin").c_str());
-        groupID_to_kmerCount.phmap_dump(ar_out);
-
-        // groupID_to_kmerCount to TSV
-        ofstream groupID_to_kmerCount_tsv(output_prefix + "_groupID_to_featureCount.tsv");
-        groupID_to_kmerCount_tsv << "groupName\tkmerCount" << endl;
-        for (auto& [groupID, kmerCount] : groupID_to_kmerCount) {
-            groupID_to_kmerCount_tsv << inv_groupNameMap[groupID] << "\t" << kmerCount << endl;
+        // Compute color statistics for logging
+        size_t selected_colors = 0;
+        for (auto& [color, sources] : *legend) {
+            if (colorsCount[color] > 0) selected_colors++;
         }
-        groupID_to_kmerCount_tsv.close();
+        if (getenv("DBRETINA_DEBUG"))
+            cerr << "[dev] Total selected colors: " << selected_colors << endl;
 
-
-
-        // Dump color->sources
-        double average_color_size = 0;
-        double color_size_standard_deviation = 0;
-        auto color_to_sources = new phmap::flat_hash_map<uint64_t, phmap::flat_hash_set<uint32_t>>();
-        for (auto it : *legend) {
-            if (colorsCount[it.first] == 0) continue;
-            color_size_standard_deviation += pow(it.second.size() - average_color_size, 2);
-            average_color_size += it.second.size();
-            phmap::flat_hash_set<uint32_t> tmp(std::make_move_iterator(it.second.begin()), std::make_move_iterator(it.second.end()));
-            color_to_sources->operator[](it.first) = tmp;
+        // Find max group ID for metadata
+        uint64_t max_group_id = 0;
+        for (auto& [name, gid] : groupNameMap) {
+            if (gid > max_group_id) max_group_id = gid;
         }
-        average_color_size /= legend->size();
-        color_size_standard_deviation /= legend->size();
-        color_size_standard_deviation = sqrt(color_size_standard_deviation / color_to_sources->size());
-        cerr << "[dev] Total selected colors: " << color_to_sources->size() << endl;
-        cerr << "[dev] Average color size: " << average_color_size << endl;
-        cerr << "[dev] Color size standard deviation: " << color_size_standard_deviation << endl;
 
+        // Build metadata JSON
+        std::string metadata = "{\"population_size\":" + to_string(frame->size())
+            + ",\"num_groups\":" + to_string(total_groups_number)
+            + ",\"max_group_id\":" + to_string(max_group_id)
+            + ",\"hash_size\":" + to_string(selective_hashSize)
+            + "}";
 
+        // Write unified .dbri index
+        DBRetinaIndex dbri;
+        std::string dbri_path = output_prefix + ".dbri";
+        dbri.begin_write(dbri_path);
 
+        dbri.write_phmap(frame);
+        dbri.write_color_to_sources(*legend, colorsCount);
+        dbri.write_color_count(colorsCount);
+        dbri.write_group_feature_count(groupID_to_featureCount);
+        dbri.write_names_map(namesMap, groupNameMap);
+        dbri.write_metadata(metadata);
+        dbri.write_tags_map(tagsMap);
+        dbri.write_free_colors(freeColors);
+        dbri.write_group_to_feature_set(groupName_to_featureSet);
 
-        phmap::BinaryOutputArchive ar_out_1(string(output_prefix + "_color_to_sources.bin").c_str());
-        ar_out_1.saveBinary(color_to_sources->size());
-        for (auto& [k, v] : *color_to_sources)
+        // Embed raw gene sets JSON if it exists
+        std::string raw_json_path = output_prefix + "_raw.json";
         {
-            ar_out_1.saveBinary(k);
-            ar_out_1.saveBinary(v);
+            std::ifstream raw_in(raw_json_path);
+            if (raw_in.is_open()) {
+                std::string raw_content((std::istreambuf_iterator<char>(raw_in)),
+                                         std::istreambuf_iterator<char>());
+                raw_in.close();
+                dbri.write_raw_gene_sets(raw_content);
+            }
         }
 
-        // Dump colors count
-        phmap::BinaryOutputArchive ar_out_3(string(output_prefix + "_color_count.bin").c_str());
-        colorsCount.phmap_dump(ar_out_3);
-
-        // Dump KF
-        frame->save(output_prefix);
-
-        // export namesMap
-        ofstream namesMapOut(output_prefix + ".namesMap");
-        namesMapOut << namesMap.size() << endl;
-        for (auto it : namesMap)
+        // Embed hashed gene sets JSON
         {
-            namesMapOut << groupNameMap[it.second] << "|" << it.second << endl;
-        }
-        namesMapOut.close();
-
-
-
-
-        // Write extra info
-        ofstream file(output_prefix + ".extra");
-        file << selective_kSize << endl;
-        file << 0 << endl;                          // hash_mode (mumur_hasher)
-        file << 1 << endl;                          // slicing_mode
-        file << frame->getkSize() << ":0" << endl;  // params_to_string
-        file << "features:" << frame->getkSize() << endl;
-        file.close();
-
-        // ------- Pause serializing index for now.
-        /*
-
-        colorTable* colors = new intVectorsTable();
-        for (auto it : *legend) {
-            colors->setColor(it.first, it.second);
+            std::ifstream hashed_in(json_file);
+            if (hashed_in.is_open()) {
+                std::string hashed_content((std::istreambuf_iterator<char>(hashed_in)),
+                                            std::istreambuf_iterator<char>());
+                hashed_in.close();
+                dbri.write_hashed_gene_sets(hashed_content);
+            }
         }
 
-        colored_kDataFrame* res = new colored_kDataFrame();
-        res->setColorTable(colors);
-        res->setkDataFrame(frame);
-        for (auto iit = namesMap.begin(); iit != namesMap.end(); iit++) {
-            uint32_t sampleID = groupNameMap[iit->second];
-            res->namesMap[sampleID] = iit->second;
-            res->namesMapInv[iit->second] = sampleID;
-        }
-        cout << "saving to " << json_prefix << " ..." << endl;
-        res->save(json_prefix);
-        */
+        dbri.finalize_write();
 
-        // ------ END Pause serializing index for now.
+        if (getenv("DBRETINA_DEBUG"))
+            cerr << "[dev] Wrote unified index to " << dbri_path << endl;
 
+        delete legend;
+        delete frame;
     }
 
 }

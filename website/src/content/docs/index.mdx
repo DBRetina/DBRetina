@@ -1,0 +1,78 @@
+---
+title: DBRetina
+description: Similarity networks for diseases, drugs, and pathways, from the features they share.
+template: splash
+hero:
+  tagline: How similar are the entries in your database? DBRetina compares them all by the features they share.
+  actions:
+    - text: Get started
+      link: /DBRetina/start/quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: See real use cases
+      link: /DBRetina/examples/
+      icon: document
+      variant: minimal
+    - text: GitHub
+      link: https://github.com/DBRetina/DBRetina
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+import DiseaseNetwork3D from '../../components/DiseaseNetwork3D.astro';
+
+DBRetina calculates pairwise distances between large numbers of entities, such as diseases or molecular
+experiments, based on the features they share, such as genes. By identifying which entries in a database are
+similar, it helps researchers across different fields find the relationships in their data.
+
+In a disease database, for example, each disease is associated with a set of risk genes. DBRetina calculates the
+distance between every pair of diseases from the number of genes they share, which can then be used to identify
+closely related diseases or to uncover underlying patterns in the data.
+
+The analysis is built on efficient indexing and querying, which lets DBRetina work with a range of data types and
+structures. It supports the interpretation of complex biological and molecular associations across a database.
+
+## See it work
+
+DBRetina combines databases. Disease-gene lists from DisGeNET, drug targets from DSigDB, and pathways from
+WikiPathways share one index, and the same pairwise comparison links them all. The autoimmune diseases form one
+cluster and the cardiometabolic diseases another, and each drug and each pathway attaches to the disease whose
+genes it overlaps, tracing every condition to its mechanism and its treatment. The immunosuppressants and the
+inflammation pathways land on the autoimmune side; the statin, aspirin, and the lipid and clotting pathways on the
+cardiometabolic side. Drag to spin the network, scroll to zoom, and hover any node to name it.
+
+<DiseaseNetwork3D />
+
+The [autoimmune example](/DBRetina/examples/autoimmune-diseases/) works through it command by command. The other
+[examples](/DBRetina/examples/) cover autism and its comorbidities, the type 1 versus type 2 diabetes split,
+Alzheimer's and the choice of metric, and cross-database pathway concordance, among others.
+
+## What you can do with it
+
+<CardGrid>
+	<Card title="Start in five minutes" icon="rocket">
+		Install DBRetina and run a full analysis on a small example.
+		[Quickstart](/DBRetina/start/quickstart/)
+	</Card>
+	<Card title="Worked examples" icon="approve-check">
+		Real analyses on real data, from the genetics of autoimmune disease to drug-target overlap.
+		[Examples](/DBRetina/examples/)
+	</Card>
+	<Card title="Learn the pieces" icon="open-book">
+		Groups, features, the similarity metrics, and the files DBRetina reads and writes.
+		[Core concepts](/DBRetina/start/concepts/)
+	</Card>
+	<Card title="Look up any command" icon="seti:config">
+		Inputs, outputs, and an example for each of the 16 commands.
+		[Commands](/DBRetina/commands/)
+	</Card>
+</CardGrid>
+
+## A run is usually three commands
+
+```bash
+DBRetina index -g data.gmt -o db                          # build an index
+DBRetina pairwise -i db -m ochiai -c 0                     # compare every pair
+DBRetina cluster -p db_DBRetina_pairwise -m ochiai -c 50 --community -o groups
+```

@@ -70,7 +70,6 @@ public:
     unordered_map<string, double> get_pathways_ppi();
     unordered_map<uint32_t, double> get_clusters_ppi();
     unordered_map<string, double> get_pathways_psi();
-    // TODO: NEW PCSI
     unordered_map<string, double> get_pathways_pcsi();
     void export_genes_to_ppi_psi_tsv(string filename);
     unordered_map<string, int> get_pathway_lengths();

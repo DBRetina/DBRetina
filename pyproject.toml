@@ -8,7 +8,7 @@ version = "2.2.11"
 description = "DBRetina Python Package"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Development Status :: 3 - Alpha",
@@ -31,18 +31,29 @@ dependencies = [
     "leidenalg>=0.10.0",
     "igraph>=0.10.5",
     "plotly>=5.15.0",
-    "dash_bio>=1.0.2",
     "pycirclize>=0.4.0",
     "networkx>=3.1",
-    "dash>=1.19.0",
-    "visdcc>=0.0.40",
-    "dash_core_components>=1.15.0",
-    "dash_html_components>=1.1.2",
-    "dash_bootstrap_components>1.4.0",
+]
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "duckdb>=0.10.0",
+]
+neo4j = [
+    "neo4j>=5.0.0",
+]
+stats = [
+    "statsmodels>=0.14.0",
+]
+all = [
+    "DBRetina[server,neo4j,stats]",
 ]
 
 [project.scripts]
-DBRetina = "kSpider2:cli"
+DBRetina = "dbretina:cli"
+dbretina = "dbretina:cli"
 
 [project.urls]
 "Bug Reports" = "https://github.com/DBRetina/DBRetina/issues"
@@ -50,5 +61,5 @@ DBRetina = "kSpider2:cli"
 
 [tool.scikit-build]
 cmake.build-type = "Release"
-wheel.packages = ["pykSpider/kSpider2"]
+wheel.packages = ["pydbretina/dbretina"]
 wheel.install-dir = "."

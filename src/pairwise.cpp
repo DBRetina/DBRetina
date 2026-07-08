@@ -1,5 +1,11 @@
 #include <iostream>
+#include <iomanip>
 #include <cstdint>
+#include <cstdlib>
+#include <atomic>
+#include <unistd.h>
+#include <map>
+#include <algorithm>
 #include <chrono>
 #include <boost/algorithm/string/join.hpp>
 #include <boost/range/adaptor/transformed.hpp>
@@ -12,6 +18,9 @@
 #include "parallel_hashmap/phmap_dump.h"
 #include <cassert>
 #include <math.h>
+#include "DBRetinaIndex.hpp"
+#include "DBRetinaPairwise.hpp"
+#include "ParquetPairwiseWriter.hpp"
 
 using boost::adaptors::transformed;
 using boost::algorithm::join;
@@ -29,7 +38,7 @@ using PAIRS_COUNTER = phmap::parallel_flat_hash_map<
     std::equal_to<std::pair<uint32_t, uint32_t>>,
     std::allocator<std::pair<const std::pair<uint32_t, uint32_t>, uint64_t>>, 12, std::mutex>;
 
-using BINS_KMER_COUNT = phmap::parallel_flat_hash_map<
+using BINS_FEATURE_COUNT = phmap::parallel_flat_hash_map<
     std::string, uint32_t,
     phmap::priv::hash_default_hash<std::string>,
     phmap::priv::hash_default_eq<std::string>,
@@ -39,39 +48,47 @@ using BINS_KMER_COUNT = phmap::parallel_flat_hash_map<
 
 typedef std::chrono::high_resolution_clock Time;
 
-class Combo {
+// --- PLAN-096: coarse stderr progress bar -----------------------------------
+// A throttled `\rLabel [#####.....] NN% (n/total)` drawn to std::cerr. The hot
+// loop increments a std::atomic<size_t> ONCE per color (Phase 1) / per submap
+// (Phase 2) -- never per pair -- and only enters the (serialized) draw critical
+// section ~100 times total. Shown iff progress is enabled AND stderr is a TTY,
+// so logs/pipes/CI (and the non-TTY blackbox suite) see nothing.
+namespace dbretina_progress {
 
-public:
-    Combo() = default;
-
-    std::vector<std::pair<uint32_t, uint32_t>> combs;
-
-    void combinations(int n) {
-        this->combs.clear();
-        this->combs.reserve((n * (n - 1)) / 2);
-        this->comb(n, this->r, this->arr);
+    inline bool enabled() {
+        static const bool on =
+            !getenv("DBRETINA_NO_PROGRESS") && isatty(fileno(stderr));
+        return on;
     }
 
-private:
-    int* arr = new int[2];
-    int r = 2;
+    inline void draw(const char* label, size_t done, size_t total) {
+        const int width = 20;
+        double frac = total ? (double)done / (double)total : 1.0;
+        if (frac > 1.0) frac = 1.0;
+        int filled = (int)(frac * width);
+        std::cerr << '\r' << label << " [";
+        for (int i = 0; i < width; ++i) std::cerr << (i < filled ? '#' : '.');
+        std::cerr << "] " << (int)(frac * 100 + 0.5) << "% ("
+                  << done << '/' << total << ")" << std::flush;
+    }
 
-    void comb(int n, int r, int* arr) {
-        for (int i = n; i >= r; i--) {
-            // choose the first element
-            arr[r - 1] = i;
-            if (r > 1) { // if still needs to choose
-                // recursive into smaller problem
-                comb(i - 1, r - 1, arr);
-
-            }
-            else {
-                this->combs.emplace_back(arr[0] - 1, arr[1] - 1);
-            }
+    // Bump the shared counter (cheap, always) and -- only when a ~1% step is
+    // crossed -- redraw inside a single critical region to avoid interleaving.
+    inline void tick(std::atomic<size_t>& counter, size_t total,
+                     size_t step, const char* label) {
+        size_t done = counter.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (!enabled()) return;
+        if (done == total || done % step == 0) {
+#pragma omp critical(dbretina_progress)
+            draw(label, done, total);
         }
     }
 
-};
+    inline void finish() {
+        if (enabled()) std::cerr << std::endl;
+    }
+}
 
 class Stats {
 private:
@@ -81,7 +98,7 @@ public:
     double min_odds_ratio = 1.0;
     double max_odds_ratio = 1.0;
     Stats() {
-        vector<string> distances = { "containment", "ochiai", "jaccard" };
+        vector<string> distances = { "containment", "ochiai", "jaccard", "csi", "dice" };
         for (string& distance : distances) {
             stats[distance] = flat_hash_map<string, uint64_t>();
             for (int value = 0; value < 100; value += 5) {
@@ -210,32 +227,11 @@ inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string
     inputFile.close();
 }
 
-inline uint64_t get_population_size(string filename) {
-    return 44260; // TODO - remove this
-
-    std::ifstream inputFile(filename);
-
-    if (!inputFile.is_open()) {
-        std::cerr << "Error opening the file: " << filename << std::endl;
-        return 0;
-    }
-
-    std::string line;
-    uint64_t counter = 0;
-    while (std::getline(inputFile, line)) {
-        if (line.find("features:") != std::string::npos) {
-            std::string number = line.substr(line.find(":") + 1);
-            inputFile.close();
-            return stoi(number);
-        }
-    }
-    inputFile.close();
-    return 0;
-
-}
+// NOTE: Population size is now correctly loaded from .dbri metadata
+// via dbri.get_population_size() at runtime. See line ~430.
 
 
-namespace kSpider {
+namespace dbretina {
 
     void set_to_vector(const phmap::flat_hash_set<uint32_t>& set, vector<uint32_t>& vec) {
         vec.clear();
@@ -278,11 +274,40 @@ namespace kSpider {
         return (double)k * N / (double)(s * M);
     }
 
-    // TODO - check how to integrate it in our code
-    double calcExpectedSuccesses(int s, int M, int N) {
-        // this function calculates the expected successes in the source
-        // which means the expected number of genes that are in the source and in the target
-        return (double)s * M / N;
+    /*
+        Guarded hypergeometric CDF evaluation.
+
+        boost::math::hypergeometric_distribution<>(r, n, N) requires the
+        distribution parameters to satisfy 0 <= r <= N and 0 <= n <= N, and the
+        CDF argument x to lie within the support [max(0, n+r-N), min(n, r)].
+        Outside that support boost throws std::domain_error which, under the
+        default error policy, calls std::terminate -> SIGABRT (a core dump).
+        This happens for small/degenerate gene populations where, e.g., the two
+        groups together cover more than the whole population (n + r - N > 0) so
+        the observed-overlap minus one falls below the lower support bound.
+
+        We guard both the parameters and the argument here:
+          - degenerate distribution parameters (out of the 0..N range, or N<1)
+            -> return a non-significant result (cdf treated as 0.0 so the
+               over-enrichment pvalue 1 - cdf becomes 1.0);
+          - the CDF argument is clamped to the support: below the support the
+            cumulative probability is exactly 0.0 and at/above the top it is
+            exactly 1.0, which is the mathematically correct continuation of the
+            CDF. Inside the support the value is computed by boost unchanged, so
+            valid-domain pvalues are bit-for-bit identical to before.
+    */
+    double safeHyperCDF(int x, int r, int n, int N) {
+        // Degenerate / out-of-domain distribution parameters: treat as the
+        // empty lower tail (cdf = 0) so callers fall back to a pvalue of 1.0.
+        if (N < 1 || r < 0 || r > N || n < 0 || n > N) {
+            return 0.0;
+        }
+        int lower = std::max(0, n + r - N);   // smallest possible overlap
+        int upper = std::min(n, r);           // largest possible overlap
+        if (x < lower) return 0.0;            // entire mass is above x
+        if (x >= upper) return 1.0;           // entire mass is at or below x
+        boost::math::hypergeometric_distribution<> hg(r, n, N);
+        return boost::math::cdf(hg, x);
     }
 
     double calcPValue(int k, int s, int M, int N, bool isOverEnrichment) {
@@ -296,20 +321,13 @@ namespace kSpider {
             The alternative hypothesis is that the gene is over-enriched in the source.
             That means with low p-value we can reject the null hypothesis and say that the gene is over-enriched in the source.
         */
-        boost::math::hypergeometric_distribution<> hg(M, s, N);
-        double pvalue;
-
         if (isOverEnrichment) {
-            pvalue = 1 - boost::math::cdf(hg, k - 1);
+            return 1 - safeHyperCDF(k - 1, M, s, N);
         }
-        else {
-            pvalue = boost::math::cdf(hg, k);
-        }
-
-        return pvalue;
+        return safeHyperCDF(k, M, s, N);
     }
 
-    // Consireding the isOverEnrichment = True 
+    // Consireding the isOverEnrichment = True
     // (Null hypothesis is that the gene is over-enriched in the source)
     double fastHyperPValue(int k, int s, int M, int N) {
         /*
@@ -323,18 +341,20 @@ namespace kSpider {
             So, if the pvalue is less than the significance level (alpha), we reject the null hypothesis and accept the alternative hypothesis.
             If the pvalue is greater than the significance level (alpha), we accept the null hypothesis and reject the alternative hypothesis.
             smaller pvalues here means that the gene is more over-enriched in the source which means that the gene is more important in the source.
+
+            safeHyperCDF guards boost's domain constraints so small/degenerate
+            populations return a non-significant pvalue (1.0) instead of aborting.
         */
-        boost::math::hypergeometric_distribution<> hg(M, s, N);
-        return 1 - boost::math::cdf(hg, k - 1);
+        return 1 - safeHyperCDF(k - 1, M, s, N);
     }
 
     // Disabled for now
     /*
-    double fisher_exact(int k_shared_kmers, int source_1_kmers, int source_2_kmers, int population_size) {
-        int a = k_shared_kmers;
-        int b = source_1_kmers - k_shared_kmers;
-        int c = source_2_kmers - k_shared_kmers;
-        int d = population_size - source_1_kmers - c;
+    double fisher_exact(int k_shared_features, int source_1_features, int source_2_features, int population_size) {
+        int a = k_shared_features;
+        int b = source_1_features - k_shared_features;
+        int c = source_2_features - k_shared_features;
+        int d = population_size - source_1_features - c;
 
         int minval = std::min(a + b, a + c);
         int maxval = std::max(0, a - d);
@@ -409,7 +429,7 @@ namespace kSpider {
     }
 
 
-    void pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command, bool calculate_pvalue) {
+    std::map<std::string, double> pairwise(string index_prefix, int user_threads, string cutoff_distance_type, double cutoff_threshold, string full_command, bool calculate_pvalue, bool legacy_output) {
 
         vector<string> allowed_distances = { "containment", "ochiai", "jaccard" };
         // cutoff_distance_type must be in allowed_distances
@@ -417,94 +437,56 @@ namespace kSpider {
             throw std::invalid_argument("cutoff_distance_type must be in " + string("{containment, ochiai, jaccard}"));
         }
 
-        // Read colors
-        int_vec_map color_to_ids; // = new phmap::flat_hash_map<uint64_t, phmap::flat_hash_set<uint32_t>>;
-        string colors_map_file = index_prefix + "_color_to_sources.bin";
-        string extra_file = index_prefix + ".extra";
-        uint64_t population_size = get_population_size(extra_file);
-        cout << "population_size: " << population_size << endl;
-        load_colors_to_sources(colors_map_file, &color_to_ids);
+        // Load from .dbri unified index
+        std::string dbri_path = index_prefix + ".dbri";
+        auto dbri = DBRetinaIndex::open(dbri_path);
 
-        // [DEBUG CODE] dump color to ids in a file
-        // ofstream myfile222;
-        // myfile222.open(index_prefix + "_color_to_sources.txt");
-        // for (auto& color_to_ids_pair : color_to_ids) {
-        //     uint64_t color = color_to_ids_pair.first;
-        //     vector<uint32_t> ids = color_to_ids_pair.second;
-        //     myfile222 << color << ":" << ids.size() << endl;
-        // }
-        // myfile222.close();
-
-        flat_hash_map<int, std::string> namesMap;
-        load_namesMap(index_prefix + ".namesMap", namesMap);
-        assert(namesMap.size());
-
+        // Overall load-phase clock (mapping colors -> feature counting); summed
+        // into the end-of-run summary as the "load" stage (PLAN-096 Part A).
+        auto load_start = Time::now();
         auto begin_time = Time::now();
 
-        cout << "[dev] mapping colors to groups: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        // Load population size from metadata (fixes hardcoded 44260 bug)
+        uint64_t population_size = dbri.get_population_size();
+        if (getenv("DBRETINA_DEBUG")) cout << "population_size: " << population_size << endl;
 
+        // Load color_to_sources
+        int_vec_map color_to_ids;
+        dbri.load_color_to_sources(color_to_ids);
+        if (getenv("DBRETINA_DEBUG"))
+            cout << "[dev] mapping colors to groups: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+
+        // Load namesMap
+        flat_hash_map<int, std::string> namesMap;
+        dbri.load_names_map(namesMap);
+        assert(namesMap.size());
+
+        // Load colorsCount
         begin_time = Time::now();
         int_int_map colorsCount;
-        load_colors_count(index_prefix + "_color_count.bin", colorsCount);
+        dbri.load_color_count(colorsCount);
+        if (getenv("DBRETINA_DEBUG"))
+            cout << "[dev] parsing index colors: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
-        // DEBUG
-        // dump colors count to file 
-        /*
-        ofstream myfile3;
-        myfile3.open(index_prefix + "_color_count.txt");
-        for (auto& color_count_pair : colorsCount) {
-            uint64_t color = color_count_pair.first;
-            uint64_t count = color_count_pair.second;
-            myfile3 << color << ":" << count << endl;
-        }
-        myfile3.close();
-
-
-        // TODO: should be csv, rename later.
-        std::ifstream data(index_prefix + "_DBRetina_colorCount.tsv");
-        if (!data.is_open()) std::exit(EXIT_FAILURE);
-        std::string str;
-        std::getline(data, str); // skip the first line
-        while (std::getline(data, str))
-        {
-            std::istringstream iss(str);
-            std::string token;
-            vector<uint32_t> tmp;
-            while (std::getline(iss, token, ','))
-                tmp.push_back(stoi(token));
-            colorsCount.insert(make_pair(tmp[0], tmp[1]));
-        }
-        */
-
-        cout << "[dev] parsing index colors: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        // Load feature counts
         begin_time = Time::now();
+        flat_hash_map<uint32_t, uint32_t> groupID_to_featureCount;
+        dbri.load_group_feature_count(groupID_to_featureCount);
+        assert(groupID_to_featureCount.size());
 
-        // for (const auto& record : color_to_ids) {
-        //     uint32_t colorCount = colorsCount[record.first];
-        //     for (auto group_id : record.second) {
-        //         groupID_to_kmerCount[group_id] += colorCount;
-        //     }
-        // }
-
-        // Loading kmer counts
-        flat_hash_map<uint32_t, uint32_t> groupID_to_kmerCount;
-        string _file_id_to_kmer_count = index_prefix + "_groupID_to_featureCount.bin";
-        phmap::BinaryInputArchive ar_in_kmer_count(_file_id_to_kmer_count.c_str());
-        groupID_to_kmerCount.phmap_load(ar_in_kmer_count);
-        assert(groupID_to_kmerCount.size());
-
-
-        std::ofstream fstream_kmerCount;
-        fstream_kmerCount.open(index_prefix + "_DBRetina_featuresNo.tsv");
-        fstream_kmerCount << "ID\tgroup\tfeatures\n";
+        std::ofstream fstream_featureCount;
+        fstream_featureCount.open(index_prefix + "_DBRetina_featuresNo.tsv");
+        fstream_featureCount << "ID\tgroup\tfeatures\n";
         uint64_t counter = 0;
-        for (const auto& item : groupID_to_kmerCount) {
-            fstream_kmerCount << ++counter << '\t' << item.first << '\t' << item.second << '\n';
+        for (const auto& item : groupID_to_featureCount) {
+            fstream_featureCount << ++counter << '\t' << item.first << '\t' << item.second << '\n';
         }
-        fstream_kmerCount.close();
-        cout << "[dev] features counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
+        fstream_featureCount.close();
+        if (getenv("DBRETINA_DEBUG"))
+            cout << "[dev] features counting: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
 
         // Loading done
+        double load_secs = std::chrono::duration<double, std::milli>(Time::now() - load_start).count() / 1000;
 
         begin_time = Time::now();
         clock_t begin_detailed_pairwise_comb, begin_detailed_pairwise_edges, begin_detailed_pairwise_edges_insertion;
@@ -517,7 +499,8 @@ namespace kSpider {
         // convert map to vec for parallelization purposes.
         auto vec_color_to_ids = std::vector<std::pair<uint32_t, vector<uint32_t>>>(color_to_ids.begin(), color_to_ids.end());
 
-        cerr << "[dev] number of colors = " << vec_color_to_ids.size() << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cerr << "[dev] number of colors = " << vec_color_to_ids.size() << endl;
 
         double average_color_size = 0.0;
         for (auto const& item : vec_color_to_ids) {
@@ -525,45 +508,154 @@ namespace kSpider {
         }
         average_color_size /= vec_color_to_ids.size();
 
-        cerr << "[dev] average color size = " << (int)average_color_size << endl;
+        if (getenv("DBRETINA_DEBUG"))
+            cerr << "[dev] average color size = " << (int)average_color_size << endl;
 
-        int thread_num, num_threads, start, end, vec_i;
-        int n = vec_color_to_ids.size();
+        // Longest-processing-time-first: per-color work is O(color_size^2), so
+        // dispatch the giant colors before the tail. `edges` is an order-independent
+        // reduction, so reordering colors does not change the output. Sort is
+        // O(n log n) on the color count -- negligible vs the O(sum k^2) loop.
+        std::sort(vec_color_to_ids.begin(), vec_color_to_ids.end(),
+            [](const std::pair<uint32_t, vector<uint32_t>>& a,
+                const std::pair<uint32_t, vector<uint32_t>>& b) {
+                    return a.second.size() > b.second.size();
+            });
+
+        size_t n = vec_color_to_ids.size();
 
         omp_set_num_threads(user_threads);
         begin_time = Time::now();
 
-#pragma omp parallel private(vec_i,thread_num,num_threads,start,end)
-        {
-            thread_num = omp_get_thread_num();
-            num_threads = omp_get_num_threads();
-            start = thread_num * n / num_threads;
-            end = (thread_num + 1) * n / num_threads;
+        // Coarse progress over colors (one atomic bump per color; the draw is
+        // throttled to ~100 redraws). Per-pair work is untouched.
+        std::atomic<size_t> p1_done{ 0 };
+        size_t p1_step = std::max<size_t>(1, n / 100);
 
-            for (vec_i = start; vec_i != end; ++vec_i) {
-                auto item = vec_color_to_ids[vec_i];
-                Combo combo = Combo();
-                combo.combinations(item.second.size());
-                for (uint32_t i = 0; i < combo.combs.size(); i++) {
-                    // for (auto const& seq_pair : combo.combs) {
-                    auto const& seq_pair = combo.combs[i];
-                    uint32_t _seq1 = item.second[seq_pair.first];
-                    uint32_t _seq2 = item.second[seq_pair.second];
+        // Dynamic scheduling balances the heavy-tailed per-color load: big colors
+        // dominate the C(k,2) work and would otherwise pile onto one static block.
+#pragma omp parallel for schedule(dynamic)
+        for (size_t vec_i = 0; vec_i < n; ++vec_i) {
+            const auto& item = vec_color_to_ids[vec_i];
+            const auto& ids = item.second;
+            // Read ccount once per color (colorsCount is fully loaded before this
+            // parallel region and never written here, so concurrent find() is
+            // data-race-free; the old mutating operator[] could insert/rehash).
+            const auto _cc_it = colorsCount.find(item.first);
+            uint32_t ccount = (_cc_it != colorsCount.end()) ? _cc_it->second : 0;
+
+            // Generate the C(k,2) unordered pairs inline straight into `edges`
+            // (no Combo / no materialized combs vector). This nested a<b loop
+            // enumerates the identical pair set Combo did.
+            for (size_t a = 0; a + 1 < ids.size(); ++a) {
+                for (size_t b = a + 1; b < ids.size(); ++b) {
+                    uint32_t _seq1 = ids[a];
+                    uint32_t _seq2 = ids[b];
                     ascending(_seq1, _seq2);
 
                     auto _p = make_pair(_seq1, _seq2);
-                    uint32_t ccount = colorsCount[item.first];
                     edges.try_emplace_l(_p,
                         [ccount](PAIRS_COUNTER::value_type& v) { v.second += ccount; }, // called only when key was already present
                         ccount
                     );
                 }
             }
+            dbretina_progress::tick(p1_done, n, p1_step, "building");
+        }
+        dbretina_progress::finish();
+        double build_secs = std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000;
+
+        if (getenv("DBRETINA_DEBUG")) {
+            cout << "[dev] pairwise hashmap construction: " << build_secs << " secs" << endl;
+            cout << "[dev] Number of pairwise comparisons: " << edges.size() << endl;
+        }
+        // --- Parquet output (parallel) ---
+        std::string parquet_dir = index_prefix + "_DBRetina_pairwise";
+        ParquetPairwiseWriter parquet_writer(parquet_dir, calculate_pvalue, user_threads, namesMap);
+
+        auto parquet_begin = Time::now();
+
+        // Parallel Parquet write — partition over the edges map's internal submaps
+        // (phmap's parallel_flat_hash_map has 2^12 == 4096 submaps; subcnt() returns
+        // that count). Each edge lives in exactly one submap, so each is processed
+        // exactly once and written to the executing thread's parquet shard. This
+        // avoids the full ~500 MB vec_edges copy. with_submap takes a shared lock,
+        // which is safe here: Phase 1 (edges build) is complete, `edges` is frozen,
+        // and there are no concurrent writers.
+        omp_set_num_threads(user_threads);
+        const size_t n_submaps = edges.subcnt();
+        std::atomic<size_t> p2_done{ 0 };
+        size_t p2_step = std::max<size_t>(1, n_submaps / 100);
+#pragma omp parallel for schedule(dynamic)
+        for (size_t s = 0; s < n_submaps; ++s) {
+            int tid = omp_get_thread_num();
+            edges.with_submap(s, [&](const PAIRS_COUNTER::EmbeddedSet& set) {
+            for (const auto& edge : set) {
+                uint64_t shared_features = edge.second;
+                uint32_t source_1 = edge.first.first;
+                uint32_t source_2 = edge.first.second;
+                uint32_t source_1_features = groupID_to_featureCount.at(source_1);
+                uint32_t source_2_features = groupID_to_featureCount.at(source_2);
+                uint32_t minimum_source_features = min(source_1_features, source_2_features);
+
+                // Similarity metrics with division-by-zero protection
+                double containment_val = (minimum_source_features > 0)
+                    ? ((double)shared_features / minimum_source_features) * 100 : 0.0;
+                double ochiai_val = (source_1_features > 0 && source_2_features > 0)
+                    ? 100 * ((double)shared_features / sqrt((double)source_1_features * (double)source_2_features)) : 0.0;
+                double jaccard_val = (source_1_features + source_2_features - shared_features > 0)
+                    ? 100 * ((double)shared_features / (source_1_features + source_2_features - shared_features)) : 0.0;
+                double csi_val = (source_1_features > 0 && source_2_features > 0)
+                    ? 100 * ((double)shared_features * shared_features / ((double)source_1_features * source_2_features)) : 0.0;
+                double dice_val = (source_1_features + source_2_features > 0)
+                    ? 100 * (2.0 * shared_features / (source_1_features + source_2_features)) : 0.0;
+                double odds_ratio_val = odds_ratio(shared_features, source_1_features, source_2_features, population_size);
+
+                // Apply cutoff
+                double cutoff_val = 0;
+                if (cutoff_distance_type == "containment") cutoff_val = containment_val;
+                else if (cutoff_distance_type == "ochiai") cutoff_val = ochiai_val;
+                else if (cutoff_distance_type == "jaccard") cutoff_val = jaccard_val;
+                if (cutoff_val < cutoff_threshold) continue;
+
+                ParquetPairRecord prec;
+                prec.group_1_id = source_1;
+                prec.group_2_id = source_2;
+                prec.shared_features = shared_features;
+                prec.containment = static_cast<float>(containment_val);
+                prec.ochiai = static_cast<float>(ochiai_val);
+                prec.jaccard = static_cast<float>(jaccard_val);
+                prec.csi = static_cast<float>(csi_val);
+                prec.dice = static_cast<float>(dice_val);
+                prec.odds_ratio = static_cast<float>(odds_ratio_val);
+                prec.has_pvalue = calculate_pvalue;
+                if (calculate_pvalue) {
+                    prec.pvalue = fastHyperPValue(shared_features, source_1_features, source_2_features, population_size);
+                }
+
+                parquet_writer.write_record(tid, prec);
+            }
+            });
+            dbretina_progress::tick(p2_done, n_submaps, p2_step, "writing");
+        }
+        dbretina_progress::finish();
+
+        parquet_writer.finalize(full_command, population_size, cutoff_distance_type, cutoff_threshold);
+        double write_secs = std::chrono::duration<double, std::milli>(Time::now() - parquet_begin).count() / 1000;
+        if (getenv("DBRETINA_DEBUG")) {
+            cout << "[dev] parallel parquet write: " << write_secs << " secs" << endl;
+            cout << "[dev] wrote parquet pairwise to: " << parquet_dir << "/ (" << parquet_writer.get_stats().num_pairs << " pairs)" << endl;
         }
 
-        cout << "[dev] pairwise hashmap construction: " << std::chrono::duration<double, std::milli>(Time::now() - begin_time).count() / 1000 << " secs" << endl;
-        cout << "[dev] Number of pairwise comparisons: " << edges.size() << endl;
-        cout << "[dev] writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv | Please wait..." << endl;
+        // --- Sequential TSV + .dbrp output (legacy, opt-in via --legacy-output) ---
+        // Gated behind `legacy_output` (PLAN-094 Step-2b). The parquet writer above
+        // already emitted the canonical, self-sufficient output; this Phase-3 block
+        // re-derives the same per-pair metrics to write the byte-identical legacy
+        // `.tsv` + `.dbrp` + top-level `_DBRetina_pairwise_stats.json`. Default path
+        // (legacy_output == false) skips it entirely -> ~4x faster, no recompute.
+        double legacy_secs = 0.0;
+        if (legacy_output) {
+        if (getenv("DBRETINA_DEBUG"))
+            cout << "[dev] writing pairwise matrix to " << index_prefix << "_DBRetina_pairwise.tsv | Please wait..." << endl;
 
         Stats distances_stats;
 
@@ -573,8 +665,13 @@ namespace kSpider {
             return std::string(buffer);
             };
 
+        // --- TSV output (kept for migration) ---
         std::ofstream myfile;
         myfile.open(index_prefix + "_DBRetina_pairwise.tsv");
+        myfile << "# DBRetina pairwise output\n";
+        myfile << "# population_size: " << population_size << '\n';
+        myfile << "# NOTE: This file contains raw (uncorrected) p-values. FDR-corrected results are in *_fdr.tsv if --fdr was used.\n";
+        myfile << "# containment = shared/min(s1,s2)\n";
         myfile << "#nodes:" << namesMap.size() << '\n';
         myfile << "#command: " << full_command << '\n';
 
@@ -587,85 +684,176 @@ namespace kSpider {
             << "\tcontainment"
             << "\tochiai"
             << "\tjaccard"
+            << "\tcsi"
+            << "\tdice"
             << "\todds_ratio";
         if (calculate_pvalue) { myfile << "\tpvalue"; }
-        // << "\texpected_successes"
-        // << "\tfold_change"
 
         myfile << '\n';
-        uint64_t line_count = 0;
 
+        // --- .dbrp binary output ---
+        DBRetinaPairwise pw;
+        uint8_t dbrp_flags = 0x3F;  // all metrics except pvalue
+        if (calculate_pvalue) dbrp_flags |= 0x40;
+
+        // Build metadata JSON for .dbrp
+        std::string dbrp_metadata = "{\"population_size\":" + std::to_string(population_size)
+            + ",\"cutoff_metric\":\"" + cutoff_distance_type + "\""
+            + ",\"cutoff_threshold\":" + std::to_string(cutoff_threshold)
+            + ",\"command\":\"" + full_command + "\""
+            + ",\"num_groups\":" + std::to_string(namesMap.size())
+            + "}";
+
+        pw.begin_write(index_prefix + "_DBRetina_pairwise.dbrp", dbrp_flags, namesMap, dbrp_metadata);
+
+        // Stats tracking for .dbrp
+        PairwiseStatistics dbrp_stats;
+        dbrp_stats.min_odds_ratio = 1.0;
+        dbrp_stats.max_odds_ratio = 1.0;
+        // Initialize histograms for 5 metrics (containment, ochiai, jaccard, csi, dice)
+        for (uint8_t mid = 0; mid < 5; mid++) {
+            MetricHistogram hist;
+            hist.metric_id = mid;
+            hist.bucket_counts.resize(21, 0);
+            dbrp_stats.histograms.push_back(hist);
+        }
+
+        auto legacy_begin = Time::now();
 
         for (const auto& edge : edges) {
 
             flat_hash_map<string, double> distance_metrics;
 
-            uint64_t shared_kmers = edge.second;
+            uint64_t shared_features = edge.second;
             uint32_t source_1 = edge.first.first;
             uint32_t source_2 = edge.first.second;
-            uint32_t source_1_kmers = groupID_to_kmerCount[source_1];
-            uint32_t source_2_kmers = groupID_to_kmerCount[source_2];
-            uint32_t minimum_source_kmers = min(source_1_kmers, source_2_kmers);
+            uint32_t source_1_features = groupID_to_featureCount.at(source_1);
+            uint32_t source_2_features = groupID_to_featureCount.at(source_2);
+            uint32_t minimum_source_features = min(source_1_features, source_2_features);
+            uint32_t maximum_source_features = max(source_1_features, source_2_features);
 
-            // containment
-            distance_metrics["containment"] = ((double)shared_kmers / minimum_source_kmers) * 100;
+            // Warn once if any pair has >1000x size difference
+            static bool size_ratio_warned = false;
+            if (!size_ratio_warned && minimum_source_features > 0) {
+                double size_ratio = (double)maximum_source_features / minimum_source_features;
+                if (size_ratio > 1000) {
+                    cerr << "NOTE: Some pairs have >1000x size difference. "
+                         << "Containment may be more interpretable than Jaccard/Ochiai for such pairs." << endl;
+                    size_ratio_warned = true;
+                }
+            }
 
+            // Similarity metrics with division-by-zero protection
+            distance_metrics["containment"] = (minimum_source_features > 0)
+                ? ((double)shared_features / minimum_source_features) * 100 : 0.0;
+            distance_metrics["ochiai"] = (source_1_features > 0 && source_2_features > 0)
+                ? 100 * ((double)shared_features / sqrt((double)source_1_features * (double)source_2_features)) : 0.0;
+            distance_metrics["jaccard"] = (source_1_features + source_2_features - shared_features > 0)
+                ? 100 * ((double)shared_features / (source_1_features + source_2_features - shared_features)) : 0.0;
+            distance_metrics["csi"] = (source_1_features > 0 && source_2_features > 0)
+                ? 100 * ((double)shared_features * shared_features / ((double)source_1_features * source_2_features)) : 0.0;
+            distance_metrics["dice"] = (source_1_features + source_2_features > 0)
+                ? 100 * (2.0 * shared_features / (source_1_features + source_2_features)) : 0.0;
 
-            // Ochiai distance
-            distance_metrics["ochiai"] = 100 * ((double)shared_kmers / sqrt((double)source_1_kmers * (double)source_2_kmers));
+            int k_shared_features = shared_features;
+            int s_source_1_features = source_1_features;
+            int M_source_2_features = source_2_features;
+            int N_population_size = population_size;
 
-
-            // Jaccard distance (if size of samples is roughly similar)
-            // J(A, B) = 1 - |A ∩ B| / (|A| + |B| - |A ∩ B|) <- this is distance not similarity
-            distance_metrics["jaccard"] = 100 * ((double)shared_kmers / (source_1_kmers + source_2_kmers - shared_kmers));
-
-            // Kulczynski distance needs abundance of each sample
-            // double kulczynski = (double)shared_kmers / (source_1_kmers + source_2_kmers) * 2;
-
-            // p-value using hypergeometric CDF
-            int k_shared_kmers = shared_kmers;  // Number of successes
-            int s_source_1_kmers = source_1_kmers;  // Sample size
-            int M_source_2_kmers = source_2_kmers;  // Number of successes in the population
-            int N_population_size = population_size;  // Population size is the total number of successes in the population which is in our case the total number of genes ()
-
-
-            // Odds ratio
-            distance_metrics["odds_ratio"] = odds_ratio(k_shared_kmers, s_source_1_kmers, M_source_2_kmers, N_population_size);
-
-
-            // auto [pvalue, expectedSuccesses, fold_change] = enrichmentAnalysis(shared_kmers, source_1_kmers, source_2_kmers, population_size, true);
-            // distance_metrics["expected_successes"] = expectedSuccesses;
-            // distance_metrics["fold_change"] = fold_change;
+            distance_metrics["odds_ratio"] = odds_ratio(k_shared_features, s_source_1_features, M_source_2_features, N_population_size);
 
             if (distance_metrics[cutoff_distance_type] < cutoff_threshold) continue;
-
 
             distances_stats.add_stat("containment", distance_metrics["containment"]);
             distances_stats.add_stat("ochiai", distance_metrics["ochiai"]);
             distances_stats.add_stat("jaccard", distance_metrics["jaccard"]);
+            distances_stats.add_stat("csi", distance_metrics["csi"]);
+            distances_stats.add_stat("dice", distance_metrics["dice"]);
             distances_stats.update_odds_ratio_stats(distance_metrics["odds_ratio"]);
 
+            // Update .dbrp stats
+            auto map_to_bucket = [](double value) -> int {
+                int lower = static_cast<int>(std::floor(value / 5)) * 5;
+                int idx = lower / 5;
+                if (idx >= 20) idx = 20;
+                return idx;
+            };
+            dbrp_stats.histograms[0].bucket_counts[map_to_bucket(distance_metrics["containment"])]++;
+            dbrp_stats.histograms[1].bucket_counts[map_to_bucket(distance_metrics["ochiai"])]++;
+            dbrp_stats.histograms[2].bucket_counts[map_to_bucket(distance_metrics["jaccard"])]++;
+            dbrp_stats.histograms[3].bucket_counts[map_to_bucket(distance_metrics["csi"])]++;
+            dbrp_stats.histograms[4].bucket_counts[map_to_bucket(distance_metrics["dice"])]++;
 
+            double or_val = distance_metrics["odds_ratio"];
+            if (or_val < dbrp_stats.min_odds_ratio) dbrp_stats.min_odds_ratio = or_val;
+            if (or_val > dbrp_stats.max_odds_ratio) dbrp_stats.max_odds_ratio = or_val;
 
+            // Write .dbrp record
+            PairRecord rec;
+            rec.group_1_id = source_1;
+            rec.group_2_id = source_2;
+            rec.shared_features = shared_features;
+            rec.containment = static_cast<float>(distance_metrics["containment"]);
+            rec.ochiai = static_cast<float>(distance_metrics["ochiai"]);
+            rec.jaccard = static_cast<float>(distance_metrics["jaccard"]);
+            rec.csi = static_cast<float>(distance_metrics["csi"]);
+            rec.dice = static_cast<float>(distance_metrics["dice"]);
+            rec.odds_ratio = static_cast<float>(distance_metrics["odds_ratio"]);
+            // p-value computed once and reused for both the .dbrp record and the TSV
+            // column below (it was evaluated twice per edge — the boost hypergeometric
+            // CDF is the most expensive scalar op in this loop).
+            double pvalue_val = calculate_pvalue
+                ? fastHyperPValue(shared_features, source_1_features, source_2_features, population_size)
+                : 0.0;
+            if (calculate_pvalue) {
+                rec.pvalue = pvalue_val;
+            }
+            pw.write_record(rec);
+
+            // Write TSV line
             myfile << source_1
                 << '\t' << source_2
                 << '\t' << namesMap[source_1]
                 << '\t' << namesMap[source_2]
-                << '\t' << shared_kmers
+                << '\t' << shared_features
                 << '\t' << formatDouble(distance_metrics["containment"])
                 << '\t' << formatDouble(distance_metrics["ochiai"])
                 << '\t' << formatDouble(distance_metrics["jaccard"])
+                << '\t' << formatDouble(distance_metrics["csi"])
+                << '\t' << formatDouble(distance_metrics["dice"])
                 << '\t' << formatDouble(distance_metrics["odds_ratio"]);
 
             if (calculate_pvalue) {
-                myfile << '\t' << fastHyperPValue(shared_kmers, source_1_kmers, source_2_kmers, population_size);
+                myfile << '\t' << pvalue_val;
             }
 
             myfile << '\n';
         }
 
-
         myfile.close();
         distances_stats.stats_to_json_file(index_prefix + "_DBRetina_pairwise_stats.json");
+
+        // Finalize .dbrp
+        pw.finalize_write(dbrp_stats, dbrp_metadata);
+        legacy_secs = std::chrono::duration<double, std::milli>(Time::now() - legacy_begin).count() / 1000;
+        if (getenv("DBRETINA_DEBUG")) {
+            cout << "[dev] legacy TSV + .dbrp write: " << legacy_secs << " secs" << endl;
+            cout << "[dev] wrote .dbrp binary pairwise file: " << index_prefix << "_DBRetina_pairwise.dbrp" << endl;
+        }
+        } // end if (legacy_output)
+
+        // Return the per-stage wall clocks to the caller (Python) instead of
+        // printing a C++ summary here (PLAN-096 commit 2). The old C++ summary's
+        // `total` was just the sum/clock of pairwise() -- it MISSED Python startup
+        // and the post-compute PNG plotting (e.g. omim printed "total 0.0s" for a
+        // ~5.8s command). Python now wraps the whole command in perf_counter() and
+        // prints ONE honest line (matching the index summary), so `total` is the
+        // true end-to-end wall. legacy_secs stays 0.0 when --legacy-output is off.
+        return {
+            {"load", load_secs},
+            {"build", build_secs},
+            {"write", write_secs},
+            {"legacy", legacy_secs},
+        };
     }
 }

@@ -1,0 +1,137 @@
+---
+title: "Cancer's shared genes replicate across independent databases"
+description: A cancer seed from one pathway database recovers the cancer pathways that four others curated separately.
+---
+
+import EnrichNetwork from '../../../components/EnrichNetwork.astro';
+import crossNet from '../../../components/enrich_crossdb_network.json';
+
+A similarity built from one database can always be questioned: perhaps the structure it finds is an artifact of
+how that one group curated its pathways, not real biology. The way to settle it is to hand the question to
+independent curators. If a signal is real, teams that never coordinated should reconstruct it from their own gene
+sets.
+
+Cancer can be put to that test. MSigDB's canonical-pathways compendium (Liberzon et al., 2011) bundles 3,090
+pathways from five separately curated sources: KEGG (Kanehisa and Goto, 2000), Reactome (Gillespie et al., 2022),
+WikiPathways (Martens et al., 2021), BioCarta, and PID. Each names and draws its cancer pathways in its own way.
+The question is whether they agree at the level of shared genes.
+
+## The analysis, step by step
+
+**Index and compare.** As in the [single-database example](/DBRetina/examples/enrich-cancer-hallmarks/), `index`
+builds the feature index and `pairwise` scores every pair of the 3,090 pathways with the size-aware Ochiai
+coefficient, writing the full similarity graph to `c2cp_DBRetina_pairwise/`.
+
+```bash
+DBRetina index -g c2cp.gmt -o c2cp
+DBRetina pairwise -i c2cp -m ochiai -c 0
+```
+
+**Take the seed from one database.** The seed is KEGG's cancer pathways only, the 15 KEGG entries whose name
+mentions a cancer:
+
+```bash
+grep -iE 'cancer|carcinoma|leukemia|melanoma|glioma' c2cp.gmt | grep '^KEGG_' | cut -f1 > kegg_cancer_seed.txt
+```
+
+The held-out truth, which the seed never sees, is the same kind of list drawn from the other databases: the 64
+cancer pathways that Reactome and WikiPathways curated on their own.
+
+**Recover across databases.** `enrich` ranks every pathway by how enriched its neighbourhood is for the KEGG seed.
+`--exclude-module` drops the KEGG cancer pathways, so the ranking is everything else, the four other databases
+included.
+
+```bash
+DBRetina enrich -d c2cp_DBRetina_pairwise --module kegg_cancer_seed.txt -m ochiai -c 20 --exclude-module
+```
+
+The strongest hits are cancer pathways from the other databases (names shortened):
+
+```text
+group                                database     hits  neighbors  enrichment_p
+bladder_cancer                       WikiPathways  13   84         1.72e-19
+breast_cancer_pathway                WikiPathways  14   134        6.13e-19
+head_and_neck_squamous_carcinoma     WikiPathways  12   63         7.49e-19
+melanoma                             WikiPathways  14   179        4.17e-17
+pi3k_akt_signaling_in_cancer         Reactome      19   126        ...
+...
+```
+
+The graph below is the result. Red nodes are KEGG's cancer pathways, the only thing `enrich` was given. Blue and
+green nodes are cancer pathways that Reactome and WikiPathways curated independently, placed by their strongest
+shared-gene links. They mix straight into the KEGG cluster. Press **Recover an independent cancer pathway** to
+take one of those blue or green pathways in turn and see that, though the KEGG seed never saw it, it sits among
+cancer and so is ranked near the top.
+
+<EnrichNetwork
+  data={crossNet}
+  legend={[{ color: "#c0392b", label: "KEGG cancer (the seed)" }, { color: "#2c7fb8", label: "Reactome cancer" }, { color: "#2ca25f", label: "WikiPathways cancer" }]}
+  moduleWord="the KEGG cancer seed"
+  holdLabel="Recover an independent cancer pathway"
+  holdTemplate="Curated independently, never in the seed: <b>{label}</b>. Yet <b>{cn} of its {deg}</b> gene-sharing neighbours are cancer pathways, so the KEGG seed ranks it <b>#{rank} of {total}</b>."
+  restCaption="Red nodes are KEGG's cancer pathways (the seed); blue and green nodes are cancer pathways <b>Reactome</b> and <b>WikiPathways</b> curated on their own. Hover to trace links, or recover one."
+  commands={`DBRetina index -g c2cp.gmt -o c2cp
+DBRetina pairwise -i c2cp -m ochiai -c 0
+grep -iE 'cancer|...' c2cp.gmt | grep '^KEGG_' | cut -f1 > kegg_cancer_seed.txt
+DBRetina enrich -d c2cp_DBRetina_pairwise --module kegg_cancer_seed.txt -m ochiai -c 20 --exclude-module`}
+  infoHead="How enrich built this"
+  infoNote="The seed is KEGG's cancer pathways only. Blue and green nodes were curated by Reactome and WikiPathways, and recovered by the KEGG-seeded neighbourhood."
+/>
+
+Ranked and read off in full, the recovered set spans both databases: WikiPathways contributes its bladder,
+breast, head-and-neck, prostate, melanoma, lung, pancreatic, and colorectal cancer pathways, and Reactome
+contributes its oncogenic-signaling pathways, PI3K-AKT, EGFR, and TGF-beta signaling in cancer, and the RB1-driven
+loss of cell-cycle control.
+
+![Independently curated cancer pathways recovered by the KEGG-only seed, coloured by the database that curated each](/DBRetina/img/enrich_crossdb_recovered.png)
+
+## Is the agreement real?
+
+Press **Recover an independent cancer pathway** on the graph above and step through them. Each blue or green
+pathway was drawn by a different team, yet most of its gene-sharing neighbours are cancer pathways, so the KEGG
+seed ranks it near the top. Measured over all of them: of the 64 cancer pathways Reactome and WikiPathways curated,
+58 share enough genes to sit in the graph, and the KEGG seed separates them from the 2,847 other pathways with an
+AUC of 0.728. Against a null of 2000 random seeds of the same size, the mean is 0.53, and not one random seed
+reached the real value: 4.1 standard deviations above the null, permutation p below 0.0005. The AUC is lower than
+the within-database test, and it should be, since independent curators split cancer into different, finer pieces,
+so a perfect line-up is not on offer. What matters is that the agreement is far beyond chance, and that it points
+at the pathways any oncologist would name.
+
+## What this shows
+
+The shared-gene structure of cancer is not an artifact of one database. It is reproduced by curators who never
+coordinated, which is about the strongest evidence there is that DBRetina reads biology rather than bookkeeping.
+The practical lesson follows: a module assembled in one resource can be used to search another, and `enrich`
+carries the signal across.
+
+## Reproduce it yourself
+
+Everything runs from
+[`usecases/enrich-crossdb-cancer/`](https://github.com/DBRetina/DBRetina/tree/main/usecases/enrich-crossdb-cancer)
+in the repository (the `run.sh`, the analysis scripts, and the data all live there).
+
+1. **Install DBRetina** (the [quickstart](/DBRetina/start/quickstart/)) and the Python packages the validation and
+   figures use: `scipy`, `pyarrow`, `matplotlib`, `networkx`.
+2. **Get the gene sets.** They are MSigDB's full canonical-pathways collection, `c2.cp.v2023.1.Hs.symbols.gmt`
+   (KEGG + Reactome + WikiPathways + BioCarta + PID), from the
+   [MSigDB downloads](https://www.gsea-msigdb.org/gsea/msigdb/), saved as `data/c2cp.gmt`.
+3. **Run** `bash run.sh`. It indexes the compendium, builds the pairwise, writes the KEGG seed, runs `enrich`,
+   measures the cross-database recovery against the random-seed null, and regenerates the figure and the network
+   above. The validation prints:
+
+```text
+compendium: 3090 pathways from 5 databases | edges at ochiai>=20%
+seed: 15 KEGG cancer pathways | held-out: 64 Reactome+WP cancer pathways
+
+CROSS-DATABASE RECOVERY
+  real AUC          = 0.728
+  null AUC (2000x)  = 0.534 +/- 0.047
+  4.1 SD above null   permutation p = 5.00e-04
+```
+
+## References
+
+- Gillespie, M., et al. (2022). The Reactome pathway knowledgebase 2022. *Nucleic Acids Research*, 50(D1), D687-D692.
+- Kanehisa, M., and Goto, S. (2000). KEGG: Kyoto Encyclopedia of Genes and Genomes. *Nucleic Acids Research*, 28(1), 27-30.
+- Liberzon, A., et al. (2011). Molecular signatures database (MSigDB) 3.0. *Bioinformatics*, 27(12), 1739-1740.
+- Martens, M., et al. (2021). WikiPathways: connecting communities. *Nucleic Acids Research*, 49(D1), D613-D621.

@@ -4,7 +4,7 @@
 
 cmake_minimum_required(VERSION 3.15...3.27)
 project(
-        kSpider
+        DBRetina
         LANGUAGES CXX C
         VERSION 2.0.0
 )
@@ -17,7 +17,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Python + nanobind
 # ----------------------------------------------------------------------------
 
-find_package(Python 3.12 COMPONENTS Interpreter Development.Module REQUIRED)
+find_package(Python 3.11 COMPONENTS Interpreter Development.Module REQUIRED)
 
 include(FetchContent)
 FetchContent_Declare(
@@ -38,7 +38,6 @@ if(DEFINED ENV{CONDA_PREFIX})
     include_directories("$ENV{CONDA_PREFIX}/include")
     link_directories("$ENV{CONDA_PREFIX}/lib")
 endif()
-include_directories("${PROJECT_SOURCE_DIR}/lib/argh")
 include_directories("${PROJECT_SOURCE_DIR}/lib/json_parser/lib/include/")
 add_subdirectory("lib/zstr")
 
@@ -46,43 +45,47 @@ set(PHMAP_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/lib/parallel-hashmap")
 include_directories("${PHMAP_INCLUDE_DIRS}")
 
 # ----------------------------------------------------------------------------
+# Arrow / Parquet
+# ----------------------------------------------------------------------------
+
+find_package(Arrow REQUIRED)
+find_package(Parquet REQUIRED)
+
+# ----------------------------------------------------------------------------
 # Static library
 # ----------------------------------------------------------------------------
 
 add_library(
-        kSpider STATIC
+        dbretina_core STATIC
         src/pairwise.cpp
         src/DBRetina_sketch.cpp
         src/query.cpp
         src/DBRetina_indexing.cpp
         src/DBRetina_GSA.cpp
+        src/DBRetinaIndex.cpp
+        src/DBRetina_append.cpp
+        src/DBRetina_merge.cpp
+        src/DBRetinaPairwise.cpp
+        src/ParquetPairwiseWriter.cpp
         )
 
-set_target_properties(kSpider PROPERTIES CXX_STANDARD 17)
-target_compile_options(kSpider PRIVATE -fopenmp -O3 -Ofast -w)
-target_link_libraries(kSpider z zstr::zstr)
-target_include_directories(kSpider INTERFACE ${PHMAP_INCLUDE_DIRS})
+set_target_properties(dbretina_core PROPERTIES CXX_STANDARD 17)
+target_compile_options(dbretina_core PRIVATE -fopenmp -O3 -Ofast -Wall -Wextra -Wno-unused-parameter)
+target_link_libraries(dbretina_core z zstr::zstr Arrow::arrow_shared Parquet::parquet_shared)
+target_include_directories(dbretina_core INTERFACE ${PHMAP_INCLUDE_DIRS})
 
 # ----------------------------------------------------------------------------
 # nanobind Python module
 # ----------------------------------------------------------------------------
 
-nanobind_add_module(_kSpider_internal src/python_bindings.cpp)
-target_link_libraries(_kSpider_internal PRIVATE kSpider z bz2 gomp dl)
-target_include_directories(_kSpider_internal PRIVATE
+nanobind_add_module(_dbretina_internal src/python_bindings.cpp)
+target_link_libraries(_dbretina_internal PRIVATE dbretina_core z bz2 gomp dl)
+target_include_directories(_dbretina_internal PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${PHMAP_INCLUDE_DIRS}
     ${PROJECT_SOURCE_DIR}/lib/json_parser/lib/include
-    ${PROJECT_SOURCE_DIR}/lib/argh
     ${PROJECT_SOURCE_DIR}/lib/zstr/src
 )
-target_compile_options(_kSpider_internal PRIVATE -fopenmp -O3 -Ofast -w)
+target_compile_options(_dbretina_internal PRIVATE -fopenmp -O3 -Ofast -Wall -Wextra -Wno-unused-parameter)
 
-install(TARGETS _kSpider_internal LIBRARY DESTINATION .)
-
-# ----------------------------------------------------------------------------
-# Utilities
-# ----------------------------------------------------------------------------
-
-add_executable(dump_colors apps/dump_kmer_count.cpp)
-target_link_libraries(dump_colors kSpider z zstr::zstr)
+install(TARGETS _dbretina_internal LIBRARY DESTINATION .)

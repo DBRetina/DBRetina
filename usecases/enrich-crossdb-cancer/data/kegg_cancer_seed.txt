@@ -1,0 +1,15 @@
+kegg_acute_myeloid_leukemia
+kegg_basal_cell_carcinoma
+kegg_bladder_cancer
+kegg_chronic_myeloid_leukemia
+kegg_colorectal_cancer
+kegg_endometrial_cancer
+kegg_glioma
+kegg_melanoma
+kegg_non_small_cell_lung_cancer
+kegg_pancreatic_cancer
+kegg_pathways_in_cancer
+kegg_prostate_cancer
+kegg_renal_cell_carcinoma
+kegg_small_cell_lung_cancer
+kegg_thyroid_cancer

@@ -1,0 +1,9 @@
+substrate	186 KEGG pathways
+cutoff	ochiai >= 20%
+cancer_module	15 pathways
+real_auc	0.9856
+null_auc_mean	0.4788
+null_auc_sd	0.1034
+z	4.90
+perm_p	5.00e-04
+n_perm	2000

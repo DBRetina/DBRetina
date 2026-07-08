@@ -1,0 +1,20 @@
+{
+  "dis_anxiety": "psychiatric",
+  "dis_adhd": "neurodev",
+  "dis_asd": "autism",
+  "dis_bipolar": "psychiatric",
+  "dis_breast_cancer": "control",
+  "dis_cad": "control",
+  "dis_down_syndrome": "syndromic",
+  "dis_epilepsy": "neurodev",
+  "dis_fragile_x": "syndromic",
+  "dis_tourette": "psychiatric",
+  "dis_dev_delay": "neurodev",
+  "dis_intellectual_disability": "neurodev",
+  "dis_depression": "psychiatric",
+  "dis_ocd": "psychiatric",
+  "dis_rett": "syndromic",
+  "dis_ra": "control",
+  "dis_schizophrenia": "psychiatric",
+  "dis_tuberous_sclerosis": "syndromic"
+}

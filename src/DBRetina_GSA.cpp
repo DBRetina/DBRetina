@@ -108,19 +108,14 @@ GeneSets::GeneSets(string associations_file) {
     parse_dbretina_json(associations_file, &pathway_to_gene_set);
     n_total_pathways = pathway_to_gene_set.size();
     calculate_mean_pathway_length();
-    cerr << "[DEBUG] Total number of pathways: " << n_total_pathways << endl;
-    cerr << "[DEBUG] Mean pathway length: " << mean_pathway_length << endl;
 }
 
 void GeneSets::build_from_index(string index_prefix) {
     this->index_prefix = index_prefix;
-    cerr << "[DEBUG] Loading index from: " << index_prefix << endl;
     gene_to_color = DBRetina_PHMAP::load(index_prefix);
     string colors_map_file = index_prefix + "_color_to_sources.bin";
-    cerr << "[DEBUG] Loading colors map from: " << colors_map_file << endl;
     // We need this to find out how many pathways are associated with each gene
     load_colors_to_sources(colors_map_file, &color_to_ids);
-    cout << "Loaded colors: " << color_to_ids.size() << endl;
     build_gene_to_PSI();
     build_all_pathways_PSI();
     create_hash_to_gene_name(index_prefix + "_raw.json", this->hashed_gene_to_name);
@@ -128,7 +123,6 @@ void GeneSets::build_from_index(string index_prefix) {
 
 
 void GeneSets::build_from_clusters_file(string clusters_file) {
-    cerr << "[DEBUG] Loading clusters from: " << clusters_file << endl;
 
     std::ifstream file(clusters_file);
 
@@ -170,8 +164,8 @@ void GeneSets::build_from_clusters_file(string clusters_file) {
 
 
 void GeneSets::load_group_sizes(string bin_file) {
-    phmap::BinaryInputArchive ar_in_kmer_count(bin_file.c_str());
-    this->_group_id_to_size.phmap_load(ar_in_kmer_count);
+    phmap::BinaryInputArchive ar_in_feature_count(bin_file.c_str());
+    this->_group_id_to_size.phmap_load(ar_in_feature_count);
     assert(this->_group_id_to_size.size());
 }
 
@@ -261,7 +255,6 @@ void GeneSets::calculate_heterogeneity_and_fragmentation_from_pairwise(string pa
     while (line[0] == '#')
         getline(inFile, line);
 
-    cerr << "[DEBUG] counting in/out bounds from pairwise file: " << pairwise_file << endl;
     while (getline(inFile, line)) {
         istringstream iss(line);
         uint32_t group1ID, group2ID;
@@ -286,7 +279,6 @@ void GeneSets::calculate_heterogeneity_and_fragmentation_from_pairwise(string pa
 
     // Save heterogeneity and fragmentation to this->pathway_to_heterogeneity and this->pathway_to_fragmentation
     // Calculate fragmentation and heterogeneity scores
-    cerr << "[DEBUG] calculating fragmentation and heterogeneity scores" << endl;
     for (const auto& pair : this->_group_id_to_name) {
         int id = pair.first;
         string pathway_name = pair.second;
@@ -548,12 +540,9 @@ vector<string> GeneSets::influence_sort_pathway(const flat_hash_set<string>& pat
 
 
 unordered_map<string, double> GeneSets::non_iterative_set_cover(int cluster_id, int GC) {
-    cerr << "[DEBUG] Running PSC for cluster: " << cluster_id << endl;
     unordered_map<string, double> selected_pathways;
-    cerr << "clusterToPathways size: " << this->clusterToPathways.size() << endl;
 
     auto cluster_pathways = this->clusterToPathways[cluster_id];
-    cerr << "[DEBUG] Cluster " << cluster_id << " has " << cluster_pathways.size() << " pathways" << endl;
 
     // Get the universe set (all genes)
     flat_hash_set<uint64_t> uncovered_genes = get_universe_set(cluster_pathways);
@@ -597,12 +586,9 @@ unordered_map<string, double> GeneSets::non_iterative_set_cover(int cluster_id, 
 
 
 unordered_map<string, double> GeneSets::proportionalSetCover(int cluster_id, int GC) {
-    cerr << "[DEBUG] Running PSC for cluster: " << cluster_id << endl;
     unordered_map<string, double> selected_pathways;
-    cerr << "clusterToPathways size: " << this->clusterToPathways.size() << endl;
 
     auto cluster_pathways = this->clusterToPathways[cluster_id];
-    cerr << "[DEBUG] Cluster " << cluster_id << " has " << cluster_pathways.size() << " pathways" << endl;
 
     for (auto& pathway : cluster_pathways)
         selected_pathways[pathway] = 0.0f;
@@ -628,8 +614,6 @@ unordered_map<string, double> GeneSets::proportionalSetCover(int cluster_id, int
     int covered_genes = 0;
     int sorted_pathways_index = -1;
     while ((((double)covered_genes / universal_size) * 100 < GC) && !uncovered_genes.empty() && ++sorted_pathways_index < sorted_pathways_by_ppi.size() - 1) {
-        cerr << "[DEBUG SETCOV] Covered genes %: " << ((double)covered_genes / universal_size) * 100 << "<" << GC << endl;
-        cerr << "[DEBUG SETCOV] Uncovered genes: " << uncovered_genes.size() << endl;
         flat_hash_map<string, double> pathway_scores;
         flat_hash_map<string, int> pathway_to_common_genes;
 
@@ -639,12 +623,6 @@ unordered_map<string, double> GeneSets::proportionalSetCover(int cluster_id, int
         // get genes intersection
         flat_hash_set<uint64_t> common_genes = this->set_intersection(pathway_genes, uncovered_genes);
         pathway_to_common_genes[pathway] = common_genes.size();
-        cout << "[DEBUG SETCOV] pathway: " << pathway
-            << " | avg_ppi: " << this->pathway_to_average_PPI[pathway]
-            << " | fragmentation " << this->pathway_to_fragmentation[pathway]
-            << " | common_genes " << common_genes.size()
-            << " | Covered genes until now" << covered_genes
-            << endl;
 
 
         // sometimes there are no common genes due to 
@@ -653,10 +631,8 @@ unordered_map<string, double> GeneSets::proportionalSetCover(int cluster_id, int
             continue;
 
         pathway_scores[pathway] = (double)common_genes.size() / pathway_genes.size();
-        cerr << "pathway: " << pathway << " | basic: " << pathway_scores[pathway] << endl;
         // pathway_scores[pathway] += (double)1 / (abs(pathway_genes.size() - this->mean_pathway_length) * 10000);
         pathway_scores[pathway] += 1 - this->pathway_to_average_PSI[pathway]; // small PSI means better pathway.
-        cerr << "pathway: " << pathway << " | basic + 1-PPI: " << pathway_scores[pathway] << endl;
 
 
         // Select the pathway with the highest overlap
@@ -667,25 +643,19 @@ unordered_map<string, double> GeneSets::proportionalSetCover(int cluster_id, int
         auto& best_pathway_genes = this->pathway_to_gene_set[best_pathway->first];
         covered_genes += pathway_to_common_genes[best_pathway->first];
 
-        cout << "best_pathway: " << best_pathway->first << " score: " << best_pathway->second << endl;
-        cout << "best_pathway_genes: " << best_pathway_genes.size() << endl;
-        for (const auto& gene : best_pathway_genes)
-            uncovered_genes.erase(gene); // TODO this is slow, use a set difference
+        for (const auto& gene : common_genes)
+            uncovered_genes.erase(gene);
 
         selected_pathways[best_pathway->first] = pathway_scores[best_pathway->first];
-        cerr << "Now [DEBUG] Covered genes %: " << ((double)covered_genes / universal_size) * 100 << "<" << GC << endl;
 
     }
     return selected_pathways;
 }
 
 unordered_map<string, double> GeneSets::greedy_proportional_set_cover(int cluster_id, int GC) {
-    cerr << "[DEBUG] Running PSC for cluster: " << cluster_id << endl;
     unordered_map<string, double> selected_pathways;
-    cerr << "clusterToPathways size: " << this->clusterToPathways.size() << endl;
 
     auto cluster_pathways = this->clusterToPathways[cluster_id];
-    cerr << "[DEBUG] Cluster " << cluster_id << " has " << cluster_pathways.size() << " pathways" << endl;
 
     for (auto& pathway : cluster_pathways)
         selected_pathways[pathway] = 0.0f;
@@ -706,8 +676,6 @@ unordered_map<string, double> GeneSets::greedy_proportional_set_cover(int cluste
     int covered_genes = 0;
 
     while (((double)covered_genes / universal_size) * 100 < GC && !uncovered_genes.empty()) {
-        cerr << "[DEBUG SETCOV] Covered genes %: " << ((double)covered_genes / universal_size) * 100 << "<" << GC << endl;
-        cerr << "[DEBUG SETCOV] Uncovered genes: " << uncovered_genes.size() << endl;
         flat_hash_map<string, double> pathway_scores;
         flat_hash_map<string, int> pathway_to_common_genes;
 
@@ -717,11 +685,6 @@ unordered_map<string, double> GeneSets::greedy_proportional_set_cover(int cluste
             // get genes intersection
             flat_hash_set<uint64_t> common_genes = this->set_intersection(pathway_genes, uncovered_genes);
             pathway_to_common_genes[pathway] = common_genes.size();
-            cout << "[DEBUG SETCOV] pathway: " << pathway
-                << " | avg_ppi: " << this->pathway_to_average_PPI[pathway]
-                << " | common_genes " << common_genes.size()
-                << " | Covered genes until now" << covered_genes
-                << endl;
 
 
             // sometimes there are no common genes due to 
@@ -730,10 +693,8 @@ unordered_map<string, double> GeneSets::greedy_proportional_set_cover(int cluste
                 continue;
 
             pathway_scores[pathway] = (double)common_genes.size() / pathway_genes.size();
-            cerr << "pathway: " << pathway << " | basic: " << pathway_scores[pathway] << endl;
             // pathway_scores[pathway] += (double)1 / (abs(pathway_genes.size() - this->mean_pathway_length) * 10000);
             pathway_scores[pathway] += 1 - this->pathway_to_average_PSI[pathway]; // small PSI means better pathway.
-            cerr << "pathway: " << pathway << " | basic + 1-PPI: " << pathway_scores[pathway] << endl;
         }
 
         // Select the pathway with the highest overlap
@@ -744,13 +705,12 @@ unordered_map<string, double> GeneSets::greedy_proportional_set_cover(int cluste
         auto& best_pathway_genes = this->pathway_to_gene_set[best_pathway->first];
         covered_genes += pathway_to_common_genes[best_pathway->first];
 
-        cout << "best_pathway: " << best_pathway->first << " score: " << best_pathway->second << endl;
-        cout << "best_pathway_genes: " << best_pathway_genes.size() << endl;
-        for (const auto& gene : best_pathway_genes)
-            uncovered_genes.erase(gene); // TODO this is slow, use a set difference
+        // Erase only genes in the intersection (recompute for best pathway)
+        flat_hash_set<uint64_t> best_common = this->set_intersection(best_pathway_genes, uncovered_genes);
+        for (const auto& gene : best_common)
+            uncovered_genes.erase(gene);
 
         selected_pathways[best_pathway->first] = pathway_scores[best_pathway->first];
-        cerr << "Now [DEBUG] Covered genes %: " << ((double)covered_genes / universal_size) * 100 << "<" << GC << endl;
 
     }
     return selected_pathways;
@@ -764,13 +724,11 @@ unordered_map<string, double> GeneSets::greedy_proportional_set_cover(int cluste
 */
 
 void GeneSets::build_all_pathways_PSI() {
-    cerr << "[DEBUG] Building all pathways PSI" << endl;
     for (const auto& [pathway, _] : pathway_to_gene_set)
         pathway_to_average_PSI[pathway] = get_pathway_PSI(pathway);
 }
 
 void GeneSets::calculate_mean_pathway_length() {
-    cerr << "[DEBUG] Calculating mean pathway length" << endl;
     double sum = 0;
     for (const auto& [pathway, genes] : pathway_to_gene_set)
         sum += genes.size();
@@ -778,7 +736,6 @@ void GeneSets::calculate_mean_pathway_length() {
 }
 
 void GeneSets::build_gene_to_PSI() {
-    cerr << "[DEBUG] Building gene to PSI map" << endl;
     for (auto it = gene_to_color->begin(); it != gene_to_color->end(); ++it) {
         uint64_t gene = it->first;
         uint64_t color = it->second;
@@ -799,7 +756,6 @@ double GeneSets::get_pathway_PSI(string pathway) {
         throw std::invalid_argument("Pathway does not exist");
 
     auto genes = pathway_to_gene_set[pathway];
-    // cout << "Pathway: " << pathway << " genes: " << genes.size() << endl;
     double average_psi = 0.0;
     for (auto& gene : genes) {
         average_psi += gene_to_PSI[gene];
@@ -825,7 +781,6 @@ void GeneSets::build_gene_to_no_clusters() {
 }
 
 void GeneSets::build_gene_to_PPI() {
-    cerr << "[DEBUG] Building gene to PPI map" << endl;
     for (auto& [gene, no_clusters] : gene_to_no_clusters) {
         
         // TODO: relocate later 
@@ -909,7 +864,6 @@ unordered_map<string, double> GeneSets::get_pathways_pcsi(){
 }
 
     void GeneSets::export_genes_to_ppi_psi_tsv(string filename){
-        // TODO: NEW: adding PCSI
         ofstream myfile;
         myfile.open(filename);
         myfile << "gene\tppi\tpsi\tpcsi\n";

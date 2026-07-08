@@ -1,16 +1,25 @@
 name: dbretina
 channels:
   - conda-forge
-  - defaults
 dependencies:
-  # Build dependencies
-  - python>=3.8
+  # Build toolchain (conda-forge compilers so the C++ ABI matches conda's Arrow/Parquet;
+  # CMakeLists.txt has find_package(Arrow/Parquet REQUIRED)). nanobind is fetched by the
+  # pip build (git must be available); the project migrated off SWIG.
+  - python=3.12
+  - pip
+  - cxx-compiler
+  - c-compiler
   - cmake>=3.14
-  - swig
+  - ninja
+  - make
+  - git
+  # C++ libraries
+  - libarrow
+  - libparquet
+  - pyarrow
   - boost-cpp
   - bzip2
   - zlib
   # Python runtime dependencies
-  - pip
   - pip:
       - -r requirements.txt

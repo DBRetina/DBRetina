@@ -1,7 +1,9 @@
 #include "DBRetina_kf.hpp"
-#include <kSpider.hpp>
+#include "DBRetinaIndex.hpp"
+#include "dbretina_core.hpp"
 #include <DBRetina.hpp>
 #include <numeric>
+#include <filesystem>
 
 
 using int_vec_map = parallel_flat_hash_map<uint32_t, vector<uint32_t>, std::hash<uint32_t>, std::equal_to<uint32_t>, std::allocator<std::pair<const uint32_t, vector<uint32_t>>>, 1>;
@@ -23,7 +25,6 @@ inline void load_namesMap(string filename, phmap::flat_hash_map<int, std::string
         std::string column1, column2;
 
         if (std::getline(lineStream, column1, '|') && std::getline(lineStream, column2, '|')) {
-            cout << column1 << "|" << column2 << std::endl;
             transform(column2.begin(), column2.end(), column2.begin(), ::tolower);
             map.operator[](stoi(column1)) = column2;
         }
@@ -81,21 +82,31 @@ inline void load_colors_to_matched_supergroups(const std::string& filename, int_
 inline std::string join(std::vector<std::string>& strings, std::string delim)
 {
     return std::accumulate(strings.begin(), strings.end(), std::string(),
-        [&delim](std::string& x, std::string& y) {
+        [&delim](const std::string& x, const std::string& y) {
             return x.empty() ? y : x + delim + y;
         });
 }
 
 void query(string index_prefix, string inverted_index_prefix, string query_file, string output_prefix, string commands) {
 
-    // load kDataFrame
-    auto* inverted_kf = DBRetina_PHMAP::load(inverted_index_prefix);
+    // Load inverted index: prefer .dbri format, fall back to legacy files
+    DBRetina_PHMAP* inverted_kf;
     int_vec_map inverted_color_to_ids;
-    string inverted_colors_map_file = inverted_index_prefix + "_color_to_sources.bin";
-    load_colors_to_matched_supergroups(inverted_colors_map_file, &inverted_color_to_ids);
-    string inverted_namesmap_file = inverted_index_prefix + ".namesMap";
     phmap::flat_hash_map<int, std::string> inverted_namesmap;
-    load_namesMap(inverted_namesmap_file, inverted_namesmap);
+
+    string inverted_dbri_path = inverted_index_prefix + ".dbri";
+    if (std::filesystem::exists(inverted_dbri_path)) {
+        auto idx = DBRetinaIndex::open(inverted_dbri_path);
+        inverted_kf = idx.load_phmap();
+        idx.load_color_to_sources(inverted_color_to_ids);
+        idx.load_names_map(inverted_namesmap);
+    } else {
+        inverted_kf = DBRetina_PHMAP::load(inverted_index_prefix);
+        string inverted_colors_map_file = inverted_index_prefix + "_color_to_sources.bin";
+        load_colors_to_matched_supergroups(inverted_colors_map_file, &inverted_color_to_ids);
+        string inverted_namesmap_file = inverted_index_prefix + ".namesMap";
+        load_namesMap(inverted_namesmap_file, inverted_namesmap);
+    }
 
 
     // naming
@@ -106,7 +117,6 @@ void query(string index_prefix, string inverted_index_prefix, string query_file,
 
     // load query file
     auto queries = load_query_file_single_column(query_file);
-    cout << "number of queries: " << queries.size() << endl;
 
     // print queries
     auto hasher = string_hasher();
@@ -151,22 +161,30 @@ void query(string index_prefix, string inverted_index_prefix, string query_file,
         }
     }
 
-    // free inverted index
-    cout << "freeing inverted index" << endl;
     delete inverted_kf;
     inverted_color_to_ids.clear();
     inverted_namesmap.clear();
 
 
 
-    // load kDataFrame
-    auto* kf = DBRetina_PHMAP::load(index_prefix);
+    // Load original index: prefer .dbri format, fall back to legacy files
+    DBRetina_PHMAP* kf;
     int_vec_map color_to_ids;
-    string colors_map_file = index_prefix + "_color_to_sources.bin";
-    load_colors_to_matched_supergroups(colors_map_file, &color_to_ids);
-    string namesmap_file = index_prefix + ".namesMap";
     phmap::flat_hash_map<int, std::string> namesmap;
-    load_namesMap(namesmap_file, namesmap);
+
+    string dbri_path = index_prefix + ".dbri";
+    if (std::filesystem::exists(dbri_path)) {
+        auto idx = DBRetinaIndex::open(dbri_path);
+        kf = idx.load_phmap();
+        idx.load_color_to_sources(color_to_ids);
+        idx.load_names_map(namesmap);
+    } else {
+        kf = DBRetina_PHMAP::load(index_prefix);
+        string colors_map_file = index_prefix + "_color_to_sources.bin";
+        load_colors_to_matched_supergroups(colors_map_file, &color_to_ids);
+        string namesmap_file = index_prefix + ".namesMap";
+        load_namesMap(namesmap_file, namesmap);
+    }
 
 
     // Export to TSV

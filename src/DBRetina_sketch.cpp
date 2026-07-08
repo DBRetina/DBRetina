@@ -498,6 +498,40 @@ void parse_dbretina_json(string json_file, str_hashed_set_map* map) {
 }
 
 
+string merge_gene_sets_json(const string& existing_json, const string& new_json) {
+    // Both inputs are DBRetina gene-set JSON: {"metadata":{...},"data":{name:[...]}}.
+    // We keep existing's metadata and merge new's "data" entries into existing's "data".
+    // cpp-json exceptions don't derive from std::exception (so nanobind can't translate
+    // them); rethrow as std::runtime_error so a corrupt/truncated input is a clear error.
+    json::value existing, incoming;
+    try {
+        existing = json::parse(existing_json);
+        incoming = json::parse(new_json);
+    } catch (...) {
+        throw std::runtime_error(
+            "merge_gene_sets_json: failed to parse gene-set JSON (corrupt or truncated input)");
+    }
+
+    json::object& existing_data = existing["data"].as_object();
+    const json::object& incoming_data = incoming["data"].as_object();
+
+    // object::operator[]/at() throw on a missing key (they do NOT insert), and
+    // object::insert() is a no-op on an existing key. So branch explicitly:
+    // overwrite on collision (incoming wins), otherwise insert. (The collision branch is
+    // unreachable in normal use: append/merge throw on duplicate group names upstream.)
+    for (auto it = incoming_data.begin(); it != incoming_data.end(); ++it) {
+        auto found = existing_data.find(it->first);
+        if (found != existing_data.end()) {
+            found->second = it->second;
+        } else {
+            existing_data.insert(it->first, it->second);
+        }
+    }
+
+    return json::stringify(existing);
+}
+
+
 // void DBRetina_json_parser::load_json(string json_file) {
 //     zstr::ifstream sig_stream(json_file);
 //     json::value json = json::parse(sig_stream);

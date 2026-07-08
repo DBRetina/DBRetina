@@ -1,0 +1,241 @@
+---
+// Reusable interactive holdout network for the enrich tutorials.
+// Data-driven: each node carries its own colour, whether it is "holdable" (the
+// button cycles through those), and its guilt-by-association evidence
+// (cancerNbrs / deg / looRank). The script reads everything from the DOM, so the
+// same component serves the single-database and cross-database pages with
+// different data. network.json is built by the use-case extract_network.py.
+const {
+  data,
+  legend = [],
+  commands = "",
+  moduleWord = "the module",
+  holdLabel = "Hold out a member",
+  holdTemplate = "Hidden from {module}: <b>{label}</b>. Even so, <b>{cn} of its {deg}</b> gene-sharing neighbours are cancer pathways, so <code>enrich</code> ranks it straight back at <b>#{rank} of {total}</b>.",
+  restCaption = "Hover any node to trace its strongest links, or hold one out.",
+  infoHead = "How this was built",
+  infoNote = "",
+} = Astro.props;
+const nodes = data.nodes;
+const edges = data.edges;
+const total = data.totalRanked;
+const pos = Object.fromEntries(nodes.map((n) => [n.id, n]));
+const rad = (n) => 2.8 + Math.min(n.cancerNbrs, 13) * 0.16;
+const labelDy = (n) => rad(n) + 3.7;
+---
+
+<figure class="enr-net" data-total={total} data-module={moduleWord} data-holdtpl={holdTemplate}>
+  <svg viewBox="-12 -16 262 140" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Interactive shared-gene network; a button holds out one member at a time to show it is still surrounded by its own kind.">
+    <g class="enr-edges">
+      {edges.map((e) => (
+        <line class="enr-edge" data-s={e.s} data-t={e.t}
+          x1={pos[e.s].x} y1={pos[e.s].y} x2={pos[e.t].x} y2={pos[e.t].y}
+          style={`stroke-width:${(0.35 + (e.w - 20) / 45).toFixed(2)}`} />
+      ))}
+    </g>
+    <g class="enr-nodes">
+      {nodes.map((n) => (
+        <g class="enr-node" data-id={n.id} data-hold={n.hold ? "1" : "0"} data-x={n.x} data-y={n.y}
+           data-label={n.label} data-cn={n.cancerNbrs} data-deg={n.deg} data-rank={n.looRank}
+           style={`--nc:${n.color}`} transform={`translate(${n.x} ${n.y})`} tabindex="0">
+          <circle class="enr-halo" r={(rad(n) + 2.6).toFixed(2)} />
+          <circle class="enr-mark" r={rad(n).toFixed(2)} style={`fill:${n.color}`} />
+          <text class="enr-label" y={labelDy(n).toFixed(2)}>{n.label}</text>
+        </g>
+      ))}
+    </g>
+  </svg>
+
+  <div class="enr-legend" aria-hidden="true">
+    {legend.map((l) => (<span><i class="enr-dot" style={`background:${l.color}`}></i>{l.label}</span>))}
+  </div>
+
+  <div class="enr-controls">
+    <button class="enr-btn" type="button">{holdLabel} &#9656;</button>
+    <p class="enr-caption" aria-live="polite" set:html={restCaption}></p>
+  </div>
+
+  <button class="enr-info-btn" type="button" aria-expanded="false" aria-controls="enr-cmds" aria-label="How this network was built">i</button>
+  <div class="enr-info-panel" id="enr-cmds" hidden>
+    <p class="enr-info-head">{infoHead}</p>
+    <pre><code>{commands}</code></pre>
+    {infoNote && <p class="enr-info-note">{infoNote}</p>}
+  </div>
+  <p class="enr-hint" aria-hidden="true">hover to trace, drag to move</p>
+</figure>
+
+<style>
+  .enr-net {
+    margin: 1.75rem 0; position: relative;
+    border: 1px solid var(--sl-color-gray-5); border-radius: 0.9rem;
+    background: var(--sl-color-bg); overflow: hidden;
+  }
+  .enr-net svg { display: block; width: 100%; height: auto; touch-action: none; }
+  .enr-edge { stroke: var(--sl-color-gray-4); stroke-linecap: round; opacity: 0.5; transition: opacity 0.2s, stroke 0.2s; }
+  .enr-halo { fill: none; stroke: none; }
+  .enr-mark { stroke: var(--sl-color-bg); stroke-width: 1.1; cursor: grab; transition: opacity 0.2s; }
+  .enr-node:focus { outline: none; }
+  .enr-node:focus .enr-mark { stroke: var(--sl-color-text); stroke-width: 1.4; }
+  .enr-label {
+    fill: var(--sl-color-text); font-size: 3.5px; font-weight: 600; text-anchor: middle;
+    paint-order: stroke; stroke: var(--sl-color-bg); stroke-width: 1.1px; stroke-linejoin: round;
+    pointer-events: none; transition: opacity 0.18s ease;
+  }
+
+  .enr-net.is-active .enr-edge { opacity: 0.06; }
+  .enr-net.is-active .enr-mark { opacity: 0.2; }
+  .enr-net.is-active .enr-label { opacity: 0.08; }
+  .enr-edge.is-lit { opacity: 0.95; stroke: var(--sl-color-text); }
+  .enr-node.is-lit .enr-mark, .enr-node.is-near .enr-mark { opacity: 1 !important; }
+  .enr-node.is-lit .enr-mark { stroke: var(--sl-color-text); stroke-width: 1.5; }
+  .enr-node.is-lit .enr-label, .enr-node.is-near .enr-label { opacity: 1 !important; }
+  .enr-node.is-dragging .enr-mark { cursor: grabbing; }
+
+  /* the held-out node: hollow, dashed, pulsing halo, in its own colour */
+  .enr-node.is-heldout .enr-mark { fill: var(--sl-color-bg) !important; stroke: var(--nc); stroke-width: 1.4; stroke-dasharray: 2 1.4; }
+  .enr-node.is-heldout .enr-halo { stroke: var(--nc); stroke-width: 0.8; opacity: 0.55; animation: enr-pulse 1.6s ease-out infinite; }
+  @keyframes enr-pulse { 0% { r: 4; opacity: 0.6; } 100% { r: 11; opacity: 0; } }
+
+  .enr-legend {
+    position: absolute; top: 0.7rem; left: 0.85rem; display: flex; flex-wrap: wrap;
+    gap: 0.3rem 0.85rem; font-size: 0.75rem; color: var(--sl-color-gray-2); max-width: 66%;
+  }
+  .enr-legend span { display: inline-flex; align-items: center; gap: 0.32rem; }
+  .enr-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; }
+
+  .enr-controls {
+    display: flex; align-items: baseline; gap: 0.8rem; flex-wrap: wrap;
+    padding: 0.75rem 1rem 0.9rem; border-top: 1px solid var(--sl-color-gray-5);
+  }
+  .enr-btn {
+    flex: none; border: 1px solid var(--sl-color-accent); border-radius: 0.5rem;
+    background: color-mix(in srgb, var(--sl-color-accent) 12%, var(--sl-color-bg));
+    color: var(--sl-color-text); font-size: 0.82rem; font-weight: 600; padding: 0.35rem 0.75rem; cursor: pointer;
+    transition: background 0.15s;
+  }
+  .enr-btn:hover { background: color-mix(in srgb, var(--sl-color-accent) 22%, var(--sl-color-bg)); }
+  .enr-caption { margin: 0; font-size: 0.83rem; line-height: 1.45; color: var(--sl-color-gray-1); }
+  .enr-caption b { color: var(--sl-color-white); }
+  .enr-caption code { font-size: 0.86em; }
+
+  .enr-info-btn {
+    position: absolute; top: 0.55rem; right: 0.6rem; width: 1.5rem; height: 1.5rem; border-radius: 50%;
+    border: 1px solid var(--sl-color-gray-4); background: var(--sl-color-bg); color: var(--sl-color-gray-1);
+    font: 600 0.85rem/1 Georgia, serif; font-style: italic; cursor: pointer; z-index: 3; transition: background 0.15s, color 0.15s;
+  }
+  .enr-info-btn:hover, .enr-info-btn[aria-expanded="true"] { background: var(--sl-color-accent); color: var(--sl-color-white); border-color: var(--sl-color-accent); }
+  .enr-info-panel {
+    position: absolute; top: 2.4rem; right: 0.6rem; z-index: 3; width: min(27rem, 86%);
+    background: var(--sl-color-bg); border: 1px solid var(--sl-color-gray-5); border-radius: 0.6rem;
+    padding: 0.85rem 1rem; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  }
+  .enr-info-panel[hidden] { display: none; }
+  .enr-info-head { margin: 0 0 0.5rem; font-size: 0.9rem; font-weight: 700; color: var(--sl-color-white); }
+  .enr-info-panel pre { margin: 0; font-size: 0.69rem; overflow-x: auto; }
+  .enr-info-note { margin: 0.6rem 0 0; font-size: 0.74rem; color: var(--sl-color-gray-2); }
+
+  .enr-hint { position: absolute; right: 0.9rem; top: 0.7rem; margin: 0; font-size: 0.72rem; color: var(--sl-color-gray-3); pointer-events: none; }
+  @media (max-width: 40rem) { .enr-hint { display: none; } .enr-label { font-size: 4px; } }
+</style>
+
+<script>
+  class EnrichNetwork {
+    constructor(root) {
+      this.root = root;
+      this.total = +root.dataset.total;
+      this.moduleWord = root.dataset.module || "the module";
+      this.holdTemplate = root.dataset.holdtpl || "";
+      this.svg = root.querySelector("svg");
+      this.caption = root.querySelector(".enr-caption");
+      this.restCaption = this.caption.innerHTML;
+      this.nodes = [...root.querySelectorAll(".enr-node")].map((el) => {
+        const hx = +el.dataset.x, hy = +el.dataset.y;
+        return { el, id: el.dataset.id, hx, hy, x: hx, y: hy, vx: 0, vy: 0 };
+      });
+      this.byId = Object.fromEntries(this.nodes.map((n) => [n.id, n]));
+      this.edges = [...root.querySelectorAll(".enr-edge")].map((el) => ({ el, a: this.byId[el.dataset.s], b: this.byId[el.dataset.t] }));
+      this.holdable = this.nodes.filter((n) => n.el.dataset.hold === "1");
+      this.hoNode = null;
+      this.hoIdx = -1;
+      this.drag = null;
+      this.reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      this.bindNodes();
+      this.bindInfo();
+      this.bindHoldout();
+      if (!this.reduced) requestAnimationFrame(() => this.loop());
+    }
+    bindNodes() {
+      for (const n of this.nodes) {
+        n.el.addEventListener("pointerenter", () => this.highlight(n));
+        n.el.addEventListener("pointerleave", () => { if (!this.drag) this.clear(); });
+        n.el.addEventListener("focus", () => this.highlight(n));
+        n.el.addEventListener("blur", () => { if (!this.drag) this.clear(); });
+        n.el.addEventListener("pointerdown", (ev) => this.start(ev, n));
+      }
+      window.addEventListener("pointermove", (ev) => this.move(ev));
+      window.addEventListener("pointerup", () => this.end());
+    }
+    bindHoldout() {
+      const btn = this.root.querySelector(".enr-btn");
+      if (!this.holdable.length) { btn.style.display = "none"; return; }
+      btn.addEventListener("click", () => {
+        this.hoIdx = (this.hoIdx + 1) % this.holdable.length;
+        this.holdout(this.holdable[this.hoIdx]);
+      });
+    }
+    bindInfo() {
+      const btn = this.root.querySelector(".enr-info-btn");
+      const panel = this.root.querySelector(".enr-info-panel");
+      if (!btn || !panel) return;
+      const setOpen = (open) => { panel.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
+      btn.addEventListener("click", (e) => { e.stopPropagation(); setOpen(panel.hidden); });
+      document.addEventListener("click", (e) => { if (!panel.hidden && !panel.contains(e.target) && e.target !== btn) setOpen(false); });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });
+    }
+    holdout(n) {
+      for (const m of this.nodes) m.el.classList.remove("is-heldout");
+      n.el.classList.add("is-heldout");
+      this.hoNode = n;
+      this.root.classList.add("is-active");
+      this.clearLit(); this.lit(n);
+      const d = n.el.dataset;
+      this.caption.innerHTML = this.holdTemplate
+        .replaceAll("{module}", this.moduleWord).replaceAll("{label}", d.label)
+        .replaceAll("{cn}", d.cn).replaceAll("{deg}", d.deg)
+        .replaceAll("{rank}", d.rank).replaceAll("{total}", this.total);
+    }
+    toSvg(ev) { const p = this.svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; return p.matrixTransform(this.svg.getScreenCTM().inverse()); }
+    start(ev, n) { ev.preventDefault(); this.drag = n; n.el.classList.add("is-dragging"); this.highlight(n); }
+    move(ev) { if (!this.drag) return; const p = this.toSvg(ev); this.drag.x = p.x; this.drag.y = p.y; this.drag.vx = 0; this.drag.vy = 0; if (this.reduced) this.render(); }
+    end() { if (!this.drag) return; this.drag.el.classList.remove("is-dragging"); this.drag = null; this.clear(); }
+    lit(n) {
+      n.el.classList.add("is-lit");
+      for (const e of this.edges) if (e.a === n || e.b === n) { e.el.classList.add("is-lit"); (e.a === n ? e.b : e.a).el.classList.add("is-near"); }
+    }
+    highlight(n) { this.root.classList.add("is-active"); this.clearLit(); this.lit(n); }
+    clearLit() { for (const n of this.nodes) n.el.classList.remove("is-lit", "is-near"); for (const e of this.edges) e.el.classList.remove("is-lit"); }
+    clear() {
+      if (this.hoNode) { this.clearLit(); this.lit(this.hoNode); }
+      else { this.root.classList.remove("is-active"); this.clearLit(); this.caption.innerHTML = this.restCaption; }
+    }
+    step() {
+      const N = this.nodes;
+      for (const n of N) {
+        if (n === this.drag) continue;
+        let fx = (n.hx - n.x) * 0.04, fy = (n.hy - n.y) * 0.04;
+        for (const m of N) {
+          if (m === n) continue;
+          const dx = n.x - m.x, dy = n.y - m.y, d2 = dx * dx + dy * dy;
+          if (d2 > 0.01 && d2 < 170) { const f = 4 / d2; fx += dx * f; fy += dy * f; }
+        }
+        n.vx = (n.vx + fx) * 0.82; n.vy = (n.vy + fy) * 0.82; n.x += n.vx; n.y += n.vy;
+      }
+    }
+    render() {
+      for (const n of this.nodes) n.el.setAttribute("transform", `translate(${n.x.toFixed(2)} ${n.y.toFixed(2)})`);
+      for (const e of this.edges) { e.el.setAttribute("x1", e.a.x.toFixed(2)); e.el.setAttribute("y1", e.a.y.toFixed(2)); e.el.setAttribute("x2", e.b.x.toFixed(2)); e.el.setAttribute("y2", e.b.y.toFixed(2)); }
+    }
+    loop() { this.step(); this.render(); requestAnimationFrame(() => this.loop()); }
+  }
+  for (const el of document.querySelectorAll(".enr-net")) new EnrichNetwork(el);
+</script>
