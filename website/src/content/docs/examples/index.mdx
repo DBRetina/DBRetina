@@ -1,0 +1,55 @@
+---
+title: Examples
+description: Real biological questions, answered with DBRetina.
+---
+
+Each example works a real biological question through to a result with DBRetina, on real data. They are small
+enough to run yourself, each ends in a figure, and each cites the sources behind the result.
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+	<Card title="The shared genetic core of autoimmune disease" icon="heart">
+		A six-command chain takes disease-gene lists to their shared immune and HLA core, and a permutation test
+		puts the clustering 167 standard deviations above a size-matched null.
+		[Read it](/DBRetina/examples/autoimmune-diseases/)
+	</Card>
+	<Card title="Comorbidity, not cause: autism's genetic neighbours" icon="seti:plan">
+		Autism's genetic neighbours are its polygenic comorbidities (epilepsy, ADHD, schizophrenia), while the
+		single-gene syndromes that cause it sit apart.
+		[Read it](/DBRetina/examples/autism-comorbidity/)
+	</Card>
+	<Card title="One name, two mechanisms: type 1 and type 2 diabetes" icon="random">
+		Type 1 diabetes groups with the autoimmune diseases and type 2 with the metabolic diseases, from gene lists
+		alone: opposite neighbourhoods behind a shared name.
+		[Read it](/DBRetina/examples/diabetes-types/)
+	</Card>
+	<Card title="Alzheimer's disease and the gene-set size confound" icon="warning">
+		A lesson in choosing the metric: gene-set size hides Alzheimer's true neighbours until a size-aware odds
+		ratio brings the neurodegeneration signal back.
+		[Read it](/DBRetina/examples/alzheimer-metric/)
+	</Card>
+	<Card title="How much do curated pathway databases agree?" icon="approve-check">
+		Across KEGG, Reactome, and WikiPathways, the same-named pathway is the top cross-database match 62% of the
+		time, and the distance from chance measures where they differ.
+		[Read it](/DBRetina/examples/database-concordance/)
+	</Card>
+	<Card title="How independent are the cancer Hallmark signatures?" icon="magnifier">
+		The 50 MSigDB Hallmarks are mostly distinct, but a few overlap, and the shared genes turn out to be real
+		biology.
+		[Read it](/DBRetina/examples/hallmarks/)
+	</Card>
+	<Card title="Recovering drug mechanism from shared gene targets" icon="random">
+		24 cancer drugs fall into their mechanistic classes from shared gene targets alone, with repurposing hints
+		in the cross-class overlaps.
+		[Read it](/DBRetina/examples/drug-repurposing/)
+	</Card>
+	<Card title="From disease to mechanism to drug, across five databases" icon="puzzle">
+		Combine a disease, a drug, and three pathway databases to trace the mechanisms and drugs behind rheumatoid
+		arthritis.
+		[Read it](/DBRetina/examples/multidb-rheumatoid/)
+	</Card>
+</CardGrid>
+
+Every command and number on these pages comes from a real run. For the mechanics of a single command, see the
+[command reference](/DBRetina/commands/).

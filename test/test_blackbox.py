@@ -1248,7 +1248,7 @@ class TestQuery(unittest.TestCase):
         """Query with ochiai >= 50 returns only qualifying pairs."""
         out = os.path.join(self.tmpdir, "q")
         rc, _, stderr = run_command(
-            f"DBRetina query -p {self.pw_file} -m ochiai -c 50 -o {out}"
+            f"DBRetina query -p {self.pw_file} -m ochiai -c 50 --tsv-only -o {out}"
         )
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, f"{out}.tsv")
@@ -1260,7 +1260,7 @@ class TestQuery(unittest.TestCase):
         """Query with cutoff=0 returns all 11 pairs."""
         out = os.path.join(self.tmpdir, "q")
         rc, _, stderr = run_command(
-            f"DBRetina query -p {self.pw_file} -m ochiai -c 0 -o {out}"
+            f"DBRetina query -p {self.pw_file} -m ochiai -c 0 --tsv-only -o {out}"
         )
         self.assertEqual(rc, 0, stderr)
         self.assertEqual(count_tsv_data_rows(f"{out}.tsv"), 11)
@@ -1269,7 +1269,7 @@ class TestQuery(unittest.TestCase):
         """Query with ochiai=100 returns only A-F (identical)."""
         out = os.path.join(self.tmpdir, "q")
         rc, _, stderr = run_command(
-            f"DBRetina query -p {self.pw_file} -m ochiai -c 100 -o {out}"
+            f"DBRetina query -p {self.pw_file} -m ochiai -c 100 --tsv-only -o {out}"
         )
         self.assertEqual(rc, 0, stderr)
         rows = parse_pairwise_tsv(f"{out}.tsv")
@@ -1282,7 +1282,7 @@ class TestQuery(unittest.TestCase):
         groups = write_file(os.path.join(self.tmpdir, "groups.txt"), "GroupA\nGroupB\n")
         out = os.path.join(self.tmpdir, "q")
         rc, _, stderr = run_command(
-            f"DBRetina query -p {self.pw_file} -g {groups} -m ochiai -c 0 -o {out}"
+            f"DBRetina query -p {self.pw_file} -g {groups} -m ochiai -c 0 --tsv-only -o {out}"
         )
         self.assertEqual(rc, 0, stderr)
         rows = parse_pairwise_tsv(f"{out}.tsv")
@@ -1297,7 +1297,7 @@ class TestQuery(unittest.TestCase):
                             "GroupA\nGroupB\nGroupC\n")
         out = os.path.join(self.tmpdir, "q")
         rc, _, stderr = run_command(
-            f"DBRetina query -p {self.pw_file} -g {groups} -m ochiai -c 50 -o {out}"
+            f"DBRetina query -p {self.pw_file} -g {groups} -m ochiai -c 50 --tsv-only -o {out}"
         )
         self.assertEqual(rc, 0, stderr)
         rows = parse_pairwise_tsv(f"{out}.tsv")
@@ -1359,6 +1359,250 @@ class TestQuery(unittest.TestCase):
             os.rename(dbrp_bak, dbrp)
             if os.path.isdir(pq_bak):
                 os.rename(pq_bak, pq_dir)
+
+
+class TestQueryParquetOutput(unittest.TestCase):
+    """query writes a Parquet pairwise DIRECTORY by default -- a full, re-readable
+    pairwise, not a terminal legacy .tsv.
+
+    The design regression this closes: a filtered ``query`` slice used to be a
+    legacy .tsv that ``cluster`` could not read, forcing users off the parquet
+    format the moment they filtered. Now the default output is a
+    ``<out>_DBRetina_pairwise/`` directory that ``cluster`` / ``query`` /
+    ``export`` all read back. The legacy behavior stays reachable:
+
+      (default)      -> parquet dir only
+      --tsv          -> parquet dir + legacy .tsv
+      --tsv-only     -> legacy .tsv only (old behavior)
+      --inplace      -> filter the source dir in place, no new file
+
+    Input is the shared fixture's parquet directory.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.prefix, cls.pw_dir = _ensure_shared_fixture()  # parquet directory
+
+    def setUp(self):
+        self.assertTrue(os.path.isdir(self.pw_dir),
+                        f"fixture must be a parquet dir: {self.pw_dir}")
+        self.tmpdir = tempfile.mkdtemp(prefix="dbretina_qpq_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    @staticmethod
+    def _num_pairs(pairwise_dir):
+        with open(os.path.join(pairwise_dir, "manifest.json")) as f:
+            return json.load(f)["num_pairs"]
+
+    def test_default_writes_parquet_dir_not_tsv(self):
+        """Default output is a ``<out>_DBRetina_pairwise/`` directory (a real
+        pairwise), NOT a legacy ``<out>.tsv``."""
+        out = os.path.join(self.tmpdir, "q")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.pw_dir} -m ochiai -c 50 -o {out}")
+        self.assertEqual(rc, 0, stderr)
+        out_dir = f"{out}_DBRetina_pairwise"
+        self.assertTrue(os.path.isdir(out_dir),
+                        f"default should write a parquet dir: {out_dir}")
+        self.assertFalse(os.path.exists(f"{out}.tsv"),
+                         "default must NOT write a legacy .tsv")
+        assert_file_exists(self, os.path.join(out_dir, "manifest.json"))
+        assert_file_exists(self, os.path.join(out_dir, "names.parquet"))
+        with open(os.path.join(out_dir, "manifest.json")) as f:
+            manifest = json.load(f)
+        self.assertEqual(manifest["format"], "dbretina_pairwise_parquet")
+        self.assertGreater(manifest["num_pairs"], 0)
+
+    def test_default_dir_reclusters_and_requeries(self):
+        """The filtered parquet dir is a full pairwise: ``cluster``, ``query``,
+        and ``export`` all read it back (the regression this fixes)."""
+        out = os.path.join(self.tmpdir, "q")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.pw_dir} -m ochiai -c 0 -o {out}")
+        self.assertEqual(rc, 0, stderr)
+        out_dir = f"{out}_DBRetina_pairwise"
+        self.assertTrue(os.path.isdir(out_dir), out_dir)
+
+        # (a) cluster reads the filtered dir
+        cl = os.path.join(self.tmpdir, "cl")
+        rc, _, stderr = run_command(
+            f"DBRetina cluster -p {out_dir} -m ochiai -c 50 -o {cl}")
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{cl}_clusters.tsv")
+
+        # (b) query the filtered dir again (chain filters): tighter cutoff, all
+        # returned pairs respect it -> a slice can itself be sliced.
+        out2 = os.path.join(self.tmpdir, "q2")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {out_dir} -m ochiai -c 60 --tsv-only -o {out2}")
+        self.assertEqual(rc, 0, stderr)
+        for row in parse_pairwise_tsv(f"{out2}.tsv"):
+            self.assertGreaterEqual(row["ochiai"], 60.0)
+
+        # (c) export reads the filtered dir
+        ex = os.path.join(self.tmpdir, "ex")
+        rc, _, stderr = run_command(
+            f"DBRetina export -p {out_dir} -m ochiai -o {ex}")
+        self.assertEqual(rc, 0, stderr)
+
+    def test_tsv_flag_writes_both(self):
+        """``--tsv`` writes the parquet dir AND a legacy .tsv."""
+        out = os.path.join(self.tmpdir, "q")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.pw_dir} -m ochiai -c 50 --tsv -o {out}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertTrue(os.path.isdir(f"{out}_DBRetina_pairwise"),
+                        "--tsv must still write the parquet dir")
+        assert_file_exists(self, f"{out}.tsv")
+        for row in parse_pairwise_tsv(f"{out}.tsv"):
+            self.assertGreaterEqual(row["ochiai"], 50.0)
+
+    def test_tsv_only_writes_tsv_no_dir(self):
+        """``--tsv-only`` writes ONLY the legacy .tsv (old behavior), no dir."""
+        out = os.path.join(self.tmpdir, "q")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.pw_dir} -m ochiai -c 50 --tsv-only -o {out}")
+        self.assertEqual(rc, 0, stderr)
+        assert_file_exists(self, f"{out}.tsv")
+        self.assertFalse(os.path.isdir(f"{out}_DBRetina_pairwise"),
+                         "--tsv-only must NOT write a parquet dir")
+
+    def test_inplace_filters_source_dir(self):
+        """``--inplace`` rewrites the source dir with the filtered pairs (fewer
+        than before), writing no new output file; the result stays a valid
+        pairwise (re-queryable)."""
+        # Work on a private copy so the shared fixture stays intact.
+        src = os.path.join(self.tmpdir, "src_DBRetina_pairwise")
+        shutil.copytree(self.pw_dir, src)
+        before = self._num_pairs(src)
+
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {src} -m ochiai -c 60 --inplace")
+        self.assertEqual(rc, 0, stderr)
+        self.assertTrue(os.path.isdir(src), "source dir must still exist")
+        after = self._num_pairs(src)
+        self.assertLess(after, before,
+                        f"--inplace should reduce pairs ({before} -> {after})")
+        self.assertGreater(after, 0, "cutoff 60 should keep the identical/near pairs")
+        # No sibling output was created next to the source.
+        self.assertFalse(os.path.isdir(f"{src}_DBRetina_pairwise"),
+                         "--inplace must not create a new sibling dir")
+        # The in-place dir is still a full pairwise: re-query returns exactly its pairs.
+        out2 = os.path.join(self.tmpdir, "q2")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {src} -m ochiai -c 0 --tsv-only -o {out2}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(len(parse_pairwise_tsv(f"{out2}.tsv")), after,
+                         "re-query of the in-place dir must match its manifest count")
+
+    def _write_groups_file(self, n=4):
+        """A groups file of the first n group NAMES from the fixture."""
+        import pyarrow.parquet as pq
+        names = pq.read_table(
+            os.path.join(self.pw_dir, "names.parquet")).column("group_name").to_pylist()
+        path = os.path.join(self.tmpdir, "groups.txt")
+        with open(path, "w") as f:
+            for nm in names[:n]:
+                f.write(nm + "\n")
+        return path
+
+    def test_output_dir_collision_refuses_no_data_loss(self):
+        """`-p X_DBRetina_pairwise -o X` makes out_dir == the INPUT dir. This must
+        be refused, not silently rmtree the source (that was a data-loss bug)."""
+        src = os.path.join(self.tmpdir, "c_DBRetina_pairwise")
+        shutil.copytree(self.pw_dir, src)
+        before = sorted(os.listdir(src))
+        rc, _, stderr = run_command(  # -o c  ->  out_dir "c_DBRetina_pairwise" == src
+            f"DBRetina query -p {src} -m ochiai -c 50 -o {os.path.join(self.tmpdir, 'c')}")
+        self.assertNotEqual(rc, 0, "collision with the input dir must be refused")
+        self.assertIn("input directory", stderr.lower())
+        self.assertEqual(sorted(os.listdir(src)), before,
+                         "the source pairwise must be left INTACT (no data loss)")
+
+    def test_output_dir_ancestor_of_source_refused(self):
+        """A subtler collision: out_dir is an ANCESTOR of the input dir (the input
+        nested inside `<prefix>_DBRetina_pairwise`). The overlap guard must refuse
+        this too, else the rmtree deletes the source (same data-loss class)."""
+        parent = os.path.join(self.tmpdir, "p_DBRetina_pairwise")
+        os.makedirs(parent)
+        src = os.path.join(parent, "child_DBRetina_pairwise")
+        shutil.copytree(self.pw_dir, src)
+        before = sorted(os.listdir(src))
+        rc, _, stderr = run_command(  # -o p -> out_dir "p_DBRetina_pairwise" == parent (ancestor of src)
+            f"DBRetina query -p {src} -m ochiai -c 50 -o {os.path.join(self.tmpdir, 'p')}")
+        self.assertNotEqual(rc, 0, "out_dir being an ancestor of the input must be refused")
+        self.assertIn("overlaps", stderr.lower())
+        self.assertEqual(sorted(os.listdir(src)), before,
+                         "the nested source pairwise must be left INTACT (no data loss)")
+
+    def test_flag_conflicts_error(self):
+        """Contradictory flags / bad -o combos are rejected with a CLEAN error
+        (non-zero rc AND no traceback), not a crash."""
+        d = self.pw_dir
+        out = os.path.join(self.tmpdir, "q")
+        for args in (f"-m ochiai -c 50 --tsv --tsv-only -o {out}",   # mutually exclusive
+                     f"-m ochiai -c 50 --inplace --tsv",             # inplace + tsv
+                     f"-m ochiai -c 50 --inplace -o {out}",          # inplace + -o (must reject)
+                     f"-m ochiai -c 50"):                            # -o missing, no --inplace
+            rc, _, stderr = run_command(f"DBRetina query -p {d} {args}")
+            self.assertNotEqual(rc, 0, f"should have errored: {args}")
+            self.assertNotIn("Traceback", stderr, f"error must be clean, not a crash: {args}")
+
+    def test_groups_filter_writes_rereadable_parquet_dir(self):
+        """A groups filter (the store_for_filter route, distinct from plain cutoff)
+        also writes a parquet dir that re-reads."""
+        groups = self._write_groups_file(4)
+        out = os.path.join(self.tmpdir, "g")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.pw_dir} -g {groups} -m ochiai -c 0 -o {out}")
+        self.assertEqual(rc, 0, stderr)
+        out_dir = f"{out}_DBRetina_pairwise"
+        self.assertTrue(os.path.isdir(out_dir), out_dir)
+        out2 = os.path.join(self.tmpdir, "g2")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {out_dir} -m ochiai -c 0 --tsv-only -o {out2}")
+        self.assertEqual(rc, 0, stderr)
+
+    def test_inplace_extend_leaves_no_stray_file(self):
+        """`--inplace --extend` must not drop a stray _extended_supergroups.txt or
+        .query* intermediate next to the source."""
+        src = os.path.join(self.tmpdir, "ie_DBRetina_pairwise")
+        shutil.copytree(self.pw_dir, src)
+        groups = self._write_groups_file(3)
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {src} -g {groups} -m ochiai -c 0 --extend --inplace")
+        self.assertEqual(rc, 0, stderr)
+        strays = [p for p in os.listdir(self.tmpdir)
+                  if p.startswith("ie_DBRetina_pairwise") and p != "ie_DBRetina_pairwise"]
+        self.assertEqual(strays, [], f"stray files next to the source: {strays}")
+
+    def test_tsv_flag_pair_count_matches_dir(self):
+        """--tsv: the .tsv and the parquet dir describe the same pair set."""
+        out = os.path.join(self.tmpdir, "q")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {self.pw_dir} -m ochiai -c 50 --tsv -o {out}")
+        self.assertEqual(rc, 0, stderr)
+        self.assertEqual(self._num_pairs(f"{out}_DBRetina_pairwise"),
+                         len(parse_pairwise_tsv(f"{out}.tsv")))
+
+    def test_pvalue_dir_warns_and_writes_honest_manifest(self):
+        """A p-value pairwise -> Parquet output WARNS and writes an honest
+        has_pvalue:false directory (p-values dropped), not an error/dead-end."""
+        _pv_prefix, pv_pw_tsv = _ensure_shared_pvalue_fixture()
+        pv_dir = pv_pw_tsv[:-len(".tsv")]  # sibling parquet dir
+        self.assertTrue(os.path.isdir(pv_dir), pv_dir)
+        out = os.path.join(self.tmpdir, "pv")
+        rc, _, stderr = run_command(
+            f"DBRetina query -p {pv_dir} -m ochiai -c 50 -o {out}")
+        self.assertEqual(rc, 0, stderr)
+        out_dir = f"{out}_DBRetina_pairwise"
+        self.assertTrue(os.path.isdir(out_dir), out_dir)
+        with open(os.path.join(out_dir, "manifest.json")) as f:
+            self.assertFalse(json.load(f)["has_pvalue"],
+                             "filtered dir must honestly report has_pvalue:false")
+        self.assertIn("p-value", stderr.lower())
 
 
 # ============================================================
@@ -1424,10 +1668,10 @@ class TestQueryFilterStoreParity(unittest.TestCase):
         out_dir = os.path.join(self.tmpdir, "via_dir")
 
         rc, _, err = run_command(
-            f"DBRetina query -p {self.pw_file} {args} -o {out_tsv}")
+            f"DBRetina query -p {self.pw_file} {args} --tsv-only -o {out_tsv}")
         self.assertEqual(rc, 0, f"awk/.tsv route failed: {err}")
         rc, _, err = run_command(
-            f"DBRetina query -p {self.pw_dir} {args} -o {out_dir}")
+            f"DBRetina query -p {self.pw_dir} {args} --tsv-only -o {out_dir}")
         self.assertEqual(rc, 0, f"store/parquet route failed: {err}")
 
         rows_tsv = self._rows_by_pair(f"{out_tsv}.tsv")
@@ -1604,7 +1848,7 @@ class TestQueryPvalueCutoffDirection(unittest.TestCase):
             self.skipTest("no parquet directory emitted by pairwise")
         out = os.path.join(self.tmpdir, "q_store")
         rc, _, stderr = run_command(
-            f"DBRetina query -p {pq_dir} -m pvalue -c {self.PV_CUTOFF} -o {out}"
+            f"DBRetina query -p {pq_dir} -m pvalue -c {self.PV_CUTOFF} --tsv-only -o {out}"
         )
         self.assertEqual(rc, 0, stderr)
         self._assert_significant(f"{out}.tsv", "parquet store route")
@@ -1631,7 +1875,7 @@ class TestQueryPvalueCutoffDirection(unittest.TestCase):
             self.skipTest("no parquet directory emitted by pairwise")
         out = os.path.join(self.tmpdir, "q_ochiai_store")
         rc, _, stderr = run_command(
-            f"DBRetina query -p {pq_dir} -m ochiai -c 50 -o {out}"
+            f"DBRetina query -p {pq_dir} -m ochiai -c 50 --tsv-only -o {out}"
         )
         self.assertEqual(rc, 0, stderr)
         rows = parse_pairwise_tsv(f"{out}.tsv")
@@ -4010,7 +4254,7 @@ class TestQueryClusters(unittest.TestCase):
         out = os.path.join(self.tmpdir, "q")
         rc, _, stderr = run_command(
             f"DBRetina query -p {self.pw_file} --clusters-file {clusters_file} "
-            f"--cluster-ids 1 -m ochiai -c 0 -o {out}"
+            f"--cluster-ids 1 -m ochiai -c 0 --tsv-only -o {out}"
         )
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, f"{out}.tsv")
@@ -4313,7 +4557,7 @@ class TestSpecialCharPairwise(unittest.TestCase):
                             "gene-set_1\ngroup_2.test\n")
         out = os.path.join(self.tmpdir, "q")
         rc, _, stderr = run_command(
-            f"DBRetina query -p {pw_file} -g {groups} -m ochiai -c 0 -o {out}"
+            f"DBRetina query -p {pw_file} -g {groups} -m ochiai -c 0 --tsv-only -o {out}"
         )
         self.assertEqual(rc, 0, stderr)
         assert_file_exists(self, f"{out}.tsv")
@@ -6609,7 +6853,7 @@ class TestQueryClusterInputHandling(unittest.TestCase):
         IsADirectoryError. Output must match the .tsv form."""
         out = os.path.join(self.tmpdir, "q_dir")
         rc, _, stderr = run_command(
-            f"DBRetina query -p {self.parquet_dir} -m ochiai -c 50 -o {out}"
+            f"DBRetina query -p {self.parquet_dir} -m ochiai -c 50 --tsv-only -o {out}"
         )
         assert_no_traceback(self, stderr, "query parquet dir")
         self.assertNotIn("IsADirectoryError", stderr, stderr)
@@ -8005,7 +8249,7 @@ class TestQueryHeaderConsistency(unittest.TestCase):
                          (self.parquet_dir, out_dir),
                          (self.dbrp, out_dbrp)):
             rc, _, stderr = run_command(
-                f"DBRetina query -p {src} -m ochiai -c 50 -o {out}"
+                f"DBRetina query -p {src} -m ochiai -c 50 --tsv-only -o {out}"
             )
             assert_no_traceback(self, stderr, f"query {src}")
             self.assertEqual(rc, 0, stderr)
@@ -8048,7 +8292,7 @@ class TestQueryHeaderConsistency(unittest.TestCase):
         out_dbrp = os.path.join(self.tmpdir, "qp_dbrp")
         for src, out in ((pw, out_tsv), (parquet_dir, out_dir), (dbrp, out_dbrp)):
             rc, _, stderr = run_command(
-                f"DBRetina query -p {src} -m ochiai -c 50 -o {out}"
+                f"DBRetina query -p {src} -m ochiai -c 50 --tsv-only -o {out}"
             )
             assert_no_traceback(self, stderr, f"query(pvalue) {src}")
             self.assertEqual(rc, 0, stderr)

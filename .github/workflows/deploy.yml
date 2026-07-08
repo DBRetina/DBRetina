@@ -1,0 +1,44 @@
+# Build the Astro docs site in website/ and publish it to GitHub Pages.
+# Replaces the previous mkdocs deploy.
+#
+# ONE-TIME SETUP (repo Settings -> Pages): set "Source" to "GitHub Actions".
+# That switches Pages off the old gh-pages branch so this workflow's build
+# becomes the live site.
+name: Deploy website
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# allow one concurrent deployment; don't cancel an in-progress production deploy
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build Astro site
+        uses: withastro/action@v3
+        with:
+          path: website          # the Astro project lives in website/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

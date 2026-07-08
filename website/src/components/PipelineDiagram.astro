@@ -1,0 +1,104 @@
+---
+// DBRetina command-chaining flow diagram. Static, themed SVG (adapts to light/dark via Starlight vars).
+// Command boxes are accent-tinted; artifacts (files/dirs) are dashed grey. Arrows show data flow.
+const cmd = (id, cx, cy, label, w = 88, h = 30) => ({ id, cx, cy, w, h, label, kind: "cmd" });
+const art = (id, cx, cy, label, w = 96, h = 24) => ({ id, cx, cy, w, h, label, kind: "art" });
+const inp = (id, cx, cy, label, w = 158, h = 30) => ({ id, cx, cy, w, h, label, kind: "inp" });
+const boxes = [
+  inp("gmt", 360, 28, "GMT / association file"),
+  cmd("index", 360, 86, "index", 94),
+  cmd("merge", 522, 72, "merge", 84, 26),
+  cmd("setcov", 522, 110, "setcov", 84, 26),
+  art("dbri", 360, 138, ".dbri", 84),
+  cmd("pairwise", 360, 190, "pairwise", 94),
+  art("pairdir", 360, 240, "…_DBRetina_pairwise/", 170),
+  cmd("query", 56, 308, "query", 84),
+  cmd("cluster", 160, 308, "cluster", 84),
+  cmd("export", 264, 308, "export", 84),
+  cmd("dedup", 368, 308, "dedup", 84),
+  cmd("modularity", 472, 308, "modularity", 92),
+  cmd("graph", 576, 308, "graph", 84),
+  cmd("bipartite", 674, 308, "bipartite", 88),
+  art("clusters", 160, 374, "clusters.tsv", 112),
+];
+const B = Object.fromEntries(boxes.map((b) => [b.id, b]));
+const edge = (b, side) => {
+  if (side === "t") return [b.cx, b.cy - b.h / 2];
+  if (side === "b") return [b.cx, b.cy + b.h / 2];
+  if (side === "l") return [b.cx - b.w / 2, b.cy];
+  return [b.cx + b.w / 2, b.cy];
+};
+// straight arrows: [fromId, fromSide, toId, toSide, label?]
+const arrows = [
+  ["gmt", "b", "index", "t"],
+  ["index", "b", "dbri", "t"],
+  ["index", "r", "merge", "l"],
+  ["dbri", "r", "setcov", "l"],
+  ["dbri", "b", "pairwise", "t"],
+  ["pairwise", "b", "pairdir", "t"],
+  ["cluster", "b", "clusters", "t"],
+];
+const fan = ["query", "cluster", "export", "dedup", "modularity", "graph", "bipartite"];
+const src = edge(B.pairdir, "b");
+---
+
+<figure class="pd">
+  <svg viewBox="-56 0 786 408" role="img" aria-label="DBRetina command-chaining pipeline: a GMT file is indexed into a .dbri, compared with pairwise into a pairwise directory, and that directory feeds the analysis commands query, cluster, export, dedup, modularity, graph, and bipartite. cluster writes a clusters.tsv that query reads back, and query itself writes a filtered pairwise directory that feeds back into the same commands.">
+    <defs>
+      <marker id="pd-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0.5 L9,5 L0,9.5" fill="none" stroke="var(--sl-color-gray-3)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+      </marker>
+    </defs>
+    <g class="pd-arrows">
+      {arrows.map(([f, fs, t, ts, label]) => {
+        const [x1, y1] = edge(B[f], fs); const [x2, y2] = edge(B[t], ts);
+        return (<>
+          <line x1={x1} y1={y1} x2={x2} y2={y2} class="pd-line" marker-end="url(#pd-arrow)" />
+          {label && <text x={(x1 + x2) / 2 + 6} y={(y1 + y2) / 2 - 3} class="pd-elabel">{label}</text>}
+        </>);
+      })}
+      {fan.map((id) => {
+        const [x2, y2] = edge(B[id], "t");
+        return <line x1={src[0]} y1={src[1]} x2={x2} y2={y2} class="pd-line" marker-end="url(#pd-arrow)" />;
+      })}
+      <path
+        d={`M ${edge(B.clusters, "l")[0]} ${edge(B.clusters, "l")[1]} C 118 374 40 356 ${edge(B.query, "b")[0]} ${edge(B.query, "b")[1] + 2}`}
+        class="pd-line pd-line--loop" marker-end="url(#pd-arrow)" fill="none" />
+      <text x="70" y="352" class="pd-elabel">--clusters-file</text>
+      {/* query's own output is a pairwise directory -> it re-enters the pipeline */}
+      <path
+        d={`M ${edge(B.query, "t")[0]} ${edge(B.query, "t")[1]} C 6 282 -40 240 ${edge(B.pairdir, "l")[0]} ${edge(B.pairdir, "l")[1]}`}
+        class="pd-line pd-line--loop" marker-end="url(#pd-arrow)" fill="none" />
+      <text x="72" y="233" class="pd-elabel">filtered pairwise dir</text>
+    </g>
+    <g class="pd-boxes">
+      {boxes.map((b) => (
+        <g class={`pd-box pd-box--${b.kind}`}>
+          <rect x={b.cx - b.w / 2} y={b.cy - b.h / 2} width={b.w} height={b.h} rx="6" />
+          <text x={b.cx} y={b.cy}>{b.label}</text>
+        </g>
+      ))}
+    </g>
+  </svg>
+</figure>
+
+<style>
+  .pd { margin: 1.5rem 0; }
+  .pd svg { display: block; width: 100%; height: auto; }
+  .pd-line { stroke: var(--sl-color-gray-3); stroke-width: 1.5; }
+  .pd-line--loop { stroke-dasharray: 4 3; }
+  .pd-elabel {
+    fill: var(--sl-color-gray-2); font-size: 10px; font-style: italic; text-anchor: start;
+    font-family: var(--sl-font);
+  }
+  .pd-box text {
+    text-anchor: middle; dominant-baseline: central; font-size: 13px; font-weight: 600;
+    font-family: var(--sl-font-system-mono, ui-monospace, monospace);
+  }
+  .pd-box--cmd rect { fill: color-mix(in srgb, var(--sl-color-accent) 15%, var(--sl-color-bg)); stroke: var(--sl-color-accent); stroke-width: 1.5; }
+  .pd-box--cmd text { fill: var(--sl-color-text); }
+  .pd-box--art rect { fill: var(--sl-color-bg); stroke: var(--sl-color-gray-4); stroke-width: 1.3; stroke-dasharray: 4 3; }
+  .pd-box--art text { fill: var(--sl-color-gray-2); font-size: 11px; font-weight: 500; }
+  .pd-box--inp rect { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-4); stroke-width: 1.3; }
+  .pd-box--inp text { fill: var(--sl-color-gray-1); font-size: 12px; font-weight: 500; font-family: var(--sl-font); }
+</style>

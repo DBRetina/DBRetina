@@ -1,0 +1,10 @@
+substrate	3090 C2:CP pathways
+cutoff	ochiai >= 20%
+seed	15 KEGG cancer
+heldout	64 Reactome+WP cancer
+real_auc	0.7278
+null_auc_mean	0.5343
+null_auc_sd	0.0473
+z	4.10
+perm_p	5.00e-04
+n_perm	2000

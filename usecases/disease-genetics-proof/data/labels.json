@@ -1,0 +1,18 @@
+{
+  "dis_atherosclerosis": "comorbidity",
+  "dis_breast_cancer": "control",
+  "dis_celiac": "autoimmune",
+  "dis_coronary_artery_disease": "comorbidity",
+  "dis_crohn": "autoimmune",
+  "dis_depression": "comorbidity",
+  "dis_t1d": "autoimmune",
+  "dis_lupus": "autoimmune",
+  "dis_major_depression": "comorbidity",
+  "dis_ms": "autoimmune",
+  "dis_myocardial_infarction": "comorbidity",
+  "dis_parkinson": "control",
+  "dis_psoriasis": "autoimmune",
+  "dis_ra": "autoimmune",
+  "dis_schizophrenia": "control",
+  "dis_uc": "autoimmune"
+}

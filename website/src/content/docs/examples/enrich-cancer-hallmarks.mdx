@@ -1,0 +1,165 @@
+---
+title: "Recovering the Hallmarks of Cancer by guilt-by-association"
+description: Given only the names of specific cancers, enrich rediscovers the oncogenic signaling network from shared genes.
+---
+
+import EnrichNetwork from '../../../components/EnrichNetwork.astro';
+import keggNet from '../../../components/enrich_network.json';
+
+Cancer is not one pathway. Every tumour type runs on its own mix of proliferation, survival, and invasion
+programmes, and the genes behind those programmes are shared across the diseases. If that shared machinery is
+really written in the gene sets, then a method that knows nothing but which pathways happen to be cancers should
+be able to point back at the machinery they have in common.
+
+`enrich` tests exactly that. Given a reference module, a set of groups you already care about, it walks the
+similarity graph and asks, for every other group, whether that group's neighbours are unexpectedly full of module
+members. A pathway surrounded by cancer pathways in gene space is scored with a hypergeometric test and ranked.
+The groups it surfaces are guilt-by-association candidates: tied to the module by the company they keep, without
+being in it.
+
+The panel is the 186 KEGG pathways (Kanehisa and Goto, 2000) as distributed by MSigDB (Liberzon et al., 2011),
+covering the genome-wide pathway map.
+
+## The analysis, step by step
+
+**Index the pathways.** `index` reads the GMT, one pathway and its gene symbols per line, and builds a hashed
+feature index (`kegg.dbri`) so pathways can be compared by shared genes without re-parsing gene lists.
+
+```bash
+DBRetina index -g kegg.gmt -o kegg
+```
+
+**Compare every pair.** `pairwise` scores all 17,205 pathway pairs into the directory `kegg_DBRetina_pairwise/`.
+`-m ochiai` is the Ochiai coefficient, the shared genes divided by the geometric mean of the two set sizes, a
+size-aware overlap that does not inflate for large pathways. `-c 0` keeps every pair, so the directory holds the
+full similarity graph.
+
+```bash
+DBRetina pairwise -i kegg -m ochiai -c 0
+```
+
+**Define the module.** The module is just a text file of pathway names, one per line. We take every pathway whose
+name mentions a cancer, straight from the GMT you already have:
+
+```bash
+grep -iE 'cancer|carcinoma|leukemia|melanoma|glioma' kegg.gmt | cut -f1 > cancer_module.txt
+```
+
+That is 15 pathways (breast, prostate, glioma, melanoma, the leukaemias, and so on), defined from names alone. No
+gene information goes into the definition, so recovering it from gene overlap is a fair test, not a circular one.
+
+**Rank by guilt-by-association.** `enrich` takes the module and, for each pathway, counts how many of its
+neighbours are cancer pathways, where a neighbour is any pathway joined by an edge of at least 20% Ochiai
+(`-m ochiai -c 20`). It scores that count with a hypergeometric test: given that 15 of the 186 pathways are
+cancer, how surprising is it that this pathway has, say, 12 of its 26 neighbours in the module? `--exclude-module`
+drops the cancer pathways from the output, leaving only the candidates.
+
+```bash
+DBRetina enrich -d kegg_DBRetina_pairwise --module cancer_module.txt -m ochiai -c 20 --exclude-module
+```
+
+It prints the ranked candidates, strongest first (names shortened here):
+
+```text
+group                     hits  neighbors  enrichment_p
+focal_adhesion            12    26         1.4e-09
+b_cell_receptor_signaling 12    30         1.17e-08
+erbb_signaling            12    31         1.87e-08
+mtor_signaling            10    21         7.38e-08
+apoptosis                  9    17         1.57e-07
+...
+```
+
+The top of that ranking is the oncogenic signaling network. The graph below is that result: red nodes are the 15
+cancer pathways, teal nodes are what `enrich` recovered, and they are wired by their strongest shared-gene links.
+Hover any node to trace those links.
+
+<EnrichNetwork
+  data={keggNet}
+  legend={[{ color: "#c0392b", label: "cancer pathway (the module)" }, { color: "#16a085", label: "recovered by enrich" }]}
+  moduleWord="the cancer module"
+  holdLabel="Hold out a cancer pathway"
+  restCaption="Every red node is a cancer pathway; teal nodes are what <code>enrich</code> recovered. Hover any node to trace its strongest links, or hold one out."
+  commands={`DBRetina index -g kegg.gmt -o kegg
+DBRetina pairwise -i kegg -m ochiai -c 0
+grep -iE 'cancer|carcinoma|leukemia|melanoma|glioma' kegg.gmt | cut -f1 > cancer_module.txt
+DBRetina enrich -d kegg_DBRetina_pairwise --module cancer_module.txt -m ochiai -c 20 --exclude-module`}
+  infoHead="How enrich built this"
+  infoNote="Nodes are laid out by their strongest shared-gene links. The counts in the caption are the full neighbourhood at 20% Ochiai, the same edges enrich scores."
+/>
+
+Every leading hit is a Hallmark of Cancer (Hanahan and Weinberg, 2011). ErbB (EGFR and HER2), mTOR, insulin, and
+neurotrophin signaling are the proliferative-signaling programmes, and EGFR and HER2 are among the most validated
+drug targets in oncology. Apoptosis is resisting cell death, VEGF signaling is inducing angiogenesis, and focal
+adhesion and actin-cytoskeleton regulation are activating invasion and metastasis. Ranked and scored, with the
+evidence on each bar, the same hits read straight off the list of Hallmarks:
+
+![Each flagged pathway states its evidence: how many of its gene-sharing neighbours are cancer pathways, coloured by the Hallmark of Cancer it embodies](/DBRetina/img/enrich_cancer_hallmarks.png)
+
+The B-cell and T-cell receptor pathways surface for a real reason too: they run on the same PI3K, MAPK, and NF-kB
+kinases as the oncogenic module, and B-cell receptor signaling is itself a driver of B-cell lymphoma and the
+target of BTK inhibitors such as ibrutinib (Young and Staudt, 2013). Told nothing but a list of cancer names,
+`enrich` reconstructs the core of cancer biology.
+
+## Is the recovery real?
+
+Press **Hold out a cancer pathway** on the graph above. Each time, one cancer pathway is hidden from the module,
+yet most of its gene-sharing neighbours are still cancer pathways, so `enrich` ranks it straight back near the top.
+Doing that for all fifteen in turn (leave-one-out), the enrichment score separates the cancer pathways from the
+rest with an AUC of 0.986. Against a null of 2000 random modules of the same size, drawn from the same pathways,
+the mean recovery AUC is 0.48, and not one random module reached the real value: 4.9 standard deviations above the
+null, permutation p below 0.0005. The signal is specific to the biology, not the method. A random set of 15
+pathways does not recover itself, because random pathways do not share genes, while the cancer pathways do.
+
+## When to use this in practice
+
+The cancer run above is a *validation*, not a use case. We seeded `enrich` with a set we already knew, the cancer
+pathways, only to prove the ranking is trustworthy: hide part of a known answer, and it comes back. In a real
+analysis you run it the other way round. You give `enrich` a **partial set you are confident about**, and the top
+of the ranking is the part you do **not** know yet: candidates, each with a p-value, to follow up.
+
+- **Extend a candidate list.** You have a handful of genes confirmed in a disease. `enrich` ranks the rest of the
+  genome by how much each one's neighbourhood looks like your seed, and the top hits are the genes most worth
+  testing next.
+- **Grow a module from an experiment.** A screen or an RNA-seq run flags a few pathways. `enrich` returns the
+  pathways most likely co-involved but not yet on your list.
+- **Repurpose a drug.** Seed with the drugs known to work for a condition; `enrich` surfaces others whose target
+  neighbourhoods match, as repurposing leads.
+- **Label an unknown group.** Run `enrich` on an unannotated cluster against a known module to see what it most
+  resembles.
+
+`enrich` is a hypothesis generator: it turns "I know a few X" into "here are the next most likely X, ranked and
+scored." It prioritises what to look at next, it does not settle it. The exact test is in the
+[enrich reference](/DBRetina/commands/enrich/#how-it-works).
+
+## Reproduce it yourself
+
+Everything runs from
+[`usecases/enrich-cancer-hallmarks/`](https://github.com/DBRetina/DBRetina/tree/main/usecases/enrich-cancer-hallmarks)
+in the repository (the `run.sh`, the analysis scripts, and the data all live there).
+
+1. **Install DBRetina** (the [quickstart](/DBRetina/start/quickstart/)) and the Python packages the validation and
+   figures use: `scipy`, `pyarrow`, `matplotlib`, `networkx`.
+2. **Get the gene sets.** They are the KEGG subset of MSigDB's canonical pathways,
+   `c2.cp.kegg.v2023.1.Hs.symbols.gmt`, from the [MSigDB downloads](https://www.gsea-msigdb.org/gsea/msigdb/),
+   saved as `data/kegg.gmt`.
+3. **Run** `bash run.sh`. It indexes the GMT, builds the pairwise, writes the module, runs `enrich`, validates
+   (leave-one-out plus the random-module null), and regenerates both figures and the network above. The
+   validation prints:
+
+```text
+KEGG pathways: 186 | edges at ochiai>=20% | active groups: 154
+cancer module (by name): 15 pathways
+
+HELD-OUT RECOVERY (leave-one-out)
+  real AUC          = 0.986
+  null AUC (2000x)  = 0.479 +/- 0.103   (95th pct 0.649)
+  4.9 SD above null   permutation p = 5.00e-04   (0 of 2000 random modules reached it)
+```
+
+## References
+
+- Hanahan, D., and Weinberg, R. A. (2011). Hallmarks of cancer: the next generation. *Cell*, 144(5), 646-674.
+- Kanehisa, M., and Goto, S. (2000). KEGG: Kyoto Encyclopedia of Genes and Genomes. *Nucleic Acids Research*, 28(1), 27-30.
+- Liberzon, A., et al. (2011). Molecular signatures database (MSigDB) 3.0. *Bioinformatics*, 27(12), 1739-1740.
+- Young, R. M., and Staudt, L. M. (2013). Targeting pathological B cell receptor signalling in lymphoid malignancies. *Nature Reviews Drug Discovery*, 12(3), 229-243.

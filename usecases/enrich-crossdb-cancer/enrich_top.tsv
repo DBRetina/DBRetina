@@ -1,0 +1,7 @@
+group	hits	neighbors	enrichment_p	in_module
+wp_bladder_cancer	13	84	1.72e-19	no
+wp_breast_cancer_pathway	14	134	6.13e-19	no
+wp_head_and_neck_squamous_cell_carcinoma	12	63	7.49e-19	no
+wp_mirna_regulation_of_prostate_cancer_signaling_pathways	11	46	2.89e-18	no
+wp_dna_damage_response_only_atm_dependent	13	111	8.1e-18	no
+wp_melanoma	14	179	4.17e-17	no

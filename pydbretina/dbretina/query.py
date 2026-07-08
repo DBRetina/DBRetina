@@ -67,6 +67,13 @@ def _format_store_row(row, gid1, gid2, names_map, has_pvalue):
     return '\t'.join(fields)
 
 
+# Metric columns pulled from the parquet store for a query, in canonical TSV order
+# (pvalue appended only when the dataset has it). One definition shared by both
+# store-filter branches so the two can never drift.
+_STORE_PAIR_COLS = ["group_1_id", "group_2_id", "shared_features",
+                    "containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio"]
+
+
 def is_awk_available():
     try:
         subprocess.run(["awk"], stdin=subprocess.DEVNULL,
@@ -112,6 +119,81 @@ def increment_version(output):
         if not os.path.isfile(output_version):
             return output_version
         version += 1
+
+
+def _write_filtered_pairwise_dir(out_dir, filtered_df, source_dir, metric, cutoff, command):
+    """Write a filtered query result as a first-class Parquet pairwise directory.
+
+    Writes the four files a pairwise directory needs to be re-read by every
+    downstream command: ``data/part_0000.parquet`` + ``names.parquet`` +
+    ``group_index.parquet`` + ``manifest.json``. It does NOT reproduce the optional
+    ``statistics.json`` / ``statistics_odds_ratio.txt`` sidecars the C++ core also
+    emits -- those describe the FULL matrix and would be stale for a filtered slice;
+    the store reads a directory without them fine. Metrics are written from the
+    full-precision store DataFrame (not the ``%.1f``-rounded TSV). ``names.parquet``
+    is copied unchanged, since filtering PAIRS never changes the group set;
+    ``group_index`` is regenerated for the single output partition. The directory is
+    always written WITHOUT a p-value column, so ``has_pvalue`` is set False regardless
+    of the source (carrying p-value/FDR through a filter is not yet supported -- the
+    caller warns when it drops them). pyarrow is imported lazily so the awk-only query
+    path stays free of the dependency.
+    """
+    import json
+    import shutil
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    data_dir = os.path.join(out_dir, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    schema = pa.schema([
+        ("group_1_id", pa.uint32()), ("group_2_id", pa.uint32()),
+        ("shared_features", pa.uint64()),
+        ("containment", pa.float32()), ("ochiai", pa.float32()),
+        ("jaccard", pa.float32()), ("csi", pa.float32()),
+        ("dice", pa.float32()), ("odds_ratio", pa.float32()),
+    ])
+    cols = [f.name for f in schema]
+    table = pa.Table.from_pandas(filtered_df[cols].reset_index(drop=True),
+                                 schema=schema, preserve_index=False)
+    pq.write_table(table, os.path.join(data_dir, "part_0000.parquet"))
+
+    shutil.copyfile(os.path.join(source_dir, "names.parquet"),
+                    os.path.join(out_dir, "names.parquet"))
+    gids = pq.read_table(os.path.join(source_dir, "names.parquet")).column("group_id").to_pylist()
+    group_index = pa.table({
+        "group_id": pa.array(gids, pa.uint32()),
+        "partition_ids": pa.array([[0]] * len(gids), pa.list_(pa.int32())),
+    })
+    pq.write_table(group_index, os.path.join(out_dir, "group_index.parquet"))
+
+    # Build the manifest from known-true values rather than blind-copying the
+    # source (which would inherit has_pvalue -- a lie, since we write no p-value
+    # column). population_size/version carry over unchanged (the group universe is
+    # the same); num_pairs/num_groups reflect what we actually wrote; has_pvalue is
+    # always False. cutoff_metric/threshold record the tighter filter this query
+    # applied, else keep the source's still-valid floor (the slice is a subset).
+    src = {}
+    src_manifest = os.path.join(source_dir, "manifest.json")
+    if os.path.isfile(src_manifest):
+        with open(src_manifest) as fh:
+            src = json.load(fh)
+    manifest = {
+        "version": src.get("version", 1),
+        "format": "dbretina_pairwise_parquet",
+        "num_pairs": int(len(filtered_df)),
+        "num_groups": int(len(gids)),
+        "has_pvalue": False,
+        "cutoff_metric": metric if (metric and metric != "NA") else src.get("cutoff_metric"),
+        "cutoff_threshold": cutoff if (cutoff is not None and cutoff != -1) else src.get("cutoff_threshold"),
+        "command": command,
+        "num_partitions": 1,
+    }
+    # Carry population_size only when the source actually has it. Writing an explicit
+    # null instead would break readers that format it with ``:,`` (viz/_repr_html_).
+    if src.get("population_size") is not None:
+        manifest["population_size"] = src["population_size"]
+    with open(os.path.join(out_dir, "manifest.json"), "w") as fh:
+        json.dump(manifest, fh, indent=2)
 
 
 def validate_numbers(ctx, param, value):
@@ -187,9 +269,12 @@ def _classify_pairwise_input(pairwise_file):
 @click.option('-m', '--metric', "metric", required=False, default="NA", type=click.STRING, callback=validate_metric, help="select from ['containment', 'ochiai', 'jaccard', 'pvalue']")
 @click.option('-c', '--cutoff', callback=check_cutoff_value, required=False, default=-1, type=click.FLOAT, help="filter out similarities < cutoff (for -m pvalue, keeps pairs with pvalue <= cutoff)")
 @click.option('--extend', "extend", is_flag=True, default=False, show_default=True, help="include all supergroups that are linked to the given supergroups.")
-@click.option('-o', '--output', "output_file", required=True, type=click.STRING, help="output file prefix")
+@click.option('-o', '--output', "output_file", required=False, default=None, type=click.STRING, help="output prefix; a Parquet-dir input writes <prefix>_DBRetina_pairwise/, a legacy .tsv/.dbrp writes <prefix>.tsv (not needed with --inplace)")
+@click.option('--tsv', "want_tsv", is_flag=True, default=False, help="for a Parquet-dir input, also write the filtered result as a legacy .tsv")
+@click.option('--tsv-only', "tsv_only", is_flag=True, default=False, help="write only the legacy .tsv, no Parquet directory")
+@click.option('--inplace', "inplace", is_flag=True, default=False, help="filter the input Parquet pairwise directory in place instead of writing a new one")
 @click.pass_context
-def main(ctx, pairwise_file, groups_file, metric, cutoff, output_file, clusters_file, cluster_ids, extend):
+def main(ctx, pairwise_file, groups_file, metric, cutoff, output_file, clusters_file, cluster_ids, extend, want_tsv, tsv_only, inplace):
     # sourcery skip: low-code-quality
     """Query a pairwise file.
 
@@ -293,38 +378,78 @@ Detailed description:
     elif metric != "NA":
         ctx.obj.ERROR(f"DBRetina's query command doesn't support the metric {metric}.")
 
-    # check if output_file already exist
-    output_file += ".tsv"
-    if os.path.exists(output_file):
+    # ── Output mode ──────────────────────────────────────────────────────────
+    # A Parquet pairwise directory by default, so a filtered slice is itself a
+    # first-class pairwise (re-queryable / clusterable), not a legacy results TSV
+    # that cluster can't read. --tsv adds the .tsv, --tsv-only writes only it,
+    # --inplace rewrites the input directory. Parquet output applies to a Parquet-
+    # directory input (which carries the manifest/names/group_index to rebuild).
+    can_parquet = os.path.isdir(pairwise_file)
+    if want_tsv and tsv_only:
+        ctx.obj.ERROR("--tsv and --tsv-only are mutually exclusive.")
+    if inplace:
+        if not can_parquet:
+            ctx.obj.ERROR("--inplace requires a Parquet pairwise directory as -p.")
+        if want_tsv or tsv_only:
+            ctx.obj.ERROR("--inplace cannot be combined with --tsv / --tsv-only.")
+        if output_file is not None:
+            # Reject rather than silently ignore: with --inplace an -o prefix has no
+            # target, and the --extend cleanup would delete an -o-named side file.
+            ctx.obj.ERROR("--inplace does not take -o/--output; it rewrites the input directory in place.")
+    if not inplace and output_file is None:
+        ctx.obj.ERROR("-o/--output is required unless --inplace is given.")
+
+    if inplace:
+        write_parquet, keep_tsv = True, False
+    elif tsv_only or not can_parquet:
+        # A legacy .tsv/.dbrp input has no manifest/names/group_index to rebuild a
+        # directory from, so .tsv is the only sensible output -- do it silently, as
+        # query always has (no surprise for people who keep .tsv workflows).
+        write_parquet, keep_tsv = False, True
+    else:
+        write_parquet, keep_tsv = True, want_tsv
+
+    # A p-value pairwise keeps its p-values only on the .tsv route: the Parquet writer
+    # emits no p-value column (carrying FDR through a filter isn't supported yet). Warn
+    # rather than silently drop -- and rather than error, which would dead-end --inplace
+    # (which forbids --tsv-only). Use --tsv-only to keep p-values in a .tsv.
+    if write_parquet and input_has_pvalue:
+        ctx.obj.WARNING(
+            "p-values are not carried into the filtered Parquet directory; "
+            "use --tsv-only to keep them in a .tsv.")
+
+    filtered_df = None                       # captured by the parquet-store branches below
+    output_prefix = output_file              # the raw -o prefix (None only with --inplace)
+    output_file = (output_prefix + ".tsv") if output_prefix else \
+        (pairwise_file.rstrip("/") + ".query.tsv")   # intermediate name; written only when keep_tsv
+    if keep_tsv and os.path.exists(output_file):
         ctx.obj.WARNING(f"Output file {output_file} already exists, overwriting ...")
 
     if groups_file != "NA" and not os.path.exists(groups_file):
         ctx.obj.ERROR(f"Groups file {groups_file} doesn't exist.")
 
-    # The output's first non-comment line must be the canonical column header,
-    # identical across input forms. The .tsv form copies the source's full text
-    # header (comments + that header row). A parquet directory / .dbrp has no text
-    # header to copy, so we seed the #command line and then write the SAME column
-    # header explicitly -- otherwise the store/.dbrp output was headerless while
-    # the data rows matched, an inconsistency across forms (issue 047).
     _COLUMN_HEADER = (
         "group_1_ID\tgroup_2_ID\tgroup_1_name\tgroup_2_name\tshared_features\t"
         "containment\tochiai\tjaccard\tcsi\tdice\todds_ratio"
     )
-    if input_kind == "tsv":
-        with (open(pairwise_file) as f, open(output_file, 'w') as w):
-            for line in f:
-                if line.startswith("#"):
-                    w.write(line)
-                else:
-                    w.write(f"#command: {get_command()}\n")
-                    w.write(line)
-                    break
-    else:
-        with open(output_file, 'w') as w:
-            w.write(f"#command: {get_command()}\n")
-            header = _COLUMN_HEADER + ("\tpvalue" if input_has_pvalue else "")
-            w.write(header + "\n")
+    if keep_tsv:
+        # The output's first non-comment line must be the canonical column header,
+        # identical across input forms (issue 047). The .tsv form copies the source's
+        # header text; a parquet dir / .dbrp seeds #command then the column header.
+        if input_kind == "tsv":
+            with (open(pairwise_file) as f, open(output_file, 'w') as w):
+                for line in f:
+                    if line.startswith("#"):
+                        w.write(line)
+                    else:
+                        w.write(f"#command: {get_command()}\n")
+                        w.write(line)
+                        break
+        else:
+            with open(output_file, 'w') as w:
+                w.write(f"#command: {get_command()}\n")
+                header = _COLUMN_HEADER + ("\tpvalue" if input_has_pvalue else "")
+                w.write(header + "\n")
 
     ctx.obj.INFO(
         f"Querying the pairwise matrix on the {metric} column with a cutoff of {cutoff} and groups file {groups_file}."
@@ -386,8 +511,7 @@ Detailed description:
             working_ids.update(name_to_ids.get(nm, ()))
 
         # Pull the passing pairs once (cutoff applied in SQL when present).
-        cols = ["group_1_id", "group_2_id", "shared_features",
-                "containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio"]
+        cols = list(_STORE_PAIR_COLS)
         if has_pvalue:
             cols.append("pvalue")
         if cutoff != -1:
@@ -413,11 +537,13 @@ Detailed description:
         # Final filter: BOTH endpoints in the (possibly extended) id-set.
         both = id1.isin(working_ids) & id2.isin(working_ids)
         sel = df[both]
-        with open(output_file, "a") as out:
-            for _, row in sel.iterrows():
-                out.write(_format_store_row(
-                    row, int(row["group_1_id"]), int(row["group_2_id"]),
-                    names_map, has_pvalue) + "\n")
+        filtered_df = sel
+        if keep_tsv:
+            with open(output_file, "a") as out:
+                for _, row in sel.iterrows():
+                    out.write(_format_store_row(
+                        row, int(row["group_1_id"]), int(row["group_2_id"]),
+                        names_map, has_pvalue) + "\n")
         store.close()
 
     elif extend:
@@ -461,24 +587,17 @@ Detailed description:
                 store.close()
                 ctx.obj.ERROR("pvalue not found in pairwise file!")
             names_map = store.get_names_map()
-            cols = ["group_1_id", "group_2_id", "shared_features",
-                    "containment", "ochiai", "jaccard", "csi", "dice", "odds_ratio"]
+            cols = list(_STORE_PAIR_COLS)
             if store.has_pvalue:
                 cols.append("pvalue")
             df = store.to_pandas(metric=metric, cutoff=cutoff, columns=cols)
-            with open(output_file, 'a') as out:
-                for _, row in df.iterrows():
-                    gid1 = int(row['group_1_id'])
-                    gid2 = int(row['group_2_id'])
-                    fields = [str(gid1), str(gid2),
-                             names_map.get(gid1, ""), names_map.get(gid2, ""),
-                             str(int(row['shared_features'])),
-                             f"{row['containment']:.1f}", f"{row['ochiai']:.1f}",
-                             f"{row['jaccard']:.1f}", f"{row['csi']:.1f}",
-                             f"{row['dice']:.1f}", f"{row['odds_ratio']:.1f}"]
-                    if store.has_pvalue:
-                        fields.append(str(row['pvalue']))
-                    out.write('\t'.join(fields) + '\n')
+            filtered_df = df
+            if keep_tsv:
+                with open(output_file, 'a') as out:
+                    for _, row in df.iterrows():
+                        out.write(_format_store_row(
+                            row, int(row['group_1_id']), int(row['group_2_id']),
+                            names_map, store.has_pvalue) + "\n")
             store.close()
         else:
             # Fallback: existing .dbrp / TSV code. Resolve the canonical .dbrp
@@ -500,21 +619,26 @@ Detailed description:
                     f"'{pairwise_file}' is a pairwise directory without a usable "
                     f"parquet store (no manifest.json) and no sibling .dbrp; pass "
                     f"the pairwise TSV, its parquet directory, or the .dbrp to -p.")
+            # These .dbrp / awk fallbacks are a legacy TSV route; gate their writes on
+            # keep_tsv so a Parquet-output request never leaves a partial (headerless)
+            # .tsv behind. When they're skipped, filtered_df stays None and the writer
+            # below emits a clean "rerun with --tsv-only" error instead.
             if dbrp_path is not None and metric in metric_name_to_id:
                 mid = metric_name_to_id[metric]
                 records = dbretina_internal.dbrp_filter_pairs(dbrp_path, mid, cutoff)
-                with open(output_file, 'a') as out:
-                    for rec in records:
-                        fields = [str(rec['group_1_id']), str(rec['group_2_id']),
-                                 rec['group_1_name'], rec['group_2_name'],
-                                 str(rec['shared_features']),
-                                 f"{rec['containment']:.1f}", f"{rec['ochiai']:.1f}",
-                                 f"{rec['jaccard']:.1f}", f"{rec['csi']:.1f}",
-                                 f"{rec['dice']:.1f}", f"{rec['odds_ratio']:.1f}"]
-                        if 'pvalue' in rec:
-                            fields.append(str(rec['pvalue']))
-                        out.write('\t'.join(fields) + '\n')
-            else:
+                if keep_tsv:
+                    with open(output_file, 'a') as out:
+                        for rec in records:
+                            fields = [str(rec['group_1_id']), str(rec['group_2_id']),
+                                     rec['group_1_name'], rec['group_2_name'],
+                                     str(rec['shared_features']),
+                                     f"{rec['containment']:.1f}", f"{rec['ochiai']:.1f}",
+                                     f"{rec['jaccard']:.1f}", f"{rec['csi']:.1f}",
+                                     f"{rec['dice']:.1f}", f"{rec['odds_ratio']:.1f}"]
+                            if 'pvalue' in rec:
+                                fields.append(str(rec['pvalue']))
+                            out.write('\t'.join(fields) + '\n')
+            elif keep_tsv:
                 command = f"grep '^[^#;]' {pairwise_file} | tail -n+2 | LC_ALL=C awk -F'\t' '{{if (${awk_column} {awk_op} {cutoff}) print $0}}' >> {output_file}"
                 result = execute_bash_command(command)
 
@@ -527,8 +651,74 @@ Detailed description:
     # if _tmp_file exists, remove it
     if os.path.exists(_tmp_file):
         os.remove(_tmp_file)
-        
+
     if os.path.exists(extended_ids_list):
         os.remove(extended_ids_list)
+
+    # ── Write the Parquet pairwise directory (default / --tsv / --inplace) ──
+    # Built from the full-precision store DataFrame captured above, so the filtered
+    # slice is a first-class pairwise that every downstream command reads. --inplace
+    # swaps it over the source directory via a temp dir + rename (crash-safe).
+    if write_parquet:
+        if filtered_df is None:
+            if inplace:
+                ctx.obj.ERROR(
+                    "Could not filter this input in place (no usable parquet store); "
+                    "pass a valid Parquet pairwise directory.")
+            ctx.obj.ERROR(
+                "Could not build a Parquet pairwise directory for this input; rerun with --tsv-only.")
+        import shutil
+        command_line = f"#command: {get_command()}"
+        if inplace:
+            src = pairwise_file.rstrip("/")
+            ctx.obj.WARNING(
+                f"--inplace overwrites {src} with the filtered {len(filtered_df)} pairs; "
+                f"the original contents are not kept.")
+            tmp = src + ".dbretina_query_tmp"
+            backup = src + ".dbretina_query_old"
+            for stale in (tmp, backup):          # clear leftovers from a prior crash (dir or file)
+                if os.path.isdir(stale):
+                    shutil.rmtree(stale)
+                elif os.path.exists(stale):
+                    os.remove(stale)
+            _write_filtered_pairwise_dir(tmp, filtered_df, src, metric, cutoff, command_line)
+            # keep the original at `backup` until the swap succeeds; on a mid-swap
+            # crash the data survives there and can be renamed back to `src`.
+            os.rename(src, backup)
+            os.rename(tmp, src)
+            shutil.rmtree(backup)
+            ctx.obj.INFO(f"Filtered {src} in place ({len(filtered_df)} pairs).")
+        else:
+            out_dir = output_prefix + "_DBRetina_pairwise"
+            # Guard against out_dir OVERLAPPING the input dir: if out_dir is the input,
+            # an ANCESTOR of it, or nested inside it, the rmtree below would delete
+            # (part of) the source and the writer would then crash on the now-missing
+            # names.parquet -> permanent data loss. Covers the exact collision
+            # `-p run_DBRetina_pairwise -o run` AND the nested `-p a/child -o a` case.
+            # commonpath is path-component-aware, so it never mistakes .../foo for
+            # .../foobar. Refuse and point at --inplace.
+            r_out = os.path.realpath(out_dir)
+            r_src = os.path.realpath(pairwise_file)
+            try:
+                overlaps = os.path.commonpath([r_out, r_src]) in (r_out, r_src)
+            except ValueError:                   # different roots (e.g. drives) -> no overlap
+                overlaps = False
+            if overlaps:
+                ctx.obj.ERROR(
+                    f"The output directory {out_dir} overlaps the input directory "
+                    f"{pairwise_file}; use --inplace to filter in place, or choose a "
+                    f"different -o prefix.")
+            if os.path.isdir(out_dir):
+                ctx.obj.WARNING(f"Output directory {out_dir} already exists, overwriting ...")
+                shutil.rmtree(out_dir)
+            _write_filtered_pairwise_dir(out_dir, filtered_df, pairwise_file, metric, cutoff, command_line)
+            ctx.obj.INFO(f"Wrote Parquet pairwise directory {out_dir}/ ({len(filtered_df)} pairs).")
+
+    # For --inplace the --extend side file is named off the phantom, unwritten
+    # intermediate .tsv (<source>.query_extended_supergroups.txt) -- a stray next to
+    # the source, so remove it. For a normal -o query it is <prefix>_extended_
+    # supergroups.txt, a wanted, well-named output, so keep it (parquet or .tsv).
+    if inplace and os.path.exists(extended_supergroups_file):
+        os.remove(extended_supergroups_file)
 
     ctx.obj.SUCCESS("Done.")

@@ -1,0 +1,19 @@
+{
+  "dis_alzheimer": "alzheimer",
+  "dis_als": "neurodegenerative",
+  "dis_breast_cancer": "control",
+  "dis_cerebral_infarction": "vascular",
+  "dis_dementia": "neurodegenerative",
+  "dis_vascular_dementia": "vascular",
+  "dis_t2d": "metabolic",
+  "dis_ftd": "neurodegenerative",
+  "dis_huntington": "neurodegenerative",
+  "dis_ischemic_stroke": "vascular",
+  "dis_lewy_body": "neurodegenerative",
+  "dis_metabolic_syndrome": "metabolic",
+  "dis_obesity": "metabolic",
+  "dis_parkinson": "neurodegenerative",
+  "dis_prion": "neurodegenerative",
+  "dis_ra": "control",
+  "dis_tauopathies": "neurodegenerative"
+}

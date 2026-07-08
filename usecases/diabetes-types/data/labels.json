@@ -1,0 +1,20 @@
+{
+  "dis_atherosclerosis": "metabolic",
+  "dis_breast_cancer": "control",
+  "dis_celiac": "autoimmune",
+  "dis_cad": "metabolic",
+  "dis_t1d": "type_1_diabetes",
+  "dis_t2d": "type_2_diabetes",
+  "dis_diabetic_nephropathy": "complication",
+  "dis_diabetic_retinopathy": "complication",
+  "dis_dyslipidemia": "metabolic",
+  "dis_hypertension": "metabolic",
+  "dis_lupus": "autoimmune",
+  "dis_metabolic_syndrome": "metabolic",
+  "dis_ms": "autoimmune",
+  "dis_mi": "metabolic",
+  "dis_nafld": "metabolic",
+  "dis_obesity": "metabolic",
+  "dis_ra": "autoimmune",
+  "dis_schizophrenia": "control"
+}

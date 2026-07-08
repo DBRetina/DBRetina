@@ -1,0 +1,37 @@
+---
+title: Command chaining
+description: How DBRetina's commands feed into one another.
+---
+
+import PipelineDiagram from '../../../components/PipelineDiagram.astro';
+
+Most analyses are a short pipeline. You build an index, run pairwise once, and feed its output into whichever
+analysis you need. Here is how the pieces connect.
+
+<PipelineDiagram />
+
+## The usual path
+
+1. **`index`** turns your GMT or association file into a `.dbri`.
+2. **`pairwise`** compares every pair and writes the `_DBRetina_pairwise/` directory.
+3. One of the analysis commands reads that directory:
+   - **`query`** for a focused slice,
+   - **`cluster`** for families of similar groups,
+   - **`export`** for a matrix, tree, and figures,
+   - **`dedup`** / **`setcov`** to reduce redundancy,
+   - **`modularity`** for per-group scores,
+   - **`graph`** / **`bipartite`** for network exports.
+
+## Feedback loops
+
+- **`cluster`** writes a clusters file that **`query --clusters-file`** and **`geneinfo --clusters-file`** read,
+  so you can pull out or inspect the members of a cluster.
+- **`query`** writes a filtered pairwise directory that is itself a complete pairwise, so **`cluster`**,
+  **`export`**, and **`query`** all read it again. A filtered slice is a first-class pairwise you can keep
+  narrowing, with no need to rerun **`pairwise`** on a subset. (`--tsv-only` writes a flat results table
+  instead, and `--inplace` narrows the directory you already have.)
+
+## Growing an index
+
+- **`merge`** combines two `.dbri` indexes into one (or build a combined index directly with several `-g` files).
+- **`setcov`** reads only an index and produces a reduced, covering set of groups.

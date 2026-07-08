@@ -1,0 +1,177 @@
+---
+// 3D interactive hero network for the landing page (WebGL, via 3d-force-graph).
+// Same panel as the 2D DiseaseNetwork: DisGeNET diseases coloured by category,
+// DSigDB drugs, WikiPathways pathways, linked by shared genes. The library is
+// dynamically imported client-side so it never blocks first paint.
+const DIS = [
+  ["atherosclerosis", "atherosclerosis", "cardiometabolic"],
+  ["breast_cancer", "breast cancer", "control"],
+  ["celiac", "celiac", "autoimmune"],
+  ["coronary_artery_disease", "coronary artery disease", "cardiometabolic"],
+  ["crohn", "Crohn's", "autoimmune"],
+  ["t1d", "type 1 diabetes", "autoimmune"],
+  ["lupus", "lupus", "autoimmune"],
+  ["ms", "multiple sclerosis", "autoimmune"],
+  ["myocardial_infarction", "myocardial infarction", "cardiometabolic"],
+  ["psoriasis", "psoriasis", "autoimmune"],
+  ["ra", "rheumatoid arthritis", "autoimmune"],
+  ["uc", "ulcerative colitis", "autoimmune"],
+];
+const ATT = [
+  ["methotrexate", "methotrexate", "ra", "drug"],
+  ["hydroxychloroquine", "hydroxychloroquine", "lupus", "drug"],
+  ["sulfasalazine", "sulfasalazine", "uc", "drug"],
+  ["azathioprine", "azathioprine", "ms", "drug"],
+  ["simvastatin", "simvastatin", "atherosclerosis", "drug"],
+  ["aspirin", "aspirin", "myocardial_infarction", "drug"],
+  ["cytokine", "cytokine signaling", "ra", "pathway"],
+  ["ibd", "IBD signaling", "uc", "pathway"],
+  ["cholesterol", "cholesterol synthesis", "atherosclerosis", "pathway"],
+  ["clotting", "blood clotting", "myocardial_infarction", "pathway"],
+];
+// [source, target, shared genes] -- real shared-feature counts from the disease pairwise
+const EDG = [
+  ["atherosclerosis", "breast_cancer", 1550], ["atherosclerosis", "coronary_artery_disease", 921],
+  ["atherosclerosis", "myocardial_infarction", 954], ["atherosclerosis", "ra", 1067], ["breast_cancer", "ra", 1850],
+  ["coronary_artery_disease", "myocardial_infarction", 865], ["crohn", "psoriasis", 587], ["crohn", "ra", 780],
+  ["crohn", "uc", 882], ["t1d", "lupus", 765], ["t1d", "ms", 781], ["t1d", "ra", 974],
+  ["lupus", "ms", 817], ["lupus", "psoriasis", 629], ["lupus", "ra", 1141], ["ms", "ra", 995],
+  ["myocardial_infarction", "ra", 914], ["psoriasis", "ra", 779], ["psoriasis", "uc", 594], ["ra", "uc", 826],
+  ["celiac", "uc", 309],
+];
+const COLOR = {
+  autoimmune: "#ff5a52", cardiometabolic: "#1fd1a5", control: "#9aa5b1",
+  drug: "#b980ff", pathway: "#ffcf40",
+};
+const nodes = [
+  ...DIS.map(([id, label, group]) => ({ id, label, group })),
+  ...ATT.map(([id, label, _to, type]) => ({ id, label, group: type })),
+];
+const maxShared = Math.max(...EDG.map((e) => e[2]));
+const links = [
+  ...EDG.map(([source, target, shared]) => ({ source, target, shared, w: shared / maxShared, faint: false })),
+  ...ATT.map(([id, _l, to]) => ({ source: id, target: to, shared: 0, w: 0, faint: true })),
+];
+const deg = {};
+for (const l of links) { deg[l.source] = (deg[l.source] || 0) + 1; deg[l.target] = (deg[l.target] || 0) + 1; }
+for (const n of nodes) {
+  n.color = COLOR[n.group];
+  n.val = (n.group === "drug" || n.group === "pathway") ? 4 : 7 + (deg[n.id] || 0) * 3.2;
+}
+const graph = JSON.stringify({ nodes, links });
+---
+
+<figure class="net3d" data-graph={graph} aria-label="A 3D interactive network of diseases, drugs, and pathways linked by their shared genes. Diseases are coloured by category, drugs are purple, pathways are amber.">
+  <div class="net3d-canvas"></div>
+  <div class="net3d-legend" aria-hidden="true">
+    <span><i style="background:#ff5a52"></i>autoimmune</span>
+    <span><i style="background:#1fd1a5"></i>cardiometabolic</span>
+    <span><i style="background:#9aa5b1"></i>control</span>
+    <span><i style="background:#b980ff"></i>drug</span>
+    <span><i style="background:#ffcf40"></i>pathway</span>
+  </div>
+  <p class="net3d-hint" aria-hidden="true">drag to rotate · scroll to zoom · grab a node</p>
+  <p class="net3d-fallback">Diseases, drugs, and pathways linked by shared genes.</p>
+</figure>
+
+<style>
+  .net3d {
+    margin: 1.75rem 0; position: relative; height: 690px; border-radius: 0.9rem; overflow: hidden;
+    background: radial-gradient(120% 120% at 50% 0%, color-mix(in srgb, var(--sl-color-accent) 8%, var(--sl-color-bg)) 0%, var(--sl-color-bg) 72%);
+    border: 1px solid var(--sl-color-gray-5);
+  }
+  .net3d-canvas { position: absolute; inset: 0; }
+  .net3d-canvas canvas { display: block; }
+  .net3d-legend {
+    position: absolute; top: 0.75rem; left: 0.9rem; z-index: 2; display: flex; flex-wrap: wrap;
+    gap: 0.28rem 0.9rem; font-size: 0.76rem; color: var(--sl-color-gray-1); pointer-events: none;
+  }
+  .net3d-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .net3d-legend i { width: 0.62rem; height: 0.62rem; border-radius: 50%; display: inline-block; box-shadow: 0 0 6px currentColor; }
+  .net3d-hint { position: absolute; right: 0.9rem; bottom: 0.6rem; z-index: 2; margin: 0; font-size: 0.72rem; color: var(--sl-color-gray-3); pointer-events: none; }
+  .net3d-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; padding: 1rem; text-align: center; color: var(--sl-color-gray-2); font-size: 0.95rem; }
+  .net3d.is-live .net3d-fallback { display: none; }
+  @media (max-width: 42rem) { .net3d { height: 540px; } .net3d-hint { display: none; } }
+</style>
+
+<script>
+  async function init() {
+    const el = document.querySelector(".net3d");
+    if (!el || el.dataset.ready) return;
+    const box = el.querySelector(".net3d-canvas");
+    let ForceGraph3D, SpriteText;
+    try {
+      [{ default: ForceGraph3D }, { default: SpriteText }] = await Promise.all([
+        import("3d-force-graph"), import("three-spritetext"),
+      ]);
+    } catch (e) { return; } // no WebGL / import failed -> keep the text fallback
+    el.dataset.ready = "1";
+    el.classList.add("is-live");
+    const data = JSON.parse(el.dataset.graph);
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // label colour follows the site theme (light/dark) and updates when it toggles
+    const labelStyle = () => document.documentElement.dataset.theme === "light"
+      ? { color: "#1f2836", stroke: "rgba(255,255,255,0.85)" }
+      : { color: "#eef2fa", stroke: "rgba(6,10,20,0.85)" };
+    const sprites = [];
+
+    const G = ForceGraph3D()(box)
+      .graphData(data)
+      .backgroundColor("rgba(0,0,0,0)")
+      .showNavInfo(false)
+      .nodeColor("color")
+      .nodeVal("val")
+      .nodeOpacity(0.95)
+      .nodeResolution(18)
+      .nodeThreeObjectExtend(true)
+      .nodeThreeObject((n) => {
+        const s = new SpriteText(n.label);
+        const st = labelStyle();
+        s.color = st.color; s.strokeColor = st.stroke; s.strokeWidth = 2.5;
+        s.textHeight = 3.1; s.fontWeight = "600";
+        s.position.y = 4 * Math.cbrt(n.val) + 3.5; // float the label above the sphere
+        sprites.push(s);
+        return s;
+      })
+      // edge width scales with the number of shared genes (drug/pathway links stay thin)
+      .linkColor((l) => (l.faint ? "rgba(150,170,210,0.16)" : "rgba(150,170,210,0.45)"))
+      .linkWidth((l) => (l.faint ? 0.4 : 0.5 + l.w * 3.2))
+      .linkOpacity(0.6)
+      .linkLabel((l) => (l.faint ? "" : `${l.shared.toLocaleString()} shared genes`))
+      .width(box.clientWidth)
+      .height(box.clientHeight);
+
+    new MutationObserver(() => {
+      const st = labelStyle();
+      for (const s of sprites) { s.color = st.color; s.strokeColor = st.stroke; }
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+    // keep the layout compact (weak repulsion so the disconnected depression
+    // cluster stays near the centre, not flung across the scene), short links,
+    // and a firm pull to the origin; frame it once the simulation settles.
+    G.d3Force("charge").strength(-45);
+    G.d3Force("link").distance(28);
+    const fit = () => {
+      G.zoomToFit(600, 12);
+      setTimeout(() => {
+        const p = G.cameraPosition();
+        G.cameraPosition({ x: p.x * 0.78, y: p.y * 0.78, z: p.z * 0.78 }, undefined, 500);
+      }, 650);
+    };
+    G.onEngineStop(fit);
+    setTimeout(fit, 2600);
+
+    // gentle auto-rotate via orbit controls; pauses while the user interacts
+    if (!reduce) {
+      G.controlType("orbit");
+      const c = G.controls();
+      c.autoRotate = true;
+      c.autoRotateSpeed = 0.85;
+    }
+
+    new ResizeObserver(() => G.width(box.clientWidth).height(box.clientHeight)).observe(box);
+  }
+  if (document.readyState !== "loading") init();
+  else document.addEventListener("DOMContentLoaded", init);
+</script>

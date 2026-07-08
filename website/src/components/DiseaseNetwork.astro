@@ -1,0 +1,239 @@
+---
+// Interactive, live cross-database network for the homepage.
+// Three databases in one index: diseases (DisGeNET, circles by category), drugs (DSigDB, purple squares),
+// pathways (WikiPathways, amber triangles). Disease-disease edges are ochiai >= 40%; drug/pathway links
+// (dashed) connect to the disease whose genes they are most enriched in (size-aware odds ratio).
+// Positions are precomputed so the no-JS render is correct; the client script adds physics, hover, and drag.
+const diseases = [
+  { id: "atherosclerosis", label: "atherosclerosis", group: "cardiometabolic", x: 170.5, y: 36.2 },
+  { id: "breast_cancer", label: "breast cancer", group: "control", x: 151.7, y: 54.5 },
+  { id: "celiac", label: "celiac", group: "autoimmune", x: 56.7, y: 100.0 },
+  { id: "coronary_artery_disease", label: "coronary artery disease", group: "cardiometabolic", x: 216.0, y: 25.8 },
+  { id: "crohn", label: "Crohn's", group: "autoimmune", x: 131.0, y: 74.3 },
+  { id: "depression", label: "depression", group: "cardiometabolic", x: 100.2, y: 58.5 },
+  { id: "t1d", label: "type 1 diabetes", group: "autoimmune", x: 16.0, y: 25.2 },
+  { id: "lupus", label: "lupus", group: "autoimmune", x: 57.0, y: 39.2 },
+  { id: "major_depression", label: "major depression", group: "cardiometabolic", x: 53.5, y: 67.5 },
+  { id: "ms", label: "multiple sclerosis", group: "autoimmune", x: 66.6, y: 19.9 },
+  { id: "myocardial_infarction", label: "myocardial infarction", group: "cardiometabolic", x: 170.6, y: 16.0 },
+  { id: "parkinson", label: "Parkinson's", group: "control", x: 119.1, y: 19.9 },
+  { id: "psoriasis", label: "psoriasis", group: "autoimmune", x: 18.9, y: 52.7 },
+  { id: "ra", label: "rheumatoid arthritis", group: "autoimmune", x: 109.5, y: 39.2 },
+  { id: "schizophrenia", label: "schizophrenia", group: "control", x: 182.5, y: 70.4 },
+  { id: "uc", label: "ulcerative colitis", group: "autoimmune", x: 84.3, y: 83.3 },
+].map((n) => ({ ...n, type: "disease" }));
+const attached = [
+  { id: "methotrexate", label: "methotrexate", to: "ra", type: "drug", x: 105.7, y: 12.2 },
+  { id: "hydroxychloroquine", label: "hydroxychloroquine", to: "lupus", type: "drug", x: 32.5, y: 34.4 },
+  { id: "sulfasalazine", label: "sulfasalazine", to: "uc", type: "drug", x: 80.3, y: 110.0 },
+  { id: "azathioprine", label: "azathioprine", to: "ms", type: "drug", x: 46.4, y: 5.2 },
+  { id: "simvastatin", label: "simvastatin", to: "atherosclerosis", type: "drug", x: 183.7, y: 7.7 },
+  { id: "aspirin", label: "aspirin", to: "myocardial_infarction", type: "drug", x: 188.0, y: -7.2 },
+  { id: "cytokine", label: "cytokine signaling", to: "ra", type: "pathway", x: 138.0, y: 22.5 },
+  { id: "ibd", label: "IBD signaling", to: "uc", type: "pathway", x: 71.0, y: 94.0 },
+  { id: "cholesterol", label: "cholesterol synthesis", to: "atherosclerosis", type: "pathway", x: 191.9, y: 52.6 },
+  { id: "clotting", label: "blood clotting", to: "myocardial_infarction", type: "pathway", x: 197.6, y: 14.7 },
+].map((n) => ({ ...n, group: n.type }));
+const nodes = [...diseases, ...attached];
+const edges = [
+  { s: "atherosclerosis", t: "breast_cancer", w: 41.7 }, { s: "atherosclerosis", t: "coronary_artery_disease", w: 49.3 },
+  { s: "atherosclerosis", t: "myocardial_infarction", w: 49.7 }, { s: "atherosclerosis", t: "ra", w: 45.2 },
+  { s: "breast_cancer", t: "ra", w: 43.1 }, { s: "coronary_artery_disease", t: "myocardial_infarction", w: 49.3 },
+  { s: "crohn", t: "psoriasis", w: 43.7 }, { s: "crohn", t: "ra", w: 40.2 }, { s: "crohn", t: "uc", w: 62.1 },
+  { s: "depression", t: "major_depression", w: 41.3 }, { s: "t1d", t: "lupus", w: 43.1 }, { s: "t1d", t: "ms", w: 45.0 },
+  { s: "t1d", t: "ra", w: 45.6 }, { s: "lupus", t: "ms", w: 44.4 }, { s: "lupus", t: "psoriasis", w: 40.1 },
+  { s: "lupus", t: "ra", w: 50.4 }, { s: "ms", t: "ra", w: 45.0 }, { s: "myocardial_infarction", t: "ra", w: 41.3 },
+  { s: "psoriasis", t: "ra", w: 41.3 }, { s: "psoriasis", t: "uc", w: 43.0 }, { s: "ra", t: "uc", w: 41.5 },
+  { s: "celiac", t: "uc", w: 35.3 }, { s: "parkinson", t: "depression", w: 37.8 }, { s: "schizophrenia", t: "depression", w: 39.3 },
+  ...attached.map((a) => ({ s: a.id, t: a.to, cross: a.type })),
+];
+const deg = Object.fromEntries(nodes.map((n) => [n.id, 0]));
+for (const e of edges) { deg[e.s]++; deg[e.t]++; }
+const pos = Object.fromEntries(nodes.map((n) => [n.id, n]));
+const DS = 2.5, PT = 3.4;
+const rad = (n) => (n.type === "disease" ? 2.6 + Math.min(deg[n.id], 7) * 0.34 : DS);
+const labelDy = (n) => (n.type === "pathway" ? PT * 0.55 : n.type === "drug" ? DS : rad(n)) + 3.7;
+const tri = `0,${(-PT).toFixed(2)} ${(PT * 0.87).toFixed(2)},${(PT * 0.55).toFixed(2)} ${(-PT * 0.87).toFixed(2)},${(PT * 0.55).toFixed(2)}`;
+---
+
+<figure class="dbr-net" aria-label="Interactive cross-database network. Diseases from DisGeNET are circles coloured by category; drugs from DSigDB are purple squares; pathways from WikiPathways are amber triangles. Dashed edges link each drug and pathway to the disease it overlaps.">
+  <svg viewBox="-22 -16 274 142" preserveAspectRatio="xMidYMid meet" role="img">
+    <g class="dbr-edges">
+      {edges.map((e) => (
+        <line
+          class={`dbr-edge${e.cross ? ` dbr-edge--${e.cross}` : ""}`} data-s={e.s} data-t={e.t}
+          x1={pos[e.s].x} y1={pos[e.s].y} x2={pos[e.t].x} y2={pos[e.t].y}
+          style={`stroke-width:${e.cross ? "0.55" : (0.4 + (e.w - 35) / 20).toFixed(2)}`}
+        />
+      ))}
+    </g>
+    <g class="dbr-nodes">
+      {nodes.map((n) => (
+        <g class="dbr-node" data-id={n.id} data-group={n.group} data-type={n.type} data-x={n.x} data-y={n.y} transform={`translate(${n.x} ${n.y})`} tabindex="0">
+          {n.type === "drug" && <rect class="dbr-mark" x={-DS} y={-DS} width={2 * DS} height={2 * DS} rx="1.2" />}
+          {n.type === "pathway" && <polygon class="dbr-mark" points={tri} />}
+          {n.type === "disease" && <circle class="dbr-mark" r={rad(n).toFixed(2)} />}
+          <text class="dbr-label" y={labelDy(n).toFixed(2)}>{n.label}</text>
+        </g>
+      ))}
+    </g>
+  </svg>
+
+  <div class="dbr-legend" aria-hidden="true">
+    <span><i class="dbr-dot" style="background:#c0392b"></i>autoimmune</span>
+    <span><i class="dbr-dot" style="background:#16a085"></i>cardiometabolic</span>
+    <span><i class="dbr-dot" style="background:#7f8c8d"></i>control</span>
+    <span><i class="dbr-dot dbr-dot--sq" style="background:#8e44ad"></i>drug</span>
+    <span><i class="dbr-dot dbr-dot--tri" style="border-bottom-color:#d69e2e"></i>pathway</span>
+  </div>
+
+  <button class="dbr-info-btn" type="button" aria-expanded="false" aria-controls="dbr-cmds" aria-label="How this network was built">i</button>
+  <div class="dbr-info-panel" id="dbr-cmds" hidden>
+    <p class="dbr-info-head">Three databases, one index</p>
+    <p class="dbr-info-sub">DisGeNET diseases, DSigDB drugs, WikiPathways pathways, combined into one gene-set file.</p>
+    <pre><code>DBRetina index -g combined.gmt -o net
+DBRetina pairwise -i net -m ochiai -c 0
+DBRetina graph -i net -p net_DBRetina_pairwise \
+  -m ochiai -c 40 -o disease_links
+DBRetina graph -i net -p net_DBRetina_pairwise \
+  -m odds_ratio -c 5 -o drug_pathway_links</code></pre>
+    <p class="dbr-info-note">Disease-to-disease edges use ochiai. The drug and pathway links use the size-aware odds ratio, since a drug's few targets would otherwise fall into the largest disease list by chance.</p>
+  </div>
+  <p class="dbr-hint" aria-hidden="true">hover a node to trace its links, or drag one</p>
+</figure>
+
+<style>
+  .dbr-net {
+    margin: 1.75rem 0; position: relative;
+    border: 1px solid var(--sl-color-gray-5); border-radius: 0.9rem;
+    background: var(--sl-color-bg); overflow: hidden;
+  }
+  .dbr-net svg { display: block; width: 100%; height: auto; touch-action: none; }
+  .dbr-edge { stroke: var(--sl-color-gray-4); stroke-linecap: round; opacity: 0.55; transition: opacity 0.2s, stroke 0.2s; }
+  .dbr-edge--drug { stroke: #8e44ad; opacity: 0.6; stroke-dasharray: 2.4 2; }
+  .dbr-edge--pathway { stroke: #d69e2e; opacity: 0.6; stroke-dasharray: 2.4 2; }
+  .dbr-mark { stroke: var(--sl-color-bg); stroke-width: 1.1; cursor: grab; transition: opacity 0.2s; }
+  .dbr-node[data-group="autoimmune"] .dbr-mark { fill: #c0392b; }
+  .dbr-node[data-group="cardiometabolic"] .dbr-mark { fill: #16a085; }
+  .dbr-node[data-group="control"] .dbr-mark { fill: #7f8c8d; }
+  .dbr-node[data-group="drug"] .dbr-mark { fill: #8e44ad; }
+  .dbr-node[data-group="pathway"] .dbr-mark { fill: #d69e2e; }
+  .dbr-node:focus { outline: none; }
+  .dbr-node:focus .dbr-mark { stroke: var(--sl-color-text); stroke-width: 1.4; }
+  .dbr-label {
+    fill: var(--sl-color-text); font-size: 3.4px; font-weight: 600; text-anchor: middle;
+    paint-order: stroke; stroke: var(--sl-color-bg); stroke-width: 1.1px; stroke-linejoin: round;
+    pointer-events: none; transition: opacity 0.18s ease;
+  }
+  .dbr-node[data-type="drug"] .dbr-label { fill: #8e44ad; }
+  .dbr-node[data-type="pathway"] .dbr-label { fill: #b7791f; }
+
+  .dbr-net.is-active .dbr-edge { opacity: 0.07; }
+  .dbr-net.is-active .dbr-mark { opacity: 0.24; }
+  .dbr-net.is-active .dbr-label { opacity: 0.09; }
+  .dbr-edge.is-lit { opacity: 0.95; stroke: var(--sl-color-text); }
+  .dbr-edge--drug.is-lit { stroke: #8e44ad; } .dbr-edge--pathway.is-lit { stroke: #d69e2e; }
+  .dbr-node.is-lit .dbr-mark, .dbr-node.is-near .dbr-mark { opacity: 1 !important; }
+  .dbr-node.is-lit .dbr-mark { stroke: var(--sl-color-text); stroke-width: 1.5; }
+  .dbr-node.is-lit .dbr-label, .dbr-node.is-near .dbr-label { opacity: 1 !important; }
+  .dbr-node.is-dragging .dbr-mark { cursor: grabbing; }
+
+  .dbr-legend {
+    position: absolute; top: 0.7rem; left: 0.85rem; display: flex; flex-wrap: wrap;
+    gap: 0.3rem 0.85rem; font-size: 0.76rem; color: var(--sl-color-gray-2); max-width: 70%;
+  }
+  .dbr-legend span { display: inline-flex; align-items: center; gap: 0.32rem; }
+  .dbr-dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; }
+  .dbr-dot--sq { border-radius: 2px; }
+  .dbr-dot--tri { width: 0; height: 0; border-radius: 0; background: transparent !important; border-left: 0.33rem solid transparent; border-right: 0.33rem solid transparent; border-bottom: 0.57rem solid; }
+
+  .dbr-info-btn {
+    position: absolute; top: 0.55rem; right: 0.6rem; width: 1.5rem; height: 1.5rem; border-radius: 50%;
+    border: 1px solid var(--sl-color-gray-4); background: var(--sl-color-bg); color: var(--sl-color-gray-1);
+    font: 600 0.85rem/1 Georgia, serif; font-style: italic; cursor: pointer; z-index: 3; transition: background 0.15s, color 0.15s;
+  }
+  .dbr-info-btn:hover, .dbr-info-btn[aria-expanded="true"] { background: var(--sl-color-accent); color: var(--sl-color-white); border-color: var(--sl-color-accent); }
+  .dbr-info-panel {
+    position: absolute; top: 2.4rem; right: 0.6rem; z-index: 3; width: min(24rem, 82%);
+    background: var(--sl-color-bg); border: 1px solid var(--sl-color-gray-5); border-radius: 0.6rem;
+    padding: 0.85rem 1rem; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  }
+  .dbr-info-panel[hidden] { display: none; }
+  .dbr-info-head { margin: 0 0 0.15rem; font-size: 0.9rem; font-weight: 700; color: var(--sl-color-white); }
+  .dbr-info-sub { margin: 0 0 0.6rem; font-size: 0.78rem; color: var(--sl-color-gray-2); }
+  .dbr-info-panel pre { margin: 0; font-size: 0.72rem; overflow-x: auto; }
+  .dbr-info-note { margin: 0.6rem 0 0; font-size: 0.74rem; color: var(--sl-color-gray-2); }
+
+  .dbr-hint { position: absolute; right: 0.9rem; bottom: 0.6rem; margin: 0; font-size: 0.75rem; color: var(--sl-color-gray-3); pointer-events: none; }
+  @media (max-width: 34rem) { .dbr-hint { display: none; } .dbr-label { font-size: 3.9px; } }
+</style>
+
+<script>
+  class DiseaseNetwork {
+    constructor(root) {
+      this.root = root;
+      this.svg = root.querySelector("svg");
+      this.nodes = [...root.querySelectorAll(".dbr-node")].map((el) => {
+        const hx = +el.dataset.x, hy = +el.dataset.y;
+        return { el, id: el.dataset.id, hx, hy, x: hx, y: hy, vx: 0, vy: 0 };
+      });
+      this.byId = Object.fromEntries(this.nodes.map((n) => [n.id, n]));
+      this.edges = [...root.querySelectorAll(".dbr-edge")].map((el) => ({ el, a: this.byId[el.dataset.s], b: this.byId[el.dataset.t] }));
+      this.drag = null;
+      this.reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      this.bindNodes();
+      this.bindInfo();
+      if (!this.reduced) requestAnimationFrame(() => this.loop());
+    }
+    bindNodes() {
+      for (const n of this.nodes) {
+        n.el.addEventListener("pointerenter", () => this.highlight(n));
+        n.el.addEventListener("pointerleave", () => { if (!this.drag) this.clear(); });
+        n.el.addEventListener("focus", () => this.highlight(n));
+        n.el.addEventListener("blur", () => { if (!this.drag) this.clear(); });
+        n.el.addEventListener("pointerdown", (ev) => this.start(ev, n));
+      }
+      window.addEventListener("pointermove", (ev) => this.move(ev));
+      window.addEventListener("pointerup", () => this.end());
+    }
+    bindInfo() {
+      const btn = this.root.querySelector(".dbr-info-btn");
+      const panel = this.root.querySelector(".dbr-info-panel");
+      if (!btn || !panel) return;
+      const setOpen = (open) => { panel.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
+      btn.addEventListener("click", (e) => { e.stopPropagation(); setOpen(panel.hidden); });
+      document.addEventListener("click", (e) => { if (!panel.hidden && !panel.contains(e.target) && e.target !== btn) setOpen(false); });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") setOpen(false); });
+    }
+    toSvg(ev) { const p = this.svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; return p.matrixTransform(this.svg.getScreenCTM().inverse()); }
+    start(ev, n) { ev.preventDefault(); this.drag = n; n.el.classList.add("is-dragging"); this.highlight(n); }
+    move(ev) { if (!this.drag) return; const p = this.toSvg(ev); this.drag.x = p.x; this.drag.y = p.y; this.drag.vx = 0; this.drag.vy = 0; if (this.reduced) this.render(); }
+    end() { if (!this.drag) return; this.drag.el.classList.remove("is-dragging"); this.drag = null; this.clear(); }
+    highlight(n) {
+      this.root.classList.add("is-active"); this.clearLit(); n.el.classList.add("is-lit");
+      for (const e of this.edges) if (e.a === n || e.b === n) { e.el.classList.add("is-lit"); (e.a === n ? e.b : e.a).el.classList.add("is-near"); }
+    }
+    clearLit() { for (const n of this.nodes) n.el.classList.remove("is-lit", "is-near"); for (const e of this.edges) e.el.classList.remove("is-lit"); }
+    clear() { this.root.classList.remove("is-active"); this.clearLit(); }
+    step() {
+      const N = this.nodes;
+      for (const n of N) {
+        if (n === this.drag) continue;
+        let fx = (n.hx - n.x) * 0.035, fy = (n.hy - n.y) * 0.035;
+        for (const m of N) {
+          if (m === n) continue;
+          const dx = n.x - m.x, dy = n.y - m.y, d2 = dx * dx + dy * dy;
+          if (d2 > 0.01 && d2 < 150) { const f = 4 / d2; fx += dx * f; fy += dy * f; }
+        }
+        n.vx = (n.vx + fx) * 0.82; n.vy = (n.vy + fy) * 0.82; n.x += n.vx; n.y += n.vy;
+      }
+    }
+    render() {
+      for (const n of this.nodes) n.el.setAttribute("transform", `translate(${n.x.toFixed(2)} ${n.y.toFixed(2)})`);
+      for (const e of this.edges) { e.el.setAttribute("x1", e.a.x.toFixed(2)); e.el.setAttribute("y1", e.a.y.toFixed(2)); e.el.setAttribute("x2", e.b.x.toFixed(2)); e.el.setAttribute("y2", e.b.y.toFixed(2)); }
+    }
+    loop() { this.step(); this.render(); requestAnimationFrame(() => this.loop()); }
+  }
+  const el = document.querySelector(".dbr-net");
+  if (el) new DiseaseNetwork(el);
+</script>
