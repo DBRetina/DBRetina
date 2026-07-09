@@ -12,10 +12,26 @@ export default defineConfig({
 			title: 'DBRetina',
 			description:
 				'Pairwise similarity between supergroups (diseases, drugs, pathways) from their shared features.',
+			components: {
+				Head: './src/components/Head.astro',
+				Hero: './src/components/Hero.astro',
+			},
+			customCss: [
+				'@fontsource/inter/400.css',
+				'@fontsource/inter/500.css',
+				'@fontsource/inter/600.css',
+				'@fontsource/space-grotesk/500.css',
+				'@fontsource/space-grotesk/600.css',
+				'@fontsource/space-grotesk/700.css',
+				'./src/styles/theme.css',
+			],
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/DBRetina/DBRetina' },
 			],
 			lastUpdated: true,
+			editLink: {
+				baseUrl: 'https://github.com/DBRetina/DBRetina/edit/main/website/',
+			},
 			sidebar: [
 				{
 					label: 'Getting started',
@@ -28,6 +44,7 @@ export default defineConfig({
 				{
 					label: 'Commands',
 					items: [
+						{ label: 'All commands', slug: 'commands/reference' },
 						{
 							label: 'Build & index',
 							items: [
@@ -68,10 +85,11 @@ export default defineConfig({
 						},
 						{
 							label: 'Network analysis',
+							badge: { text: 'New', variant: 'default' },
 							items: [
-								{ label: 'connect', slug: 'commands/connect' },
-								{ label: 'module', slug: 'commands/module' },
-								{ label: 'enrich', slug: 'commands/enrich' },
+								{ label: 'connect', slug: 'commands/connect', badge: { text: 'New', variant: 'default' } },
+								{ label: 'module', slug: 'commands/module', badge: { text: 'New', variant: 'default' } },
+								{ label: 'enrich', slug: 'commands/enrich', badge: { text: 'New', variant: 'default' } },
 							],
 						},
 					],

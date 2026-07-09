@@ -1,0 +1,121 @@
+---
+// Filterable command reference. Data-driven; a small text filter narrows the cards.
+// Categories mirror the sidebar. Descriptions come from each command page's frontmatter.
+const base = '/DBRetina/commands';
+const groups = [
+	{
+		cat: 'Build & index',
+		items: [
+			['index', 'Build a DBRetina index (.dbri) from your gene sets.', `${base}/`],
+			['merge', 'Merge two DBRetina indexes into one.', `${base}/merge/`],
+		],
+	},
+	{
+		cat: 'Core analysis',
+		items: [
+			['pairwise', 'Compare every pair of groups and compute their similarity.', `${base}/pairwise/`],
+			['query', 'Pull specific groups, clusters, or strong pairs out of a pairwise result.', `${base}/query/`],
+			['cluster', 'Group similar sets together by clustering the similarity graph.', `${base}/cluster/`],
+			['export', 'Export similarities as a distance matrix, dendrogram, heatmap, and Newick tree.', `${base}/export/`],
+		],
+	},
+	{
+		cat: 'Gene-set analysis',
+		items: [
+			['dedup', 'Collapse near-duplicate groups into one representative each.', `${base}/dedup/`],
+			['modularity', 'Score how modular each group is within the similarity network.', `${base}/modularity/`],
+			['setcov', 'Reduce a database to a small covering subset with a set-cover algorithm.', `${base}/setcov/`],
+		],
+	},
+	{
+		cat: 'Graph & network',
+		items: [
+			['bipartite', 'Build a bipartite similarity graph between two sets of groups.', `${base}/bipartite/`],
+			['graph', 'Export the similarity network as node and edge files for graph tools.', `${base}/graph/`],
+		],
+	},
+	{
+		cat: 'Explore an index',
+		items: [
+			['geneinfo', 'List which groups each feature belongs to.', `${base}/geneinfo/`],
+			['lookups', 'Four one-line commands for reading a pairwise result and its index.', `${base}/lookups/`],
+		],
+	},
+	{
+		cat: 'Network analysis',
+		isNew: true,
+		items: [
+			['connect', 'Find the shortest path between two groups through the similarity network.', `${base}/connect/`],
+			['module', "Extract a group's characteristic module, the groups most similar to it.", `${base}/module/`],
+			['enrich', 'Rank groups by enrichment of a reference module among their neighbours.', `${base}/enrich/`],
+		],
+	},
+];
+---
+
+<div class="cg">
+	<input type="search" class="cg-filter" id="cg-filter" placeholder="Filter commands…" aria-label="Filter commands" />
+	<div id="cg-groups">
+		{groups.map((g) => (
+			<section class="cg-group" data-cat={g.cat.toLowerCase()}>
+				<h3 class="cg-cat">{g.cat}{g.isNew && <span class="cg-new">New</span>}</h3>
+				<div class="cg-cards">
+					{g.items.map(([name, desc, href]) => (
+						<a class="cg-card" href={href} data-name={name} data-desc={desc.toLowerCase()}>
+							<span class="cg-name">{name}</span>
+							<span class="cg-desc">{desc}</span>
+						</a>
+					))}
+				</div>
+			</section>
+		))}
+	</div>
+	<p class="cg-empty" id="cg-empty" hidden>No command matches that.</p>
+</div>
+
+<script is:inline>
+	(function () {
+		const input = document.getElementById('cg-filter');
+		if (!input) return;
+		const cards = [...document.querySelectorAll('.cg-card')];
+		const groups = [...document.querySelectorAll('.cg-group')];
+		const empty = document.getElementById('cg-empty');
+		input.addEventListener('input', () => {
+			const q = input.value.trim().toLowerCase();
+			cards.forEach((c) => {
+				const hit = !q || c.dataset.name.includes(q) || c.dataset.desc.includes(q);
+				c.hidden = !hit;
+			});
+			let any = false;
+			groups.forEach((g) => {
+				const visible = [...g.querySelectorAll('.cg-card')].some((c) => !c.hidden);
+				g.hidden = !visible;
+				any = any || visible;
+			});
+			empty.hidden = any;
+		});
+	})();
+</script>
+
+<style>
+	.cg { margin: 1rem 0 2rem; }
+	.cg-filter {
+		width: 100%; padding: 0.55rem 0.85rem; margin-bottom: 1.25rem;
+		border: 1px solid var(--sl-color-gray-5); border-radius: 0.55rem;
+		background: var(--sl-color-black); color: var(--sl-color-white); font-size: 0.95rem;
+	}
+	.cg-filter:focus { outline: 2px solid var(--db-violet, #7c5cff); outline-offset: 1px; }
+	.cg-group { margin-bottom: 1.5rem; }
+	.cg-cat { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sl-color-gray-3); margin: 0 0 0.6rem; border: none; }
+	.cg-new { margin-inline-start: 0.5rem; font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 1rem; background: var(--db-gradient-soft, #eee); color: var(--db-teal, #1fd1a5); letter-spacing: 0; }
+	.cg-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.6rem; }
+	.cg-card {
+		display: flex; flex-direction: column; gap: 0.2rem; padding: 0.7rem 0.85rem;
+		border: 1px solid var(--sl-color-gray-5); border-radius: 0.6rem; text-decoration: none;
+		transition: border-color 0.15s ease, transform 0.15s ease;
+	}
+	.cg-card:hover { border-color: color-mix(in srgb, var(--db-violet, #7c5cff) 55%, transparent); transform: translateY(-2px); }
+	.cg-name { font-family: var(--__sl-font-mono, monospace); font-weight: 600; color: var(--db-violet, #7c5cff); }
+	.cg-desc { font-size: 0.83rem; color: var(--sl-color-gray-2); line-height: 1.35; }
+	.cg-empty { color: var(--sl-color-gray-3); }
+</style>

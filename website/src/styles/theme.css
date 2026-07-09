@@ -1,0 +1,103 @@
+/* DBRetina theme — a calm, muted palette that avoids stark white and near-black.
+   One easy teal-green accent, soft slate surfaces in dark mode, warm paper in light. */
+
+:root {
+	/* Brand primitives (semantic names; old --db-violet/--db-teal kept as aliases below) */
+	--db-primary: #4bb3a0;
+	--db-primary-bright: #66cbb7;
+	--db-secondary: #7c93c9;
+	--db-gradient: linear-gradient(135deg, #4bb3a0 0%, #7c93c9 100%);
+	--db-gradient-soft: linear-gradient(135deg, rgba(75, 179, 160, 0.14), rgba(124, 147, 201, 0.14));
+
+	/* Back-compat aliases so existing components pick up the new palette automatically */
+	--db-violet: var(--db-secondary);
+	--db-teal: var(--db-primary);
+
+	/* Typography */
+	--sl-font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--db-font-display: 'Space Grotesk', var(--sl-font);
+}
+
+/* Note: Starlight swaps --sl-color-white (strongest text) and --sl-color-black
+   (deepest surface) between themes. customCss loads unlayered, so we must set
+   every theme-swapped variable in BOTH blocks or the dark values leak into light. */
+
+/* ---- Dark theme: soft slate surfaces, off-white text (never pure black/white) ---- */
+:root {
+	--sl-color-accent-low: #16332e;
+	--sl-color-accent: #4bb3a0;
+	--sl-color-accent-high: #b9e6dd;
+
+	--sl-color-white: #e8ebef; /* strongest text — softened from #fff */
+	--sl-color-black: #171c22; /* deepest surface — softened from near-black */
+	--sl-color-bg: #1e242c;
+	--sl-color-bg-nav: #222932;
+	--sl-color-bg-sidebar: #20262f;
+	--sl-color-bg-inline-code: #2a313b;
+	--sl-color-text: #c8cdd4;
+	--sl-color-hairline-shade: #2b323c;
+}
+
+/* ---- Light theme: warm paper surfaces, soft ink text (never pure white/black) ---- */
+:root[data-theme='light'] {
+	--sl-color-accent-low: #d3ece6;
+	--sl-color-accent: #268573;
+	--sl-color-accent-high: #123f36;
+
+	--sl-color-white: #2b3038; /* strongest text — soft ink, not pure black */
+	--sl-color-black: #f5f2ec; /* deepest surface — warm paper, not pure white */
+	--sl-color-bg: #f5f2ec;
+	--sl-color-bg-nav: #efeae1;
+	--sl-color-bg-sidebar: #f0ece3;
+	--sl-color-bg-inline-code: #e7e2d8;
+	--sl-color-text: #3a3f46;
+	--sl-color-hairline-shade: #e0dace;
+}
+
+/* Headings in the display face */
+h1, h2, h3,
+.sl-markdown-content h1, .sl-markdown-content h2, .sl-markdown-content h3,
+.site-title {
+	font-family: var(--db-font-display);
+	letter-spacing: -0.015em;
+}
+.site-title { font-weight: 700; }
+
+/* ---- Primary CTA: solid, calm accent (no loud gradient) ---- */
+.sl-link-button.primary {
+	background: var(--db-primary);
+	border: none;
+	color: #10201d;
+	font-weight: 600;
+	transition: transform 0.15s ease, background 0.15s ease;
+}
+.sl-link-button.primary:hover {
+	transform: translateY(-1px);
+	background: var(--db-primary-bright);
+}
+
+/* ---- Cards: quiet borders, gentle hover ---- */
+.card {
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.75rem;
+	transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.card:hover {
+	transform: translateY(-3px);
+	border-color: color-mix(in srgb, var(--db-primary) 50%, transparent);
+	box-shadow: 0 12px 30px -22px rgba(75, 179, 160, 0.7);
+}
+.card .icon {
+	color: var(--db-primary);
+	background: var(--db-gradient-soft);
+	border-radius: 0.55rem;
+	padding: 0.35rem;
+}
+
+/* ---- Callouts pick up the accent softly ---- */
+.starlight-aside--tip { border-inline-start-color: var(--db-primary); }
+.starlight-aside--note { border-inline-start-color: var(--db-secondary); }
+
+.sl-markdown-content a:not(.sl-link-button):not(:where(.not-content *)) {
+	text-underline-offset: 0.2em;
+}

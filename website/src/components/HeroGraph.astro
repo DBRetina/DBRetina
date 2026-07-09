@@ -1,0 +1,119 @@
+---
+// Ambient, data-less network animation for the landing hero.
+// Nodes drift and bounce; nearby nodes link up. Pure canvas, no deps.
+// Honours prefers-reduced-motion and pauses when the tab is hidden.
+---
+
+<div class="hg" aria-hidden="true">
+	<canvas class="hg-canvas"></canvas>
+</div>
+
+<script>
+	function initHeroGraph() {
+		const wrap = document.querySelector('.hg');
+		const canvas = wrap?.querySelector('.hg-canvas');
+		if (!canvas) return;
+		const ctx = canvas.getContext('2d');
+		if (!ctx) return;
+
+		const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		const colors = ['#4bb3a0', '#7c93c9', '#66cbb7'];
+		let W = 0, H = 0, dpr = Math.min(window.devicePixelRatio || 1, 2);
+		let nodes = [];
+
+		function resize() {
+			const r = wrap.getBoundingClientRect();
+			W = Math.max(1, r.width);
+			H = Math.max(1, r.height);
+			canvas.width = W * dpr;
+			canvas.height = H * dpr;
+			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+			const count = Math.round(Math.min(26, Math.max(12, W / 26)));
+			nodes = Array.from({ length: count }, (_, i) => ({
+				x: Math.random() * W,
+				y: Math.random() * H,
+				vx: (Math.random() - 0.5) * 0.28,
+				vy: (Math.random() - 0.5) * 0.28,
+				r: 1.8 + Math.random() * 2.6,
+				c: colors[i % colors.length],
+			}));
+		}
+
+		const LINK = 132;
+		function frame() {
+			ctx.clearRect(0, 0, W, H);
+			for (const n of nodes) {
+				if (!reduce) {
+					n.x += n.vx;
+					n.y += n.vy;
+					if (n.x < 0 || n.x > W) n.vx *= -1;
+					if (n.y < 0 || n.y > H) n.vy *= -1;
+					n.x = Math.max(0, Math.min(W, n.x));
+					n.y = Math.max(0, Math.min(H, n.y));
+				}
+			}
+			for (let i = 0; i < nodes.length; i++) {
+				for (let j = i + 1; j < nodes.length; j++) {
+					const a = nodes[i], b = nodes[j];
+					const dx = a.x - b.x, dy = a.y - b.y;
+					const d = Math.hypot(dx, dy);
+					if (d < LINK) {
+						ctx.strokeStyle = '#6f8bb8';
+						ctx.globalAlpha = (1 - d / LINK) * 0.22;
+						ctx.lineWidth = 1;
+						ctx.beginPath();
+						ctx.moveTo(a.x, a.y);
+						ctx.lineTo(b.x, b.y);
+						ctx.stroke();
+					}
+				}
+			}
+			ctx.globalAlpha = 1;
+			for (const n of nodes) {
+				ctx.beginPath();
+				ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+				ctx.fillStyle = n.c;
+				ctx.globalAlpha = 0.85;
+				ctx.fill();
+			}
+			ctx.globalAlpha = 1;
+		}
+
+		let raf = 0, running = false;
+		function loop() { frame(); raf = requestAnimationFrame(loop); }
+		function start() { if (!running) { running = true; loop(); } }
+		function stop() { running = false; cancelAnimationFrame(raf); }
+
+		resize();
+		if (reduce) { frame(); }
+		else {
+			start();
+			document.addEventListener('visibilitychange', () =>
+				document.hidden ? stop() : start()
+			);
+		}
+		let t;
+		window.addEventListener('resize', () => {
+			clearTimeout(t);
+			t = setTimeout(() => { resize(); if (reduce) frame(); }, 150);
+		});
+	}
+
+	initHeroGraph();
+	document.addEventListener('astro:page-load', initHeroGraph);
+</script>
+
+<style>
+	/* Transparent by design — the graph blends into the page, no frame or panel. */
+	.hg {
+		position: relative;
+		width: 100%;
+		aspect-ratio: 5 / 4;
+		min-height: 220px;
+		background: transparent;
+	}
+	.hg-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+	@media (max-width: 50rem) {
+		.hg { aspect-ratio: 16 / 7; min-height: 160px; margin-top: 0.5rem; }
+	}
+</style>

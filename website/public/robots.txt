@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://dbretina.github.io/DBRetina/sitemap-index.xml

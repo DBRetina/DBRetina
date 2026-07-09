@@ -1,0 +1,63 @@
+---
+// Compact similarity-metric calculator: drag the three sliders, read the values.
+// Formulas mirror reference/metrics. Self-contained: no imports, no runtime deps.
+---
+
+<figure class="mx" aria-label="Similarity metric calculator">
+	<div class="mx-controls">
+		<label><span>|A| <code>s1</code></span><input type="range" id="mx-s1" min="1" max="100" value="30" /><output id="mx-s1-out">30</output></label>
+		<label><span>|B| <code>s2</code></span><input type="range" id="mx-s2" min="1" max="100" value="24" /><output id="mx-s2-out">24</output></label>
+		<label><span>shared <code>o</code></span><input type="range" id="mx-o" min="0" max="100" value="12" /><output id="mx-o-out">12</output></label>
+	</div>
+	<div class="mx-out" id="mx-out"></div>
+</figure>
+
+<script is:inline>
+	(function () {
+		const $ = (id) => document.getElementById(id);
+		const s1i = $('mx-s1'), s2i = $('mx-s2'), oi = $('mx-o');
+		if (!s1i) return;
+		const metrics = [
+			['containment', (s1, s2, o) => o / Math.min(s1, s2)],
+			['ochiai', (s1, s2, o) => o / Math.sqrt(s1 * s2)],
+			['jaccard', (s1, s2, o) => o / (s1 + s2 - o)],
+			['dice', (s1, s2, o) => (2 * o) / (s1 + s2)],
+			['csi', (s1, s2, o) => (o * o) / (s1 * s2)],
+		];
+		function render() {
+			const s1 = +s1i.value, s2 = +s2i.value;
+			oi.max = Math.min(s1, s2);
+			const o = Math.min(+oi.value, +oi.max);
+			oi.value = o;
+			$('mx-s1-out').textContent = s1;
+			$('mx-s2-out').textContent = s2;
+			$('mx-o-out').textContent = o;
+			$('mx-out').innerHTML = metrics
+				.map(([k, f]) => {
+					const pct = o === 0 ? 0 : f(s1, s2, o) * 100;
+					const v = isFinite(pct) ? pct.toFixed(1) : '0.0';
+					return `<div class="mx-chip"><span class="mx-chip-k">${k}</span><span class="mx-chip-v">${v}</span><i style="width:${Math.max(0, Math.min(100, pct))}%"></i></div>`;
+				})
+				.join('');
+		}
+		[s1i, s2i, oi].forEach((el) => el.addEventListener('input', render));
+		render();
+	})();
+</script>
+
+<style>
+	.mx { margin: 1.25rem 0; border: 1px solid var(--sl-color-gray-5); border-radius: 0.7rem; padding: 1rem 1.1rem; }
+	.mx-controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem 1.25rem; margin-bottom: 0.9rem; }
+	.mx-controls label { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0.15rem 0.5rem; font-size: 0.85rem; }
+	.mx-controls span { grid-column: 1 / -1; }
+	.mx-controls input { accent-color: var(--db-violet, #7c5cff); width: 100%; }
+	.mx-controls output { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--db-violet, #7c5cff); min-width: 2.5ch; text-align: right; }
+	/* Chips are injected via JS innerHTML, so they don't receive Astro's scope
+	   attribute — style them globally or the rules won't match. */
+	.mx-out { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.55rem; }
+	:global(.mx-chip) { position: relative; overflow: hidden; border: 1px solid var(--sl-color-gray-4); border-radius: 0.5rem; padding: 0.5rem 0.7rem 0.55rem; display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; font-size: 0.85rem; background: var(--sl-color-bg-sidebar); }
+	:global(.mx-chip-k) { color: var(--sl-color-gray-2); text-transform: capitalize; }
+	:global(.mx-chip-v) { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--db-primary); }
+	:global(.mx-chip > i) { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--db-gradient, linear-gradient(90deg, #4bb3a0, #7c93c9)); transition: width 0.12s ease; }
+	@media (max-width: 30rem) { .mx-controls { grid-template-columns: 1fr; } }
+</style>
